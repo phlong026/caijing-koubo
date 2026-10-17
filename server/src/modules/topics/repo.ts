@@ -371,6 +371,17 @@ export async function updateTemplate(
   return (await getTemplate(id))!
 }
 
+/**
+ * P1-6③：删除保护。
+ * 删掉内置模板或默认模板后，批次会退回到兜底提示词（历史上那句不含合规约束的话），
+ * 相当于悄悄降低了合规底线。内置模板与默认模板一律禁止删除。
+ */
 export async function deleteTemplate(id: string, db = getDb()): Promise<void> {
+  const t = await db.get<Record<string, any>>('SELECT * FROM `topic_prompt_template` WHERE `id` = ?', [id])
+  if (!t) throw err.notFound('模板不存在')
+  if (t.builtin) throw err.invalidState('内置模板不可删除，可复制一份后再修改', { id, builtin: t.builtin })
+  if (Number(t.is_default ?? 0) === 1) {
+    throw err.invalidState('默认模板不可删除，请先把其他模板设为默认', { id })
+  }
   await db.run('DELETE FROM `topic_prompt_template` WHERE `id` = ?', [id])
 }

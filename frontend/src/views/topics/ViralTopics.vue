@@ -686,7 +686,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Message } from '@arco-design/web-vue'
+import { Message, Modal } from '@arco-design/web-vue'
 import PageHead from '@/components/PageHead.vue'
 import ThumbBox from '@/components/ThumbBox.vue'
 import { ApiError } from '@/api/client'
@@ -927,8 +927,22 @@ function onOnlyAdhoc(v: unknown) {
 }
 
 async function onExtract(v: BenchVideo) {
+  // P1-3①：uncertain 意味着上一次提取可能已提交但结果未知，重试会再次计费，必须先人工确认
+  if (v.extractStatus === 'uncertain') {
+    const okConfirm = await new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: '确认重新提取？',
+        content: '上一次提取结果不确定，可能已产生费用。确认后将以当前视频状态重新提交一次提取，可能重复计费。',
+        okText: '确认重试',
+        cancelText: '取消',
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      })
+    })
+    if (!okConfirm) return
+  }
   try {
-    await bench.extract(v.id)
+    await bench.extract(v.id, v.extractStatus === 'uncertain')
     Message.info('已加入提取队列，完成后可直接查看文案')
   } catch (e) {
     Message.error(errOf(e))

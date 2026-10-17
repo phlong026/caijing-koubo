@@ -50,7 +50,11 @@ const MOCK_SEEDS: Array<{ title: string; summary: string; cat: string }> = [
 class MockProvider implements NewsProvider {
   name = 'mock'
   label = '内置示意源'
-  enabled = true
+  // P1-7：必须受 MOCK_FALLBACK 控制。此前恒为 true，生产环境每 15 分钟
+  // 会把「内置示意源」的假资讯写进正式库。
+  get enabled(): boolean {
+    return config.mockFallback
+  }
 
   async fetchLatest(): Promise<NewsDTO[]> {
     // 以 15 分钟为窗口生成稳定 external_id：窗口内重复采集零增量，跨窗口产生新条目

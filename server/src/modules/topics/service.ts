@@ -1,4 +1,5 @@
 import { chat, type ChatMessage } from '../../integrations/dashscope/llm.js'
+import { getDb } from '../../db/index.js'
 import { getNewsByIds } from '../news/repo.js'
 import { getPersonasByIds, type Persona } from '../personas/repo.js'
 import {
@@ -55,6 +56,40 @@ function fillPersona(tpl: string, p: Persona): string {
     .replace(/\{forbidden_claims\}/g, ip.forbiddenClaims.join('、') || '无')
     .replace(/\{name\}/g, p.name)
 }
+
+/**
+ * P1-6①：人物 IP 档案与合规约束由代码**固定追加**，不依赖模板里是否有占位符。
+ * 之前的实现只做占位符替换，运营自建/编辑的模板里若没有 `{role}` 等占位符，
+ * 人物档案与 forbidden_claims 就完全不会注入（违反 FR-N4）。
+ */
+export function personaBlock(p: Persona): string {
+  const ip = p.ipProfile
+  const lines = [
+    '【人物档案】',
+    `- 姓名：${p.name}`,
+    `- 角色：${ip.role || p.name}`,
+    `- 服务范围：${ip.serviceScope || '未填写'}`,
+    `- 目标受众：${ip.targetAudience || '未填写'}`,
+    `- 表达风格：${ip.expressionStyle || '未填写'}`,
+  ]
+  return lines.join('\n')
+}
+
+/** P1-6①：合规约束块（forbidden_claims 为空时也要显式声明，避免模板漏约束） */
+export function complianceBlock(p: Persona): string {
+  const claims = p.ipProfile.forbiddenClaims
+  const list = claims.length ? claims.map((c) => `  - ${c}`).join('\n') : '  - （该人物未配置额外禁用表述）'
+  return [
+    '【合规约束】',
+    '以下表述**一律不得出现**在选题标题、钩子或论证中：',
+    list,
+    '- 不得承诺收益、不得使用「稳赚」「必涨」「保本」「零风险」等绝对化表述。',
+    '- 不得给出个股买卖建议或明确的价格预测。',
+  ].join('\n')
+}
+
+/** 兜底提示词（模板缺失时使用）：同样带合规约束，不能是无约束的一句话 */
+const FALLBACK_TEMPLATE = '请基于下方资讯生成口播选题，包含 title / direction / hook / rationale。'
 
 export interface ParsedTopic {
   title: string
@@ -131,6 +166,12 @@ export async function startGeneration(input: GenerateInput): Promise<{ batchId: 
 export async function runGeneration(batchId: string): Promise<void> {
   const batch = await getBatch(batchId)
   if (!batch) throw err.notFound('批次不存在')
+  // P1-5：BullMQ 的 stalled 重跑 / attempts 重试会从头再跑一遍，已经成功的子任务会重复产出。
+  // 批次已是终态时直接返回，避免重复累加 produced 与重复写入候选。
+  if (batch.status !== 'running') {
+    logger.info({ batchId, status: batch.status }, 'topic.batch_skip_not_running')
+    return
+  }
   const newsList = await getNewsByIds(batch.newsIds)
   const personaList = await getPersonasByIds(batch.personaIds)
   const template: TemplateRow | null = batch.templateId
@@ -142,23 +183,43 @@ export async function runGeneration(batchId: string): Promise<void> {
     return
   }
 
+  // P1-5：已产出过的 (news_id, persona_id) 组合，重跑时跳过——已写入的候选不重复生成
+  const donePairs = new Set(
+    (
+      await getDb().all<{ source_id: string; persona_ids: string }>(
+        'SELECT `source_id`, `persona_ids` FROM `topic` WHERE `batch_id` = ?',
+        [batchId],
+      )
+    ).map((r) => pairKey(r.source_id, r.persona_ids)),
+  )
+
   const errors: string[] = []
   let produced = 0
   let cost = 0
 
   for (const news of newsList) {
     for (const persona of personaList) {
+      if (donePairs.has(pairKey(news.id, JSON.stringify([persona.id])))) {
+        logger.info({ batchId, newsId: news.id, personaId: persona.id }, 'topic.subtask_skipped_done')
+        continue
+      }
       try {
+        // P1-6：人物档案与合规约束固定追加，不依赖模板占位符；
+        // 模板缺失时用带约束的兜底提示词，不再是「无合规约束的一句话」。
+        const userContent = [
+          fillPersona(template?.content ?? FALLBACK_TEMPLATE, persona),
+          personaBlock(persona),
+          complianceBlock(persona),
+          buildNewsBlock([news]),
+          `【输出要求】请生成 ${batch.countPer} 条互不重复的选题，JSON 结构：\n{"topics":[{"title":"","direction":"","hook":"","rationale":""}]}`,
+        ].join('\n\n')
         const messages: ChatMessage[] = [
           {
             role: 'system',
             content:
               '你是财经口播内容策划助手。只输出严格合法的 JSON，不要输出任何解释性文字、Markdown 代码块或多余字段。',
           },
-          {
-            role: 'user',
-            content: `${fillPersona(template?.content ?? '请基于下方资讯生成口播选题，包含 title / direction / hook / rationale。', persona)}\n\n${buildNewsBlock([news])}\n\n【输出要求】请生成 ${batch.countPer} 条互不重复的选题，JSON 结构：\n{"topics":[{"title":"","direction":"","hook":"","rationale":""}]}`,
-          },
+          { role: 'user', content: userContent },
         ]
         // T2 验收 7：人物 IP 档案摘要与 forbidden_claims 注入可查（提示词快照入日志）
         logger.info(
@@ -195,6 +256,8 @@ export async function runGeneration(batchId: string): Promise<void> {
         }
         produced += n
         await bumpBatchProduced(batchId, n)
+        // 子任务成功后记入已产出集合，本批内不再重复生成
+        donePairs.add(pairKey(news.id, JSON.stringify([persona.id])))
       } catch (e) {
         const msg = (e as Error).message
         errors.push(`[${news.id} × ${persona.id}] ${msg}`)
@@ -206,4 +269,16 @@ export async function runGeneration(batchId: string): Promise<void> {
   if (cost) await addBatchCost(batchId, cost)
   await finishBatch(batchId, produced > 0 ? 'done' : 'failed', errors.length ? errors.join(' | ') : null)
   logger.info({ batchId, produced, errors: errors.length }, 'topic.batch_finished')
+}
+
+/** 子任务幂等键：news_id + persona_ids（与 topic 表存储形式一致） */
+function pairKey(newsId: string, personaIdsJson: string): string {
+  let ids: string[] = []
+  try {
+    const parsed = JSON.parse(personaIdsJson)
+    ids = Array.isArray(parsed) ? parsed.map(String) : []
+  } catch {
+    ids = []
+  }
+  return `${newsId}::${ids.join(',')}`
 }

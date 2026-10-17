@@ -4,7 +4,7 @@ import { jdec, jenc, newId } from '../../lib/util.js'
 import { fromDb, toDb, utcNow } from '../../lib/time.js'
 import { err } from '../../errors.js'
 import { logger } from '../../log.js'
-import { QUEUE_NAMES, enqueue, registerWorker } from '../../queue/index.js'
+import { QUEUE_NAMES, dedupOpts, enqueue, registerWorker } from '../../queue/index.js'
 import { fetchVideoDetail } from '../../integrations/tikhub/client.js'
 import { submitTask, waitForResult, type AsrSentence } from '../../integrations/dashscope/asr.js'
 import { putObjectFromFile, signedUrl } from '../../integrations/aliyun-oss/client.js'
@@ -156,11 +156,14 @@ export async function requestExtract(
 }
 
 export async function enqueueExtract(cacheId: string): Promise<void> {
+  // P0-2：不能用固定 jobId。runExtract 内部吞掉异常并写 failed，BullMQ 视为「已完成」，
+  // 固定 jobId 会被已完成任务永久占位，用户点「重试」后任务永远停在「排队中」。
+  // deduplication 只在任务未结束时去重，任务落地即释放。
   await enqueue(
     QUEUE_NAMES.scriptExtract,
     'extract',
     { cacheId },
-    { jobId: `extract-${cacheId}`, attempts: 2, backoff: { type: 'exponential', delay: 5000 } },
+    { ...dedupOpts(`extract-${cacheId}`), attempts: 2, backoff: { type: 'exponential', delay: 5000 } },
   )
 }
 
@@ -216,7 +219,8 @@ export async function runExtract(cacheId: string): Promise<void> {
       return
     }
 
-    await setStatus(db, cacheId, 'submitting')
+    // P1-3②：submitting 必须紧挨着 submitTask 之前才置；此前（下载/ffmpeg/OSS）
+    // 失败都属于可安全重试的 failed，不应被误判为 uncertain 而要求人工确认。
     const detail = await fetchVideoDetail(cache.videoId)
     if (!detail.playUrl) {
       await setStatus(db, cacheId, 'failed', { error: '未取到播放地址' })
@@ -253,7 +257,18 @@ export async function runExtract(cacheId: string): Promise<void> {
       fileUrl = await signedUrl(put.key)
     }
 
-    const taskId = await submitTask(fileUrl, { type: 'cache', id: cacheId })
+    await setStatus(db, cacheId, 'submitting')
+    let taskId: string
+    try {
+      taskId = await submitTask(fileUrl, { type: 'cache', id: cacheId })
+    } catch (e) {
+      // P1-3③：提交超时/网络错误时请求可能已到百炼，若记 failed 用户重试会**重复计费**，
+      // 因此记为 uncertain，由人工确认后再重试。
+      const msg = (e as Error).message || '提交百炼任务失败'
+      await setStatus(db, cacheId, 'uncertain', { error: `提交结果未知：${msg}` })
+      logger.warn({ cacheId, err: msg }, 'extract.submit_uncertain')
+      return
+    }
     await setStatus(db, cacheId, 'running', {
       task_id: taskId,
       submitted_at: toDb(utcNow()),
@@ -273,7 +288,21 @@ export async function runExtract(cacheId: string): Promise<void> {
 
 async function pollAndPersist(cacheId: string, taskId: string): Promise<void> {
   const db = getDb()
-  const result = await waitForResult(taskId)
+  let result: Awaited<ReturnType<typeof waitForResult>>
+  try {
+    result = await waitForResult(taskId)
+  } catch (e) {
+    // P1-3③：轮询超时/失败时 task_id 仍然有效，保持 running 让续跑逻辑继续轮询，
+    // 若记为 failed 会导致重试时重复提交、重复计费。
+    const msg = (e as Error).message || '轮询失败'
+    await db.run('UPDATE `script_extract_cache` SET `error` = ?, `updated_at` = ? WHERE `id` = ?', [
+      `轮询未完成：${msg}`.slice(0, 1000),
+      toDb(utcNow()),
+      cacheId,
+    ])
+    logger.warn({ cacheId, taskId, err: msg }, 'extract.poll_kept_running')
+    return
+  }
   await db.run(
     "UPDATE `script_extract_cache` SET `status` = 'done', `text` = ?, `sentences` = ?, `duration` = ?, `cost` = `cost` + ?, `updated_at` = ? WHERE `id` = ?",
     [

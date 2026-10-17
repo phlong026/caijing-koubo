@@ -1,4 +1,4 @@
-import { QUEUE_NAMES, enqueue, nextScheduledRun, registerWorker, scheduleRepeatable } from '../../queue/index.js'
+import { QUEUE_NAMES, dedupOpts, enqueue, nextScheduledRun, registerWorker, scheduleRepeatable } from '../../queue/index.js'
 import { config } from '../../config.js'
 import { getDb } from '../../db/index.js'
 import { toDb } from '../../lib/time.js'
@@ -35,7 +35,10 @@ export async function registerBenchmarkJobs(): Promise<void> {
       try {
         return await fetchAccountVideos(accountId, { reason, backfill })
       } catch (e) {
-        await failFetch(accountId, e)
+        // FR-B3：全部重试失败才计一次「周期失败」。attemptsMade 从 0 开始，
+        // 最后一次尝试时 attemptsMade + 1 === attempts，此前的尝试不计失败。
+        const maxAttempts = job.opts.attempts ?? 1
+        if (job.attemptsMade + 1 >= maxAttempts) await failFetch(accountId, e)
         throw e
       }
     },
@@ -52,7 +55,9 @@ export async function enqueueFetch(
   opts: { backfill?: boolean; advanceSchedule?: boolean } = {},
 ): Promise<void> {
   const db = getDb()
-  // FR-B3 入队去重：jobId = fetch:{accountId}；入队时即推进 next_check_at，避免抓取未完成时被重复入队
+  // FR-B3 入队去重：用 deduplication（仅任务未结束时去重），**不能用固定 jobId**——
+  // BullMQ 5.x 对 jobId 的去重是「同 id 任务哈希存在即忽略」，已完成/已失败但未清理的
+  // 任务会永久占位，导致后续每一轮 sweep 与「立即检查」都被静默吞掉（P0-1）。
   if (opts.advanceSchedule !== false) {
     const acc = await getAccount(accountId)
     if (acc) {
@@ -67,7 +72,7 @@ export async function enqueueFetch(
     'fetch',
     { accountId, reason, backfill: !!opts.backfill },
     {
-      jobId: `fetch-${accountId}`,
+      ...dedupOpts(`fetch-${accountId}`),
       attempts: 3,
       backoff: { type: 'exponential', delay: 5_000 },
     },

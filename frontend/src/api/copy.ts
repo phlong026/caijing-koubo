@@ -488,8 +488,9 @@ export const copyApi = {
   },
 
   /* 工具 */
-  scanCompliance(copyId: string, body: { sections: Section[]; title?: string | null }) {
-    return apiPost<{ hits: ComplianceHit[] }>(`/copy/${copyId}/compliance/scan`, body)
+  /** P1-22：编辑时实时合规扫描（后端 POST /copy/compliance/scan）；copyId 用于带出人物禁用表述 */
+  scanCompliance(body: { copyId?: string; title?: string | null; sections: Section[] }) {
+    return apiPost<{ hits: ComplianceHit[] }>('/copy/compliance/scan', body)
   },
   promptPreview(copyId: string, body: { templateId: string; styleId: string; durationTier: DurationTier; durationSeconds?: number | null; instructions?: string }) {
     return apiPost<{ prompt: string; promptHash: string; wordRange: { min: number; max: number; seconds: number } }>(

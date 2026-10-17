@@ -64,10 +64,12 @@
     <!-- 新建弹窗 -->
     <a-modal v-model:visible="createVisible" title="新建文案" :width="560" :footer="false" unmount-on-close>
       <a-form :model="form" layout="vertical">
-        <a-form-item label="人物" required>
-          <a-select v-model="form.personaId" placeholder="选择人物" @change="onPersonaChange">
+        <!-- P0-6②：FR-S4 要求可一次选多位目标人物，每位各产一条 -->
+        <a-form-item label="目标人物" required>
+          <a-select v-model="form.personaIds" multiple placeholder="选择一位或多位人物" @change="onPersonaChange">
             <a-option v-for="p in personas" :key="p.id" :value="p.id" :label="`${p.name}（${p.lineLabel || p.line}）`" />
           </a-select>
+          <div class="mw-subtle mt-1">选多位人物时，每位各生成一条文案</div>
         </a-form-item>
 
         <a-form-item label="创作方式">
@@ -77,18 +79,19 @@
           </a-radio-group>
         </a-form-item>
 
-        <a-form-item label="标题">
+        <!-- P0-6①：FR-S4 标题必填，≤60 字 -->
+        <a-form-item label="标题" required>
           <a-input v-model="form.title" placeholder="给这条文案起个标题" :max-length="60" show-word-limit />
         </a-form-item>
 
         <!-- 手动输入 -->
-        <a-form-item v-if="form.mode === 'manual'" label="素材内容">
+        <a-form-item v-if="form.mode === 'manual'" label="素材内容（可选）">
           <a-textarea
             v-model="form.sourceText"
             :auto-size="{ minRows: 4, maxRows: 10 }"
             :max-length="5000"
             show-word-limit
-            placeholder="把你的想法、要点或完整素材贴进来"
+            placeholder="把你的想法、要点或完整素材贴进来；不填则只按标题与关键词起草"
           />
         </a-form-item>
 
@@ -124,7 +127,11 @@ import { Message } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
 import { articleApi, copyApi, type CopyDerivedStatus, type CopyLine, type CopyListItem } from '@/api/copy'
 
-const props = defineProps<{ visible: boolean }>()
+const props = defineProps<{
+  visible: boolean
+  /** P1-20 / FR-S1：从爆款选题一次送入多条时，按 ids 过滤列表 */
+  initialIds?: string[]
+}>()
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
   (e: 'picked', copyId: string): void
@@ -161,6 +168,19 @@ watch(
   },
 )
 
+/** P1-20：只在这批 ids 里筛选 */
+const idFilter = computed(() => (props.initialIds?.length ? props.initialIds.join(',') : undefined))
+
+watch(
+  () => props.initialIds?.join(','),
+  () => {
+    if (props.visible) {
+      page.value = 1
+      void load()
+    }
+  },
+)
+
 async function load(): Promise<void> {
   loading.value = true
   try {
@@ -170,6 +190,7 @@ async function load(): Promise<void> {
       keyword: keyword.value || undefined,
       derivedStatus: derivedStatus.value,
       line: line.value,
+      ids: idFilter.value,
     })
     items.value = page.value === 1 ? r.items : [...items.value, ...r.items]
     total.value = r.total
@@ -224,7 +245,8 @@ const createVisible = ref(false)
 const creating = ref(false)
 const form = reactive({
   mode: 'manual' as 'manual' | 'article',
-  personaId: '',
+  // P0-6②：多选人物
+  personaIds: [] as string[],
   title: '',
   sourceText: '',
   keywords: '',
@@ -233,7 +255,7 @@ const file = ref<File | null>(null)
 
 function openCreate(): void {
   form.mode = 'manual'
-  form.personaId = personas.value[0]?.id ?? ''
+  form.personaIds = personas.value[0]?.id ? [personas.value[0].id] : []
   form.title = ''
   form.sourceText = ''
   form.keywords = ''
@@ -242,17 +264,19 @@ function openCreate(): void {
 }
 
 function onPersonaChange(): void {
-  // 人物决定所属线，重新拉取可用的风格
-  void store.loadOptions(form.personaId)
+  // 人物决定所属线，重新拉取可用的风格（多选时以首位为准，仅用于选项加载）
+  void store.loadOptions(form.personaIds[0])
 }
 
 function onFileChange(_files: unknown, currentFile: { file?: File }): void {
   file.value = currentFile?.file ?? null
 }
 
+// P0-6①②：标题必填（FR-S4）+ 人物至少一位；补充资料 / 关键词均为可选
 const canCreate = computed(() => {
-  if (!form.personaId) return false
-  if (form.mode === 'manual') return form.sourceText.trim().length > 0
+  if (!form.personaIds.length) return false
+  if (!form.title.trim()) return false
+  if (form.mode === 'manual') return true
   return !!file.value
 })
 
@@ -263,17 +287,16 @@ async function onCreate(): Promise<void> {
     if (form.mode === 'article' && file.value) {
       const a = await articleApi.uploadEdit(file.value)
       articleId = a.articleId
-      if (!form.title) form.title = file.value.name.replace(/\.[^.]+$/, '')
     }
     const r = await copyApi.create({
       source: form.mode,
-      personaIds: [form.personaId],
-      title: form.title || undefined,
-      sourceText: form.mode === 'manual' ? form.sourceText : undefined,
+      personaIds: form.personaIds,
+      title: form.title.trim(),
+      sourceText: form.mode === 'manual' && form.sourceText.trim() ? form.sourceText : undefined,
       keywords: form.keywords || undefined,
       articleId,
     })
-    Message.success('已创建文案')
+    Message.success(r.copyIds.length > 1 ? `已创建 ${r.copyIds.length} 条文案` : '已创建文案')
     createVisible.value = false
     emit('picked', r.copyIds[0])
     emit('update:visible', false)

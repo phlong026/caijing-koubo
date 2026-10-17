@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { ok } from '../../app.js'
 import { err } from '../../errors.js'
 import { recordOperation } from '../audit/repo.js'
-import { createDraftsFromTopics } from '../copy-contract/service.js'
+import { createDraftsFromTopics, createInitialDrafts } from '../copy-contract/service.js'
 import { enqueueGeneration } from './jobs.js'
 import {
   archiveTopic,
@@ -80,6 +80,8 @@ export function registerTopicRoutes(app: FastifyInstance): void {
     const topicIds = Array.isArray(body.topicIds) ? body.topicIds : []
     if (!topicIds.length) throw err.badRequest('请先勾选候选选题')
     const res = await createDraftsFromTopics({ topicIds, operator: req.operator })
+    // P1-10：初始空白稿必须在送入事务提交后创建，且只创建一次
+    await createInitialDrafts(res.copyIds, req.operator)
     await recordOperation({
       operator: req.operator,
       action: 'topic.send',

@@ -3,7 +3,7 @@ import { ok } from '../../app.js'
 import { err } from '../../errors.js'
 import { getDb } from '../../db/index.js'
 import { recordOperation } from '../audit/repo.js'
-import { createDraftsFromTopics } from '../copy-contract/service.js'
+import { createDraftsFromTopics, createInitialDrafts } from '../copy-contract/service.js'
 import { createTopic } from '../topics/repo.js'
 import {
   addAccount,
@@ -153,6 +153,8 @@ export function registerBenchmarkRoutes(app: FastifyInstance): void {
       targetId: id,
       detail: result,
     })
+    // P1-10：初始空白稿必须在事务提交后创建（见 createInitialDrafts 注释）
+    await createInitialDrafts(result.copyIds, req.operator)
     return ok(result)
   })
 

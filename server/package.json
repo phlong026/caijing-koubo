@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "migrate": "tsx src/db/migrate-cli.ts",
     "smoke": "tsx scripts/smoke.ts",
+    "smoke:copy": "tsx scripts/smoke-copy.ts",
     "check:mysql-ddl": "tsx scripts/check-mysql-ddl.ts",
     "check:mysql-ddl:self": "tsx scripts/check-mysql-ddl.ts --selftest",
     "test:finstep:clean": "tsx scripts/test-finstep-clean.ts",
@@ -20,6 +21,7 @@
   "dependencies": {
     "@esbuild/win32-x64": "^0.28.2",
     "@fastify/cors": "^10.0.1",
+    "@fastify/multipart": "^10.1.4",
     "ali-oss": "^6.21.0",
     "axios": "^1.7.7",
     "bullmq": "^5.21.2",

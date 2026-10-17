@@ -12,17 +12,31 @@ export interface Migration {
   up: (db: Db) => Promise<void>
 }
 
-/** 建表 + 索引（幂等：IF NOT EXISTS / 存在性检查） */
-async function createAllTables(db: Db): Promise<void> {
+/**
+ * 结构对齐（幂等），**顺序必须是：建表 → 补列 → 建索引**。
+ *
+ * P1-15：原来的顺序是建表+建索引一起跑，再靠 `003_copy_columns` 补列。老库的 `copy` 表
+ * 没有 `updated_at` 列时，`CREATE INDEX idx_copy_status_upd(status, updated_at)` 会直接
+ * 报错导致服务启动失败；且补列只绑定在一次性的 003 版本里，以后再加列不会自动补齐。
+ * 现在补列每次启动都幂等执行，并前移到建索引之前。
+ */
+async function syncSchema(db: Db): Promise<void> {
   for (const t of TABLES) {
     await db.exec(createTableSql(t, db.kind))
   }
+  // 补列必须在建索引之前：索引可能引用新增列
+  await addMissingColumns(db)
   for (const t of TABLES) {
     for (const i of t.indexes ?? []) {
       if (db.kind === 'sqlite') {
         await db.exec(createIndexSql(t, i, 'sqlite'))
       } else if (!(await db.indexExists(i.name))) {
-        await db.exec(createIndexSql(t, i, 'mysql'))
+        // 老库可能残留同名列/冲突索引，单个索引失败不应阻断启动
+        try {
+          await db.exec(createIndexSql(t, i, 'mysql'))
+        } catch (e) {
+          logger.warn({ table: t.name, index: i.name, err: (e as Error).message }, 'db.index_create_skipped')
+        }
       }
     }
   }
@@ -36,7 +50,7 @@ async function createAllTables(db: Db): Promise<void> {
 async function addMissingColumns(db: Db): Promise<void> {
   for (const t of TABLES) {
     const existing = await existingColumns(db, t.name)
-    // 表不存在则跳过（新建表由上一步 createAllTables 负责）
+    // 表不存在则跳过（新建表由上一步建表负责）
     if (!existing.size) continue
     for (const c of t.cols) {
       if (existing.has(c.name)) continue
@@ -305,9 +319,9 @@ export async function runMigrations(db: Db = getDb()): Promise<string[]> {
   const versionTable = TABLES.find((t) => t.name === 'schema_migrations')!
   await db.exec(createTableSql(versionTable, db.kind))
 
-  // 结构对齐始终执行一次（幂等）：迁移清单只承担「数据与列补全」，
-  // 建表不纳入版本判断，避免新增表后老库需等新迁移版本才建表。
-  await createAllTables(db)
+  // 结构对齐始终执行（幂等）：迁移清单只承担「数据种子」，
+  // 建表/补列/建索引不纳入版本判断，老库与新装库都能立即对齐。
+  await syncSchema(db)
 
   const appliedRows = await db.all<{ version: string }>('SELECT `version` FROM `schema_migrations`')
   const applied = new Set(appliedRows.map((r) => r.version))

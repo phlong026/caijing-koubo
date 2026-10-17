@@ -4,7 +4,7 @@ import { toDb, utcNow } from '../../lib/time.js'
 import { err } from '../../errors.js'
 import { config } from '../../config.js'
 import { logger } from '../../log.js'
-import { createDraftsFromTopics } from '../copy-contract/service.js'
+import { createDraftsFromTopics, createInitialDrafts } from '../copy-contract/service.js'
 import {
   countDrafts,
   getCopy,
@@ -206,12 +206,10 @@ export async function createCopyFromArticleOrManual(input: CreateCopyInput): Pro
   })
 
   // 4) 为每条 copy 建一份空白稿并设为当前稿：新建入口直接可编辑（FR-E4 新建空白稿）
-  //    放在事务外单条执行，避免 topic 与第一条 copy 因「建稿失败」而被回滚（AC-S5 只要求 topic/copy 原子）。
-  for (const copyId of copyIds) {
-    await createDraft(copyId, null, input.operator).catch((e) => {
-      logger.warn({ copyId, err: (e as Error).message }, 'copy.initial_draft_failed')
-    })
-  }
+  //    P1-10：必须在事务**提交之后**建稿。createDraft 用的是全局连接，
+  //    SQLite 下会在事务内建第 1 份、提交后又建第 2 份；MySQL 下则看不到未提交的 copy。
+  //    建稿失败不影响已提交的 topic/copy（AC-S5 只要求这两者原子）。
+  await createInitialDrafts(copyIds, input.operator)
 
   const { recordOperation } = await import('../audit/repo.js')
   await recordOperation({
@@ -508,11 +506,18 @@ export async function saveDraftContent(
 
   if (copy.status === 'approved') await downgradeApprovedToDraft(copy, operator, db)
 
-  await db.run(
+  // 乐观锁双保险：上面已比对 rev，这里再用 WHERE rev = ? 兜住「比对后到写入前」的并发修改
+  const w = await db.run(
     `UPDATE \`copy_draft\` SET \`title\` = ?, \`sections\` = ?, \`plain_text\` = ?, \`word_count\` = ?, \`rev\` = \`rev\` + 1, \`updated_at\` = ?
      WHERE \`id\` = ? AND \`rev\` = ?`,
     [title, jenc(sections), toPlainText(title, sections), words, toDb(utcNow()), draftId, rev],
   )
+  if (!w.affectedRows) {
+    throw err.draftConflict('该稿已在其他页面修改，请载入最新内容或另存为新稿', {
+      expectedRev: draft.rev,
+      providedRev: rev,
+    })
+  }
   await touchCopy(copyId, db)
 
   const fresh = await getDraft(copyId, draftId, db)
@@ -739,7 +744,8 @@ export async function scanDraftCompliance(draft: DraftRow, copy: CopyRow): Promi
   const words = await listComplianceWords({ enabledOnly: true })
   const persona = copy.personaId ? await getPersonaById(copy.personaId, true) : null
   const claims = (persona?.ipProfile as { forbiddenClaims?: string[] } | null)?.forbiddenClaims ?? []
-  return scanCompliance(draft.sections, words, claims)
+  // P1-14①：标题纳入合规扫描
+  return scanCompliance(draft.sections, words, claims, draft.title)
 }
 
 /* ── 预检（FR-R3 / AC-R1 / AC-R2）────────────────────────────────── */

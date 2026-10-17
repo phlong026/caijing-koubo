@@ -101,6 +101,21 @@ export async function submitForReview(
   let versionNo = 0
 
   await db.tx(async (t) => {
+    // P1-9：先用条件更新占位，只有真正把 draft/rejected 改成 in_review 的请求才继续。
+    // 之前是无条件 UPDATE，两个并发提交都能通过前面的状态检查，各建一张审核单，
+    // 后写入的覆盖 review_submission_id，前一张审核单成为孤儿。
+    // 注：db.tx 不可嵌套，样式表与审核单均在同一事务内串行写入。
+    const claimed = await t.run(
+      `UPDATE \`copy\` SET \`status\` = 'in_review', \`review_gate\` = 'submitted', \`ever_submitted\` = 1,
+        \`reject_reason\` = NULL, \`updated_at\` = ?
+       WHERE \`id\` = ? AND \`status\` IN ('draft', 'rejected')`,
+      [now, copyId],
+    )
+    if (!claimed.affectedRows) {
+      // 并发提交已被另一个请求占位，回滚本次并复用已有审核单
+      throw err.invalidState('该文案已被提交审核或状态已变更，请刷新后再试')
+    }
+
     const next =
       (await t.get<{ n: number | null }>('SELECT MAX(`version_no`) AS n FROM `copy_version` WHERE `copy_id` = ?', [
         copyId,
@@ -137,10 +152,8 @@ export async function submitForReview(
     )
 
     await t.run(
-      `UPDATE \`copy\` SET \`status\` = 'in_review', \`submitted_version_id\` = ?, \`review_submission_id\` = ?,
-        \`review_gate\` = 'submitted', \`ever_submitted\` = 1, \`reject_reason\` = NULL, \`updated_at\` = ?
-       WHERE \`id\` = ?`,
-      [versionId, submissionId, now, copyId],
+      `UPDATE \`copy\` SET \`submitted_version_id\` = ?, \`review_submission_id\` = ? WHERE \`id\` = ?`,
+      [versionId, submissionId, copyId],
     )
 
     await t.run('UPDATE `copy_draft` SET `has_submitted` = 1, `latest_version_no` = ? WHERE `id` = ?', [
@@ -182,10 +195,11 @@ async function advanceStub(submissionId: string, riskHint: string): Promise<void
   const db = getDb()
   const stepMs = Math.max(0, config.copy.reviewStubStepMs)
 
-  const gates: Array<{ gate: string; reason: string }> = [
-    { gate: 'gate1', reason: '本地合规扫描与禁用表述检查通过' },
-    { gate: 'gate2', reason: '事实与风险点检查通过（未发现无依据数据与收益承诺）' },
-    { gate: 'gate3', reason: '已追加风险提示话术' },
+  const gates: Array<{ gate: string; reason: string; entry: string }> = [
+    // entry = 进入本关之前审核单应处于的状态，用于 CAS 抢占
+    { gate: 'gate1', reason: '本地合规扫描与禁用表述检查通过', entry: 'submitted' },
+    { gate: 'gate2', reason: '事实与风险点检查通过（未发现无依据数据与收益承诺）', entry: 'gate1' },
+    { gate: 'gate3', reason: '已追加风险提示话术', entry: 'gate2' },
   ]
 
   for (const g of gates) {
@@ -196,20 +210,32 @@ async function advanceStub(submissionId: string, riskHint: string): Promise<void
     if (stepMs) await new Promise((r) => setTimeout(r, stepMs))
     const results = [...sub.gateResults, gateResult(g.gate, 'pass', g.reason)]
     const nextStatus = g.gate === 'gate3' ? 'pending_manual' : g.gate
-    await db.run(
-      'UPDATE `review_submission` SET `status` = ?, `gate_results` = ?, `appended_risk_text` = ?, `updated_at` = ? WHERE `id` = ?',
+
+    // P1-8②：读取后到写入之间会 sleep，期间用户可能撤回。
+    // 用 CAS（WHERE status = 进入本关前的状态）写入，撤回/他人推进后 affectedRows=0，立即中止，
+    // 不再把 withdrawn 覆盖成 gate2 / pending_manual。
+    const w = await db.run(
+      `UPDATE \`review_submission\` SET \`status\` = ?, \`gate_results\` = ?, \`appended_risk_text\` = ?, \`updated_at\` = ?
+       WHERE \`id\` = ? AND \`status\` = ?`,
       [
         nextStatus,
         JSON.stringify(results),
         g.gate === 'gate3' ? riskHint : sub.appendedRiskText,
         toDb(utcNow()),
         submissionId,
+        g.entry,
       ],
     )
-    await db.run('UPDATE `copy` SET `review_gate` = ?, `updated_at` = ? WHERE `id` = ?', [
+    if (!w.affectedRows) {
+      logger.info({ submissionId, gate: g.gate, from: g.entry }, 'review.stub.aborted_by_state_change')
+      return
+    }
+    // copy.review_gate 只在仍是本审核单时同步
+    await db.run('UPDATE `copy` SET `review_gate` = ?, `updated_at` = ? WHERE `id` = ? AND `review_submission_id` = ?', [
       nextStatus,
       toDb(utcNow()),
       sub.copyId,
+      submissionId,
     ])
     logger.debug({ submissionId, gate: g.gate, nextStatus }, 'review.stub.gate')
   }
@@ -262,16 +288,37 @@ export async function onReviewResult(input: ReviewResultInput): Promise<{ copyId
   if (!sub) throw err.notFound('审核单不存在')
   if (sub.status === 'withdrawn') throw err.invalidState('该审核单已撤回，结果不再回写')
 
+  // P1-8①：裁决只允许处理**待人工复核**的审核单，且它必须是该 copy 当前的审核单。
+  // 之前不校验，已退回的旧审核单可以再被「通过」，gate1 的审核单可以跳过后续关卡直接通过，
+  // 结果会把已撤回/已修订的 copy 改回 approved 并绑定旧版本。
+  // 说明：真实审核模块按契约回写时也走本接口；若对方在 gate1/gate2 阶段就给出结果，
+  // 需要产品确认是否放宽——当前按「不跳过关卡」的保守策略实现。
+  if (sub.status !== 'pending_manual') {
+    throw err.invalidState(
+      `审核单当前状态（${sub.status}）不接受裁决，仅「待人工复核」可回写结果`,
+      { status: sub.status, submissionId: sub.id },
+    )
+  }
+
   const now = toDb(utcNow())
   const copy = await getCopy(sub.copyId, db)
   if (!copy) throw err.notFound('文案不存在')
+  if (copy.reviewSubmissionId !== sub.id) {
+    throw err.invalidState('该审核单不是当前文案的审核单（可能已撤回或重新提交），结果不再回写', {
+      submissionId: sub.id,
+      currentSubmissionId: copy.reviewSubmissionId,
+    })
+  }
 
   if (input.result === 'approved') {
     await db.tx(async (t) => {
-      await t.run(
-        'UPDATE `review_submission` SET `status` = \'approved\', `decided_by` = ?, `appended_risk_text` = COALESCE(?, `appended_risk_text`), `updated_at` = ? WHERE `id` = ?',
+      const w = await t.run(
+        `UPDATE \`review_submission\` SET \`status\` = 'approved', \`decided_by\` = ?,
+          \`appended_risk_text\` = COALESCE(?, \`appended_risk_text\`), \`updated_at\` = ?
+         WHERE \`id\` = ? AND \`status\` = 'pending_manual'`,
         [input.operator ?? 'system', input.appendedRiskText ?? null, now, input.submissionId],
       )
+      if (!w.affectedRows) throw err.invalidState('审核单状态已变化，裁决未生效')
       // 通过：approved_version_id + body 冗余已通过版本纯文本（§4.1）
       await t.run(
         `UPDATE \`copy\` SET \`status\` = 'approved', \`approved_version_id\` = ?, \`review_gate\` = 'approved',
@@ -301,11 +348,13 @@ export async function onReviewResult(input: ReviewResultInput): Promise<{ copyId
         ...gateResult(rejectedGate, 'fail', reason, input.riskPoints ?? undefined),
       },
     ]
-    await t.run(
+    const w = await t.run(
       `UPDATE \`review_submission\` SET \`status\` = 'rejected', \`rejected_gate\` = ?, \`reason\` = ?,
-        \`gate_results\` = ?, \`decided_by\` = ?, \`updated_at\` = ? WHERE \`id\` = ?`,
+        \`gate_results\` = ?, \`decided_by\` = ?, \`updated_at\` = ?
+       WHERE \`id\` = ? AND \`status\` = 'pending_manual'`,
       [rejectedGate, reason, JSON.stringify(results), input.operator ?? 'system', now, sub.id],
     )
+    if (!w.affectedRows) throw err.invalidState('审核单状态已变化，裁决未生效')
     await t.run(
       `UPDATE \`copy\` SET \`status\` = 'rejected', \`reject_reason\` = ?, \`review_gate\` = ?, \`updated_at\` = ? WHERE \`id\` = ?`,
       [reason, rejectedGate, now, sub.copyId],
@@ -354,14 +403,20 @@ export async function withdrawReview(
 
   const now = toDb(utcNow())
   await db.tx(async (t) => {
-    await t.run('UPDATE `review_submission` SET `status` = \'withdrawn\', `decided_by` = ?, `updated_at` = ? WHERE `id` = ?', [
-      operator,
-      now,
-      sub.id,
-    ])
+    // P1-8③：CAS 撤回。读取状态到这里之间，审核桩可能已把它推进到 pending_manual，
+    // 之前是无条件 UPDATE，会把刚进入人工复核的审核单强行撤回。
+    const w = await t.run(
+      `UPDATE \`review_submission\` SET \`status\` = 'withdrawn', \`decided_by\` = ?, \`updated_at\` = ?
+       WHERE \`id\` = ? AND \`status\` = ?`,
+      [operator, now, sub.id, sub.status],
+    )
+    if (!w.affectedRows) {
+      throw err.withdrawNotAllowed('审核单状态已变化（可能刚进入人工复核），无法撤回', { status: sub.status })
+    }
     await t.run(
-      `UPDATE \`copy\` SET \`status\` = 'draft', \`review_gate\` = 'withdrawn', \`review_submission_id\` = NULL, \`updated_at\` = ? WHERE \`id\` = ?`,
-      [now, copyId],
+      `UPDATE \`copy\` SET \`status\` = 'draft', \`review_gate\` = 'withdrawn', \`review_submission_id\` = NULL, \`updated_at\` = ?
+       WHERE \`id\` = ? AND \`review_submission_id\` = ?`,
+      [now, copyId, sub.id],
     )
   })
 

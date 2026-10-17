@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto'
 import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify'
 import cors from '@fastify/cors'
+import multipart from '@fastify/multipart'
 import { config } from './config.js'
 import { logger } from './log.js'
 import { ApiError, isApiError } from './errors.js'
@@ -25,10 +27,21 @@ export async function buildApp(): Promise<FastifyInstance> {
     logger: false,
     bodyLimit: 2 * 1024 * 1024,
     trustProxy: true,
-    genReqId: (req) => String(req.headers['x-request-id'] ?? ''),
+    // P2-12：没有 x-request-id 时必须生成新 id，返回空串会让所有请求共用同一个 id
+    genReqId: (req) => {
+      const raw = req.headers['x-request-id']
+      const v = Array.isArray(raw) ? raw[0] : raw
+      return (v && String(v).trim()) || randomUUID()
+    },
   })
 
   await app.register(cors, { origin: true, credentials: false })
+
+  // P0-3：文章上传走 multipart；单文件 + 大小上限由各路由用 limits 覆盖
+  await app.register(multipart, {
+    limits: { fileSize: config.copy.articleMaxBytes, files: 1, fields: 20 },
+    throwFileSizeLimit: false,
+  })
 
   app.addHook('onRequest', async (req) => {
     req.operator = operatorOf(req)
@@ -54,6 +67,15 @@ export async function buildApp(): Promise<FastifyInstance> {
       return reply.status(400).send({
         ok: false,
         error: { code: 'bad_request', message: `参数校验失败：${err.message}`, details: err.validation },
+      })
+    }
+    // P1-16：框架层的 4xx（400 JSON 解析失败 / 413 请求体过大 / 415 媒体类型不支持 /
+    // 429 限流等）必须原样透传，否则会被改写成 500 并污染错误日志。
+    const status = Number(err.statusCode ?? 0)
+    if (status >= 400 && status < 500) {
+      return reply.status(status).send({
+        ok: false,
+        error: { code: err.code ?? 'bad_request', message: err.message ?? '请求不合法' },
       })
     }
     logger.error({ err: (error as Error).message, stack: (error as Error).stack }, 'http.error')

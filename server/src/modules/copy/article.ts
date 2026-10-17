@@ -136,45 +136,35 @@ function stripTags(s: string): string {
     .replace(/&#39;/g, "'")
 }
 
-/* ── pdf（pdftotext.js 轻量解析；扫描件返回 ARTICLE_NO_TEXT）──────── */
+/* ── pdf（pdf-parse 2.x 的 PDFParse 类；扫描件返回 ARTICLE_NO_TEXT）──────── */
 
 async function parsePdf(buffer: Buffer): Promise<string> {
-  // 优先使用 pdf-parse（若已安装），否则退回内置极简提取器
+  // P0-4：pdf-parse 2.x **没有 default 导出**，改为 PDFParse 类。
+  // 之前 `mod.default(buffer)` 必然抛 TypeError 并被 catch 静默降级到 minimalPdfText，
+  // 该兜底只能识别未压缩的 Tj/TJ，FlateDecode 压缩流与中文 CID 字体全部解析不出。
+  let PDFParse: new (o: { data: Buffer }) => {
+    getText: () => Promise<{ text?: string }>
+    destroy: () => Promise<void>
+  }
   try {
-    const mod = (await import('pdf-parse')) as unknown as { default: (b: Buffer) => Promise<{ text: string }> }
-    const r = await mod.default(buffer)
-    return r.text ?? ''
+    const mod = (await import('pdf-parse')) as unknown as { PDFParse: typeof PDFParse }
+    PDFParse = mod.PDFParse
   } catch {
-    return minimalPdfText(buffer)
+    throw err.articleUnsupported('pdf 解析依赖 pdf-parse 未安装，请运行 npm install pdf-parse')
   }
-}
-
-/**
- * 极简 PDF 文本提取（无第三方依赖时的兜底）：
- * 从 Tj / TJ 操作符里抽字符串，足够覆盖纯文本 PDF；扫描件必然抽不到 → 上层报 ARTICLE_NO_TEXT。
- */
-function minimalPdfText(buffer: Buffer): string {
-  const raw = buffer.toString('latin1')
-  const chunks: string[] = []
-  const re = /\((?:\\.|[^\\()])*\)\s*Tj|\[(?:[^\]]*)\]\s*TJ/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(raw))) {
-    const seg = m[0]
-    const parts = seg.match(/\((?:\\.|[^\\()])*\)/g) ?? []
-    for (const p of parts) {
-      chunks.push(unescapePdf(p.slice(1, -1)))
-    }
+  const parser = new PDFParse({ data: buffer })
+  try {
+    const r = await parser.getText()
+    return r.text ?? ''
+  } catch (e) {
+    // 加密 / 损坏 / 非真实 PDF：明确报错，不再静默兜底成「扫描件」
+    throw err.articleUnsupported(
+      `PDF 解析失败（文件可能已加密或损坏）：${(e as Error).message}`,
+      { reason: 'parse_failed' },
+    )
+  } finally {
+    await parser.destroy().catch(() => {})
   }
-  return chunks.join('').replace(/\s{3,}/g, '\n')
-}
-
-function unescapePdf(s: string): string {
-  return s
-    .replace(/\\([nrtbf()\\])/g, (_, c: string) => {
-      const map: Record<string, string> = { n: '\n', r: '', t: ' ', b: '', f: '', '(': '(', ')': ')', '\\': '\\' }
-      return map[c] ?? c
-    })
-    .replace(/\\([0-7]{1,3})/g, (_, oct: string) => String.fromCharCode(parseInt(oct, 8)))
 }
 
 /* ── 大纲构建（md 按 # 层级；txt/pdf 按空行切段）──────────────────── */

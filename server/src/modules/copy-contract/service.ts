@@ -37,25 +37,47 @@ export async function createDraftsFromTopics(args: CreateDraftsArgs): Promise<Cr
   const topics = await getTopicsByIds(args.topicIds, db)
   if (!topics.length) throw err.notFound('未找到任何选题')
 
-  const copyIds: string[] = []
-  const skipped: string[] = []
   const now = toDb(utcNow())
 
+  // P1-4①：先整体校验所有选题，避免「第 1 条已建 copy、第 2 条抛 409」的部分送入。
   for (const topic of topics) {
-    if (topic.status === 'sent' && !args.alreadySent) {
-      skipped.push(topic.id)
-      continue
-    }
+    if (topic.status === 'sent' && !args.alreadySent) continue
     if (topic.status === 'candidate') {
       throw err.invalidState(`选题「${topic.title}」尚未分配人物，不能送入文案工坊`, { topicId: topic.id })
     }
     if (topic.status === 'archived') {
       throw err.invalidState(`选题「${topic.title}」已归档，不能送入文案工坊`, { topicId: topic.id })
     }
+    const pids = args.personaIds?.length ? args.personaIds : topic.personaIds
+    if (!pids?.length) {
+      throw err.badRequest(`选题「${topic.title}」没有分配人物，请先分配后再送入`, { topicId: topic.id })
+    }
+  }
+
+  const copyIds: string[] = []
+  const skipped: string[] = []
+
+  for (const topic of topics) {
+    if (topic.status === 'sent' && !args.alreadySent) {
+      skipped.push(topic.id)
+      continue
+    }
 
     const personaIds = args.personaIds?.length ? args.personaIds : topic.personaIds
-    if (!personaIds?.length) {
-      throw err.badRequest(`选题「${topic.title}」没有分配人物，请先分配后再送入`, { topicId: topic.id })
+    if (!personaIds?.length) continue // 已在预校验阶段拦截，这里只为类型收窄
+
+    // P1-4②：并发保护——用条件更新占位，只有真正把 status 改成 sent 的那一个请求才展开 copy。
+    // alreadySent 表示调用方已在本事务内建成 sent，此时不需要再更新（也不能命中）。
+    if (!args.alreadySent) {
+      const claim = await db.run(
+        "UPDATE `topic` SET `status` = 'sent', `sent_at` = ? WHERE `id` = ? AND `status` = 'assigned'",
+        [now, topic.id],
+      )
+      if (!claim.affectedRows) {
+        // 另一个请求刚刚把它送走了，本次跳过（不重复建 copy）
+        skipped.push(topic.id)
+        continue
+      }
     }
 
     const { sourceText, refType, refId, extractCacheId } = await resolveSource(topic, db)
@@ -86,23 +108,32 @@ export async function createDraftsFromTopics(args: CreateDraftsArgs): Promise<Cr
       )
       copyIds.push(id)
     }
-    await markSent(topic.id, db)
+    // alreadySent 时调用方已在本事务内建成 sent；否则上面已用条件更新落库
+    if (args.alreadySent) await markSent(topic.id, db)
     logger.info({ topicId: topic.id, personas: personaIds.length, copies: personaIds.length }, 'copy.drafts_created')
   }
 
-  // 为每条新 copy 建一份空白初始稿：送入后可直接编辑，不必再手动新建稿（FR-E4）。
-  // 放在事务外单条执行，建稿失败不影响已成立的 topic/copy（AC-S5 只要求这两者原子）。
-  // 用动态导入避免 copy-contract → copy 的静态循环依赖。
-  if (copyIds.length) {
-    const { createDraft } = await import('../copy/service.js')
-    for (const id of copyIds) {
-      await createDraft(id, null, args.operator ?? 'system').catch((e) => {
-        logger.warn({ copyId: id, err: (e as Error).message }, 'copy.initial_draft_failed')
-      })
-    }
-  }
-
+  // P1-10：初始空白稿**不在本函数内创建**。
+  // 本函数常在调用方的 db.tx 作用域内被调用，而 createDraft 用的是全局 getDb()：
+  //  - SQLite 同连接 → 在事务里建出第 1 份稿，调用方提交后又在事务外建第 2 份（实测每条文案 2 份空白稿）；
+  //  - MySQL 另一连接 → 看不到未提交的 copy，requireCopy 报 not found 被吞成 warn（对标送入没有初始稿）。
+  // 改为只返回 copyIds，由调用方在事务提交后统一调用 createInitialDrafts(copyIds)。
   return { created: copyIds.length, copyIds, skipped }
+}
+
+/**
+ * 为送入后的 copy 各建一份空白初始稿（FR-E4）。
+ * 必须在事务**提交之后**调用，且只调用一次。
+ */
+export async function createInitialDrafts(copyIds: string[], operator?: string): Promise<void> {
+  if (!copyIds.length) return
+  // 用动态导入避免 copy-contract → copy 的静态循环依赖。
+  const { createDraft } = await import('../copy/service.js')
+  for (const id of copyIds) {
+    await createDraft(id, null, operator ?? 'system').catch((e) => {
+      logger.warn({ copyId: id, err: (e as Error).message }, 'copy.initial_draft_failed')
+    })
+  }
 }
 
 async function resolveSource(

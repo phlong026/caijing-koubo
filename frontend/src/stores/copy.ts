@@ -17,6 +17,54 @@ function toEditableSections(raw: Section[] | undefined): Section[] {
   return list.length ? list : [{ label: '开场', text: '' }]
 }
 
+/* ── P0-5：本地暂存（AC-F4 断网时未保存内容不丢失）────────────────── */
+
+const LOCAL_KEY_PREFIX = 'mw.copy.draft.'
+/** 自动保存防抖：FR-E2 要求停止输入 2 秒后保存 */
+const AUTOSAVE_DEBOUNCE_MS = 2000
+
+interface LocalDraft {
+  copyId: string
+  draftId: string
+  rev: number
+  title: string
+  sections: Section[]
+  savedAt: number
+}
+
+function localKey(copyId: string, draftId: string): string {
+  return `${LOCAL_KEY_PREFIX}${copyId}.${draftId}`
+}
+
+/** 读本地暂存：任何异常都吞掉（隐私模式 / 配额超限 / 数据损坏） */
+function readLocalDraft(copyId: string, draftId: string): LocalDraft | null {
+  try {
+    const raw = localStorage.getItem(localKey(copyId, draftId))
+    if (!raw) return null
+    const o = JSON.parse(raw) as LocalDraft
+    if (!o || typeof o !== 'object' || !Array.isArray(o.sections)) return null
+    return o
+  } catch {
+    return null
+  }
+}
+
+function writeLocalDraft(d: LocalDraft): void {
+  try {
+    localStorage.setItem(localKey(d.copyId, d.draftId), JSON.stringify(d))
+  } catch {
+    /* 配额不足或隐私模式：暂存失败不影响编辑 */
+  }
+}
+
+function clearLocalDraft(copyId: string, draftId: string): void {
+  try {
+    localStorage.removeItem(localKey(copyId, draftId))
+  } catch {
+    /* 忽略 */
+  }
+}
+
 export const useCopyStore = defineStore('copy', () => {
   /* ── 选项 ── */
   const options = ref<CopyOptions | null>(null)
@@ -29,16 +77,45 @@ export const useCopyStore = defineStore('copy', () => {
   const notFound = ref(false)
 
   /* ── 编辑器本地态 ── */
+  /**
+   * P0-5：用「编辑序号」代替布尔 dirty。
+   * 每次修改 `editSeq++`；保存时记录发出请求那一刻的 `savedSeq`；
+   * 请求返回后只有 savedSeq === editSeq 才算干净 —— 否则保存期间用户继续输入的那部分
+   * 改动会被误标为「已保存」，之后既不会自动保存、也不会在离开时提示。
+   */
   const editor = ref<{
     draftId: string
     title: string
     sections: Section[]
     rev: number
-    dirty: boolean
+    editSeq: number
+    savedSeq: number
     saving: boolean
     lastSavedAt: string | null
     conflict: boolean
+    /** 自动保存失败的最新原因（底栏展示「保存失败，可重试」） */
+    saveError: string | null
+    /** 本次载入时在 localStorage 里发现了比服务端更新的暂存，等待用户决定 */
+    localNewer: boolean
   } | null>(null)
+
+  /** 派生「脏」状态：有未保存到服务端的编辑 */
+  const isDirty = computed(() => !!editor.value && editor.value.editSeq > editor.value.savedSeq)
+
+  /** 底栏文案（FR-E2：保存中 / 已自动保存 HH:mm / 保存失败可重试） */
+  const saveState = computed<'saved' | 'saving' | 'dirty' | 'error'>(() => {
+    const e = editor.value
+    if (!e) return 'saved'
+    if (e.saving) return 'saving'
+    if (e.saveError) return 'error'
+    if (e.editSeq > e.savedSeq) return 'dirty'
+    return 'saved'
+  })
+
+  let autosaveTimer: ReturnType<typeof setTimeout> | null = null
+  /** 串行化：同一时刻只有一个保存请求在飞，期间的新改动等它回来后再合并发送 */
+  let saveInFlight = false
+  let saveAgain = false
 
   /* ── 生成 ── */
   const generating = ref(false)
@@ -110,28 +187,112 @@ export const useCopyStore = defineStore('copy', () => {
       editor.value = null
       return
     }
-    editor.value = {
+    // P0-5：服务端有内容，但本地暂存更新（例如上次断网没存上 / 直接关掉了标签页）
+    const local = detail.value ? readLocalDraft(detail.value.copy.id, d.id) : null
+    const base = {
       draftId: d.id,
       title: d.title ?? '',
       sections: toEditableSections(d.sections),
       rev: d.rev,
-      dirty: false,
       saving: false,
       lastSavedAt: d.updatedAt,
       conflict: false,
+      saveError: null,
     }
+    const serverTime = d.updatedAt ? new Date(d.updatedAt).getTime() : 0
+    if (local && local.savedAt > serverTime) {
+      editor.value = {
+        ...base,
+        title: local.title,
+        sections: toEditableSections(local.sections),
+        // 本地暂存的 rev 可能已过期，保留服务端 rev 以便冲突时走 COPY_DRAFT_CONFLICT
+        editSeq: 1,
+        savedSeq: 0,
+        localNewer: true,
+      }
+      return
+    }
+    if (local) clearLocalDraft(detail.value!.copy.id, d.id)
+    editor.value = { ...base, editSeq: 0, savedSeq: 0, localNewer: false }
+  }
+
+  /** 用户确认丢弃本地暂存，回到服务端内容 */
+  function discardLocalDraft(): void {
+    if (!detail.value || !editor.value) return
+    clearLocalDraft(detail.value.copy.id, editor.value.draftId)
+    syncEditorFromCurrent()
+  }
+
+  /**
+   * 用户选择「放弃改动」：清掉本地暂存并把编辑序号对齐，
+   * 之后 isDirty 为 false，切换稿件不会再被拦。
+   */
+  function acceptServerState(): void {
+    const e = editor.value
+    if (!e) return
+    cancelAutosave()
+    if (detail.value) clearLocalDraft(detail.value.copy.id, e.draftId)
+    e.savedSeq = e.editSeq
+    e.saveError = null
+    e.localNewer = false
   }
 
   /** 切换当前稿：若本地有未保存改动，先提示调用方确认 */
   async function switchDraft(draftId: string): Promise<boolean> {
-    if (editor.value?.dirty) return false
+    if (isDirty.value) return false
     await copyApi.switchDraft(copy.value!.id, draftId)
     await load(copy.value!.id)
     return true
   }
 
+  /** P0-5：标记改动 —— editSeq++ + 写本地暂存 + 安排 2 秒防抖自动保存 */
   function markDirty(): void {
-    if (editor.value) editor.value.dirty = true
+    const e = editor.value
+    if (!e) return
+    e.editSeq += 1
+    e.saveError = null
+    persistLocal()
+    scheduleAutosave()
+  }
+
+  function persistLocal(): void {
+    const e = editor.value
+    const c = copy.value
+    if (!e || !c) return
+    writeLocalDraft({
+      copyId: c.id,
+      draftId: e.draftId,
+      rev: e.rev,
+      title: e.title,
+      sections: e.sections,
+      savedAt: Date.now(),
+    })
+  }
+
+  function cancelAutosave(): void {
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer)
+      autosaveTimer = null
+    }
+  }
+
+  function scheduleAutosave(): void {
+    cancelAutosave()
+    if (!canEdit.value) return
+    autosaveTimer = setTimeout(() => {
+      autosaveTimer = null
+      void autosave()
+    }, AUTOSAVE_DEBOUNCE_MS)
+  }
+
+  /** 自动保存：串行化，冲突时不打扰用户（只标记，交给手动保存处理） */
+  async function autosave(): Promise<void> {
+    if (!isDirty.value || saveInFlight) {
+      if (saveInFlight) saveAgain = true
+      return
+    }
+    const r = await save()
+    if (r === 'ok' && isDirty.value) void autosave()
   }
 
   function updateSection(index: number, text: string): void {
@@ -156,66 +317,114 @@ export const useCopyStore = defineStore('copy', () => {
     precheck.value = null
   }
 
+  function updateTitle(title: string): void {
+    if (!editor.value) return
+    editor.value.title = title
+    markDirty()
+  }
+
   /**
    * 保存当前稿。
    * @returns 'ok' | 'conflict' | 'need_confirm' | 'error'
    */
   async function save(confirmReedit = false): Promise<'ok' | 'conflict' | 'need_confirm' | 'error'> {
     if (!editor.value || !copy.value) return 'error'
-    editor.value.saving = true
+    cancelAutosave()
+    const e = editor.value
+    const savingSeq = e.editSeq
+    e.saving = true
+    e.saveError = null
     error.value = null
+    saveInFlight = true
     try {
-      const r = await copyApi.saveDraft(copy.value.id, editor.value.draftId, {
-        title: editor.value.title || null,
-        sections: editor.value.sections,
-        rev: editor.value.rev,
+      const r = await copyApi.saveDraft(copy.value.id, e.draftId, {
+        title: e.title || null,
+        sections: e.sections,
+        rev: e.rev,
         confirmReedit,
       })
-      editor.value.rev = r.draft.rev
-      editor.value.dirty = false
-      editor.value.conflict = false
-      editor.value.lastSavedAt = r.draft.updatedAt
+      e.rev = r.draft.rev
+      // P0-5：只有「发出请求时」与「当前」的编辑序号一致才算干净
+      e.savedSeq = savingSeq
+      e.conflict = false
+      e.lastSavedAt = r.draft.updatedAt
       precheck.value = null
-      // 轻量刷新稿列表与状态，不覆盖编辑器内容
-      detail.value = await copyApi.detail(copy.value.id)
+      if (e.editSeq === savingSeq) clearLocalDraft(copy.value.id, e.draftId)
+      // P0-5：不再整体重拉 detail（每次保存都拉会触发懒建稿副作用、也拖慢输入）；
+      // 只就地更新当前稿的 rev / updatedAt 与列表里的对应项。
+      patchDetailAfterSave(e.draftId, r.draft.rev, r.draft.updatedAt)
       return 'ok'
-    } catch (e) {
-      if (e instanceof ApiError) {
-        if (e.code === 'COPY_DRAFT_CONFLICT') {
-          if (editor.value) editor.value.conflict = true
+    } catch (err0) {
+      const ex = err0
+      if (ex instanceof ApiError) {
+        if (ex.code === 'COPY_DRAFT_CONFLICT') {
+          e.conflict = true
           error.value = '该稿已在其他页面修改，请载入最新内容或另存为新稿'
           return 'conflict'
         }
-        if (e.code === 'COPY_LOCKED') {
+        if (ex.code === 'COPY_LOCKED') {
           error.value = '文案正在审核中，暂不可编辑'
           return 'error'
         }
-        if (e.status === 409 && (e as unknown as { details?: { requiresConfirm?: boolean } }).details?.requiresConfirm) {
+        if (ex.status === 409 && (ex as unknown as { details?: { requiresConfirm?: boolean } }).details?.requiresConfirm) {
           return 'need_confirm'
         }
-        error.value = e.message
+        e.saveError = ex.message
+        error.value = ex.message
       } else {
-        error.value = (e as Error).message
+        e.saveError = (ex as Error).message || '保存失败'
+        error.value = e.saveError
       }
+      // 失败时保留本地暂存，下次打开可恢复（AC-F4）
+      persistLocal()
       return 'error'
     } finally {
       if (editor.value) editor.value.saving = false
+      saveInFlight = false
+      if (saveAgain) {
+        saveAgain = false
+        scheduleAutosave()
+      }
     }
+  }
+
+  /** 保存成功后轻量打补丁，避免整份 detail 重拉 */
+  function patchDetailAfterSave(draftId: string, rev: number, updatedAt: string): void {
+    const d = detail.value
+    if (!d) return
+    const target = d.drafts.find((x) => x.id === draftId)
+    if (target) {
+      target.rev = rev
+      target.updatedAt = updatedAt
+    }
+    if (d.currentDraft && d.currentDraft.id === draftId) {
+      d.currentDraft.rev = rev
+      d.currentDraft.updatedAt = updatedAt
+      d.currentDraft.title = editor.value?.title ?? d.currentDraft.title
+      d.currentDraft.sections = editor.value?.sections ?? d.currentDraft.sections
+    }
+    // 本地暂存也不应再提示「本地更新」
+    if (editor.value) editor.value.localNewer = false
   }
 
   /** 载入最新（放弃本地改动） */
   async function reloadDraft(): Promise<void> {
     if (!copy.value || !editor.value) return
+    cancelAutosave()
     const d = await copyApi.getDraft(copy.value.id, editor.value.draftId)
+    clearLocalDraft(copy.value.id, d.id)
     editor.value = {
       draftId: d.id,
       title: d.title ?? '',
       sections: toEditableSections(d.sections),
       rev: d.rev,
-      dirty: false,
+      editSeq: 0,
+      savedSeq: 0,
       saving: false,
       lastSavedAt: d.updatedAt,
       conflict: false,
+      saveError: null,
+      localNewer: false,
     }
   }
 
@@ -225,6 +434,9 @@ export const useCopyStore = defineStore('copy', () => {
     const created = await copyApi.createDraft(copy.value.id)
     editor.value.draftId = created.id
     editor.value.rev = 0
+    // 换了稿，编辑序号重新对齐，避免上一稿的序号影响脏判断
+    editor.value.savedSeq = 0
+    editor.value.editSeq = Math.max(1, editor.value.editSeq)
     const r = await save()
     if (r === 'ok') await load(copy.value.id)
   }
@@ -232,7 +444,7 @@ export const useCopyStore = defineStore('copy', () => {
   async function runPrecheck(): Promise<PrecheckResult | null> {
     if (!copy.value || !editor.value) return null
     // 预检先落盘，避免校验的是旧内容
-    if (editor.value.dirty) {
+    if (isDirty.value) {
       const r = await save()
       if (r !== 'ok') return null
     }
@@ -287,7 +499,7 @@ export const useCopyStore = defineStore('copy', () => {
     genTimedOut.value = false
     generatedDrafts.value = []
     try {
-      if (editor.value?.dirty) {
+      if (isDirty.value) {
         const r = await save()
         if (r !== 'ok' && r !== 'need_confirm') {
           generating.value = false
@@ -338,7 +550,7 @@ export const useCopyStore = defineStore('copy', () => {
           if (copy.value) {
             const before = editor.value?.draftId
             detail.value = await copyApi.detail(copy.value.id)
-            if (!editor.value?.dirty) syncEditorFromCurrent()
+            if (!isDirty.value) syncEditorFromCurrent()
             // 稿被自动切换 → 提示用户，避免误以为内容丢失
             const now = editor.value
             if (now && before && now.draftId !== before && g.status !== 'failed') {
@@ -446,6 +658,9 @@ export const useCopyStore = defineStore('copy', () => {
     error,
     notFound,
     editor,
+    /** P0-5：派生脏状态（替代原来的 editor.dirty 布尔） */
+    isDirty,
+    saveState,
     generating,
     activeGeneration,
     generatedDrafts,
@@ -471,9 +686,14 @@ export const useCopyStore = defineStore('copy', () => {
     switchDraft,
     markDirty,
     updateSection,
+    updateTitle,
     addSection,
     removeSection,
     save,
+    autosave,
+    cancelAutosave,
+    discardLocalDraft,
+    acceptServerState,
     reloadDraft,
     saveAsNewDraft,
     runPrecheck,
