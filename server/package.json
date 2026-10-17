@@ -16,7 +16,11 @@
     "check:mysql-ddl:self": "tsx scripts/check-mysql-ddl.ts --selftest",
     "test:finstep:clean": "tsx scripts/test-finstep-clean.ts",
     "test:finstep": "tsx scripts/test-finstep.ts",
-    "check": "npm run typecheck && npm run check:mysql-ddl && npm run check:mysql-ddl:self && npm run test:finstep:clean"
+    "test:saturn:clean": "tsx scripts/test-saturn-clean.ts",
+    "test:saturn": "tsx scripts/test-saturn.ts",
+    "check": "npm run typecheck && npm run check:mysql-ddl && npm run check:mysql-ddl:self && npm run test:finstep:clean && npm run test:saturn:clean",
+    "smoke:topics": "tsx scripts/smoke-topics.ts",
+    "fix:topic-status": "tsx scripts/fix-topic-status.ts"
   },
   "dependencies": {
     "@esbuild/win32-x64": "^0.28.2",

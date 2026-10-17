@@ -46,7 +46,10 @@ export const useTopicStore = defineStore('topics', () => {
     loading.value = true
     error.value = null
     try {
-      const res = await getTopics({ status: 'candidate', page: page.value, pageSize: pageSize.value, ...query })
+      // 「候选」= 已生成但尚未送入文案工坊，含 candidate（未分配）与 assigned（已分配）两种状态。
+      // 早期实现只查 status:'candidate'，而生成时就已经把人物写进 personaIds 并置为 assigned，
+      // 结果候选栏恒为 0 条（选完人物后条目立刻从列表消失），用户以为选题没生成。
+      const res = await getTopics({ status: 'candidate,assigned', page: page.value, pageSize: pageSize.value, ...query })
       items.value = res.items
       total.value = res.total
       page.value = res.page

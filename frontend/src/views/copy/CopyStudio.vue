@@ -4,7 +4,8 @@
       <template #sub>
         <span v-if="copy">
           {{ copy.title || '（未命名文案）' }}
-          <template v-if="copy.persona"> · {{ copy.persona.name }}</template>
+          <!-- persona 在详情接口顶层，不在 copy 上；这里统一走 personaName -->
+          <template v-if="personaName"> · {{ personaName }}</template>
           <template v-if="copy.lineLabel"> · {{ copy.lineLabel }}</template>
         </span>
         <span v-else>从爆款选题或文章生成可审核、可追溯的口播文案</span>
@@ -146,6 +147,8 @@ const router = useRouter()
 const store = useCopyStore()
 
 const copy = computed(() => store.copy)
+/** 人物名取自详情顶层 `persona`（copy 自身没有 persona 字段） */
+const personaName = computed(() => store.detail?.persona?.name ?? '')
 const showReview = computed(
   () => !!store.detail?.review || ['in_review', 'approved', 'rejected'].includes(copy.value?.status ?? ''),
 )
@@ -205,9 +208,13 @@ async function loadByRoute(): Promise<void> {
     return
   }
   await store.load(target)
-  // 载入后按人物刷新可选风格（Q4 按线过滤）
-  if (store.copy?.persona?.id) {
-    await store.loadOptions(store.copy.persona.id)
+  // 载入后按人物刷新可选风格（Q4 按线过滤）。
+  // 注意：`copy.persona` 只在**列表项**里有值，`GET /copy/:id` 返回的 copy 对象不带该字段
+  // （人物在详情顶层 persona）。早先只读 copy.persona.id，导致详情页永远拿不到人物，
+  // 风格选项无法按线过滤。这里以详情顶层优先，再回落到 copy.persona。
+  const pid = store.detail?.persona?.id ?? store.copy?.persona?.id
+  if (pid) {
+    await store.loadOptions(pid)
   }
 }
 

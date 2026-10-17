@@ -2,7 +2,7 @@ import { getDb, type Db } from '../../db/index.js'
 import { newId, jdec } from '../../lib/util.js'
 import { toDb, utcNow } from '../../lib/time.js'
 import { err } from '../../errors.js'
-import { getTopicsByIds, markSent, type TopicRow } from '../topics/repo.js'
+import { assertPersonasUsable, getTopicsByIds, markSent, type TopicRow } from '../topics/repo.js'
 import { logger } from '../../log.js'
 
 export interface CreateDraftsArgs {
@@ -52,6 +52,9 @@ export async function createDraftsFromTopics(args: CreateDraftsArgs): Promise<Cr
     if (!pids?.length) {
       throw err.badRequest(`选题「${topic.title}」没有分配人物，请先分配后再送入`, { topicId: topic.id })
     }
+    // P1-4 补全：必须校验人物真实存在且启用。原先只判空，
+    // 传入不存在的人物会一路建成 copy，留下悬空的 copy.persona_id。
+    await assertPersonasUsable(pids, db)
   }
 
   const copyIds: string[] = []

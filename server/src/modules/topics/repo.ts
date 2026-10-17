@@ -93,8 +93,20 @@ export async function listTopics(q: Record<string, unknown>): Promise<PageResult
   const where: string[] = []
   const params: unknown[] = []
   if (q.status) {
-    where.push('t.`status` = ?')
-    params.push(String(q.status))
+    // 支持 `status=candidate,assigned` 这种多状态查询。
+    // 前端候选栏的语义是「已生成、尚未送入」，天然跨 candidate 与 assigned 两态，
+    // 只支持单值会逼前端发两次请求再合并（分页也会错乱）。
+    const states = String(q.status)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (states.length === 1) {
+      where.push('t.`status` = ?')
+      params.push(states[0])
+    } else if (states.length > 1) {
+      where.push(`t.\`status\` IN (${states.map(() => '?').join(', ')})`)
+      params.push(...states)
+    }
   }
   if (q.source) {
     where.push('t.`source` = ?')
@@ -169,11 +181,41 @@ export async function setTopicStatus(id: string, next: TopicStatus, db = getDb()
 }
 
 /** 分配人物：sent 后不可再改分配（FR-C1） */
+/**
+ * 校验人物存在且启用（P1-4 补全 / 评审 P2-2）。
+ *
+ * 原始实现只检查 `personaIds.length`，不查 `persona` 表，于是：
+ *   - `assignPersonas(['ps_does_not_exist'])` 返回 200；
+ *   - 随后 `/topics/send` 会照此为不存在的人物建出一条 copy，
+ *     `copy.persona_id` 成为悬空外键，文案工坊打开时人物档案为空。
+ * 实测（本机 dev 库）可稳定复现，故在「分配」与「送入」两个入口统一拦截。
+ */
+export async function assertPersonasUsable(personaIds: string[], db = getDb()): Promise<void> {
+  if (!personaIds.length) return
+  const uniq = [...new Set(personaIds)]
+  const ph = uniq.map(() => '?').join(', ')
+  const rows = await db.all<{ id: string; enabled: number | boolean }>(
+    `SELECT \`id\`, \`enabled\` FROM \`persona\` WHERE \`id\` IN (${ph})`,
+    uniq,
+  )
+  const found = new Map(rows.map((r) => [r.id, !!Number(r.enabled)]))
+  const missing = uniq.filter((id) => !found.has(id))
+  if (missing.length) {
+    throw err.badRequest(`人物不存在：${missing.join('、')}`, { personaIds: missing })
+  }
+  const disabled = uniq.filter((id) => found.get(id) === false)
+  if (disabled.length) {
+    throw err.badRequest(`人物已停用，请先启用后再使用：${disabled.join('、')}`, { personaIds: disabled })
+  }
+}
+
 export async function assignPersonas(id: string, personaIds: string[], db = getDb()): Promise<TopicRow> {
   const t = await getTopic(id, db)
   if (!t) throw err.notFound('选题不存在')
   if (t.status === 'sent') throw err.invalidState('选题已送入文案工坊，不可再改分配')
   if (t.status === 'archived') throw err.invalidState('已归档选题不可再改分配')
+  // 分配时即校验，避免把无效人物写进 topic.persona_ids 后才在送入阶段失败
+  await assertPersonasUsable(personaIds, db)
   await db.run('UPDATE `topic` SET `persona_ids` = ?, `status` = ? WHERE `id` = ?', [
     jenc(personaIds),
     personaIds.length ? 'assigned' : 'candidate',

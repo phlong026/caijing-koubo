@@ -237,7 +237,7 @@
                       <div class="mt-1.5 flex items-center gap-2 text-[12px]">
                         <span class="text-[var(--mw-text3)] whitespace-nowrap">分配给</span>
                         <a-select
-                          :model-value="topics.assignment[c.id] || []"
+                          :model-value="currentPersonas(c)"
                           size="mini"
                           :style="{ width: '180px' }"
                           placeholder="选择人物"
@@ -249,7 +249,7 @@
                           <a-option v-for="p in personas.enabled" :key="p.id" :value="p.id">{{ p.name }}</a-option>
                         </a-select>
                       </div>
-                      <div v-if="c.status === 'candidate'" class="mt-1 text-[12px] text-[var(--mw-text3)]">
+                      <div v-if="!currentPersonas(c).length" class="mt-1 text-[12px] text-[var(--mw-text3)]">
                         未分配人物，不能直接送入
                       </div>
                     </div>
@@ -753,6 +753,16 @@ async function onGenerate() {
   }
 }
 
+/**
+ * 当前生效的人物：本地临时选择优先，回落选题自身的 personaIds。
+ *
+ * 下拉、卡片提示、送入前校验三处必须用同一个口径，否则会出现
+ * 「下拉已选好人物、卡片却提示未分配」这种自相矛盾的界面。
+ */
+function currentPersonas(c: { id: string; personaIds?: string[] }): string[] {
+  return topics.assignment[c.id] ?? c.personaIds ?? []
+}
+
 function onAssignChange(topicId: string, v: unknown) {
   onAssign(topicId, Array.isArray(v) ? (v as string[]) : [])
 }
@@ -768,7 +778,7 @@ function onAssign(topicId: string, personaIds: string[]) {
 async function onSendToCopy() {
   const ids = topics.checkedIds
   if (!ids.length) return Message.warning('请先勾选候选选题')
-  const unassigned = topics.checkedItems.filter((t) => !(topics.assignment[t.id] ?? t.personaIds).length)
+  const unassigned = topics.checkedItems.filter((t) => !currentPersonas(t).length)
   if (unassigned.length) return Message.warning(`有 ${unassigned.length} 条候选尚未分配人物`)
   try {
     const created = await topics.send(ids)

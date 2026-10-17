@@ -1,9 +1,11 @@
 import axios from 'axios'
 import { createHash } from 'node:crypto'
 import { logger } from '../../log.js'
-import { config, hasFinStep } from '../../config.js'
+import { config, hasFinStep, hasSaturnNews } from '../../config.js'
 import { runReAct } from '../../integrations/finstep/client.js'
 import { mapAlphaMorning, mapHotTopic } from '../../integrations/finstep/extract.js'
+import { searchByKeyword, type SaturnNewsItem } from '../../integrations/saturn-news/client.js'
+import { mapSaturnItems } from '../../integrations/saturn-news/extract.js'
 
 export interface NewsDTO {
   externalId: string
@@ -161,15 +163,110 @@ class EastMoneyProvider implements NewsProvider {
   }
 }
 
-/* ── ④ 曙光 MCP（接口文档未到位，预留实现位，不阻塞） ───────────────── */
+/* ── ④ 曙光舆情 MCP（saturn-news） ─────────────────────────────────────
+ *
+ * 与 FinStep 定位完全不同：这是**纯数据检索**（JSON-RPC over streamableHttp），
+ * 单次 0.5~2s，可当主采集源。
+ *
+ * ── 为什么按「通道 × 关键词」拆开查，而不是一次查四通道 ────────────────
+ *
+ * 实测该接口在多通道 + `sort_by=time` 时**不做来源混排**：
+ * 微信公众号发文最密集，会独占整个 limit。
+ *   limit=20  → 微信公众号 20 / 快讯 0 / 网络新闻 0
+ *   limit=100 → 微信公众号 100
+ *   limit=100 + sort_by=popularity → 网络新闻 61 / 快讯 20 / 微信公众号 19（才有混排）
+ * 结果是时效性最强的「快讯」被完全挤掉。所以这里按通道分别请求再合并，
+ * 每个通道各自的 limit 有保证，代价是请求数 = 关键词数 × 通道数。
+ *
+ * 只走 keyword 检索：个股/行业/主题是「按标的深挖」的场景，留给上层按需调用
+ * （client 已封装 searchByStock / searchByIndustry / searchByTheme / list*）。
+ */
 class ShuguangMcpProvider implements NewsProvider {
   name = 'shuguang'
-  label = '曙光 MCP'
-  enabled = false // 文档到位后打开
+  label = '曙光舆情'
+  get enabled(): boolean {
+    return hasSaturnNews()
+  }
 
   async fetchLatest(): Promise<NewsDTO[]> {
-    logger.info('news.provider_shuguang_skipped: 接口文档未到位，预留实现位')
-    return []
+    const keywords = config.saturnNews.keywords
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (!keywords.length) {
+      logger.warn('news.shuguang_no_keywords：SATURN_NEWS_KEYWORDS 为空，跳过')
+      return []
+    }
+
+    const channels = config.saturnNews.channels
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean) as Array<'weibo_blog' | 'flash' | 'wechat' | 'web_v1'>
+    // 留空 = 四通道全开，此时仍然逐个通道查（否则会被单一来源独占）
+    const chList: Array<'weibo_blog' | 'flash' | 'wechat' | 'web_v1'> = channels.length
+      ? channels
+      : ['flash', 'wechat', 'web_v1', 'weibo_blog']
+
+    // 回看窗口：默认 1 天（date_range 形如 2026-10-16~today）
+    const days = Math.max(1, config.saturnNews.lookbackDays)
+    const from = new Date(Date.now() - days * 24 * 3600 * 1000)
+    const dateRange = `${from.toISOString().slice(0, 10)}~today`
+
+    // 关键词 × 通道 笛卡尔积，逐个容错
+    const tasks: Array<{ kw: string; ch: string }> = []
+    for (const kw of keywords) for (const ch of chList) tasks.push({ kw, ch })
+
+    // 串行执行，不用 Promise.all：
+    //   实测并发 9 个请求时，单个耗时从 0.5s 涨到 5~7s（网关排队），
+    //   且偶发网络瞬断。串行总耗时约 9×1s ≈ 9s，比并发更快也更稳。
+    const merged: SaturnNewsItem[] = []
+    const perTask: string[] = []
+    for (const t of tasks) {
+      try {
+        const r = await searchByKeyword({
+          query: t.kw,
+          dateRange,
+          limit: config.saturnNews.limitPerKeyword,
+          sortBy: 'time',
+          channels: [t.ch as 'flash'],
+          fullContent: false,
+        })
+        const list = r.results ?? []
+        merged.push(...list)
+        perTask.push(`${t.kw}/${t.ch}:${list.length}`)
+      } catch (e) {
+        logger.warn({ keyword: t.kw, channel: t.ch, err: (e as Error)?.message }, 'news.shuguang_task_failed')
+        perTask.push(`${t.kw}/${t.ch}:ERR`)
+      }
+    }
+
+    // 跨「关键词 × 通道」合并后统一映射去重（同一条常被多个关键词命中）
+    const items = mapSaturnItems(merged, config.saturnNews.summaryMaxChars).map<NewsDTO>((m) => ({
+      externalId: m.externalId,
+      source: m.source,
+      title: m.title,
+      summary: m.summary,
+      contentUrl: m.contentUrl,
+      imageUrl: null,
+      publishedAt: m.publishedAt,
+    }))
+
+    const srcDist: Record<string, number> = {}
+    for (const it of items) srcDist[it.source] = (srcDist[it.source] ?? 0) + 1
+
+    logger.info(
+      {
+        provider: this.name,
+        keywords: keywords.join('|'),
+        channels: chList.join('|'),
+        raw: merged.length,
+        mapped: items.length,
+        bySource: srcDist,
+        byTask: perTask,
+      },
+      'news.shuguang',
+    )
+    return items
   }
 }
 
@@ -269,10 +366,11 @@ export const providers: NewsProvider[] = [
   new MockProvider(),
   new ClsProvider(),
   new EastMoneyProvider(),
-  // FinStep 两个源放在最后：它们最慢，且属于补充源
+  // 曙光响应快（0.5~2s），排在 FinStep 之前
+  new ShuguangMcpProvider(),
+  // FinStep 放最后：每次要跑几十秒 ReAct，属于补充源
   new FinStepAlphaMorningProvider(),
   new FinStepHotTopicsProvider(),
-  new ShuguangMcpProvider(),
 ]
 
 export function enabledProviders(): NewsProvider[] {

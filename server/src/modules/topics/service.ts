@@ -248,7 +248,16 @@ export async function runGeneration(batchId: string): Promise<void> {
             hook: t.hook,
             rationale: t.rationale,
             personaIds: [persona.id],
-            status: 'candidate',
+            // 生成时已确定人物 → 状态必须同步为 assigned。
+            //
+            // 踩过的坑：原先这里固定写 'candidate'，于是库里出现
+            // `status='candidate' 且 persona_ids=['ps_kos_demo']` 的自相矛盾记录。
+            // 而 `candidate` 的业务语义是「**尚未分配人物**」——前端候选卡据此显示
+            // 「未分配人物，不能直接送入」，但下拉里明明已选好人物，用户看到的是
+            // 「已分配却提示未分配」，无从下手；`/topics/send` 的预校验又会因为
+            // `status === 'candidate'` 直接抛 409，导致这批「生成即带人物」的候选
+            // 必须先去下拉里手动重选一次人物才送得出去。
+            status: 'assigned',
             batchId,
             createdBy: batch.createdBy,
           })
