@@ -1,4 +1,4 @@
-import { getDb, type Db, type Row } from '../../db/index.js'
+import { getDb, isDuplicateKey, type Db, type Row } from '../../db/index.js'
 import { jdec, jenc } from '../../lib/util.js'
 import { fromDb, toDb, utcNow } from '../../lib/time.js'
 import type { Section } from './constants.js'
@@ -401,40 +401,55 @@ export interface InsertVersionInput {
 
 /**
  * 插入版本：`version_no` 在 copy 内单调递增（W3 / §3.2）。
- * 递增在 SQL 内完成，避免并发读-改-写重号；`UNIQUE(copy_id, version_no)` 兜底。
+ *
+ * P1-11：`SELECT MAX(version_no)+1` 再 INSERT 是无锁的读-改-写，批内多份并发生成、
+ * 保存版本、应用变体、恢复版本同时发生时会撞 `UNIQUE(copy_id, version_no)` 报 500，
+ * LLM 费用白花。这里捕获唯一键冲突后**重算号重试**（最多 3 次），保持上层的调用方式不变。
  */
 export async function insertVersion(input: InsertVersionInput, db: Db = getDb()): Promise<VersionRow> {
   const { newId } = await import('../../lib/util.js')
   const id = newId('ver')
   const now = toDb(utcNow())
-  const next =
-    (await db.get<{ n: number | null }>('SELECT MAX(`version_no`) AS n FROM `copy_version` WHERE `copy_id` = ?', [
-      input.copyId,
-    ]))?.n ?? 0
-  const versionNo = Number(next) + 1
-  await db.run(
-    `INSERT INTO \`copy_version\`
-      (\`id\`, \`copy_id\`, \`draft_id\`, \`version_no\`, \`title\`, \`sections\`, \`plain_text\`, \`word_count\`,
-       \`content_hash\`, \`origin\`, \`locked\`, \`compliance_hits\`, \`similarity\`, \`created_by\`, \`created_at\`)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      id,
-      input.copyId,
-      input.draftId,
-      versionNo,
-      input.title,
-      jenc(input.sections),
-      input.plainText,
-      input.wordCount,
-      input.contentHash,
-      input.origin,
-      input.locked ? 1 : 0,
-      input.complianceHits === undefined ? null : jenc(input.complianceHits),
-      input.similarity ?? null,
-      input.createdBy,
-      now,
-    ],
-  )
+
+  const MAX_TRIES = 3
+  let versionNo = 0
+  for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+    const next =
+      (await db.get<{ n: number | null }>('SELECT MAX(`version_no`) AS n FROM `copy_version` WHERE `copy_id` = ?', [
+        input.copyId,
+      ]))?.n ?? 0
+    versionNo = Number(next) + 1
+    try {
+      await db.run(
+        `INSERT INTO \`copy_version\`
+          (\`id\`, \`copy_id\`, \`draft_id\`, \`version_no\`, \`title\`, \`sections\`, \`plain_text\`, \`word_count\`,
+           \`content_hash\`, \`origin\`, \`locked\`, \`compliance_hits\`, \`similarity\`, \`created_by\`, \`created_at\`)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          input.copyId,
+          input.draftId,
+          versionNo,
+          input.title,
+          jenc(input.sections),
+          input.plainText,
+          input.wordCount,
+          input.contentHash,
+          input.origin,
+          input.locked ? 1 : 0,
+          input.complianceHits === undefined ? null : jenc(input.complianceHits),
+          input.similarity ?? null,
+          input.createdBy,
+          now,
+        ],
+      )
+      break
+    } catch (e) {
+      // 只在唯一键冲突时重试；其它错误（字段超长、外键等）直接抛出
+      if (!isDuplicateKey(e) || attempt === MAX_TRIES) throw e
+    }
+  }
+
   return {
     id,
     copyId: input.copyId,

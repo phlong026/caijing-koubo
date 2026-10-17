@@ -259,8 +259,10 @@ export async function markFetchResult(
   const failures = acc.consecutiveFailures + 1
   let interval = acc.monitorIntervalHours
   if (failures >= 3) {
+    // P1-2：退避只能在原周期基础上放大，不能反过来缩短长周期账号的间隔
+    //（此前 Math.min(24, 48×2^0)=24，48h 账号失败 3 次后反而变成 24h 一查）
     const backoffPow = Math.min(10, failures - 3)
-    interval = Math.min(24, acc.monitorIntervalHours * Math.pow(2, backoffPow))
+    interval = Math.max(acc.monitorIntervalHours, Math.min(24 * 7, acc.monitorIntervalHours * Math.pow(2, backoffPow)))
   }
   await db.run(
     `UPDATE \`benchmark_account\` SET \`last_checked_at\` = ?, \`next_check_at\` = ?, \`consecutive_failures\` = ?,

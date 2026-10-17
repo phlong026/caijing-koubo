@@ -677,11 +677,21 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
   app.post('/articles', async (req, reply) => {
     const contentType = String(req.headers['content-type'] ?? '')
     if (contentType.includes('multipart/form-data')) {
+      // P0-3：@fastify/multipart 已在 app.ts 注册（limits.fileSize = articleMaxBytes）
       const file = await (req as FastifyRequest & {
-        file: () => Promise<{ filename: string; mimetype: string; toBuffer: () => Promise<Buffer> } | undefined>
+        file: () => Promise<
+          | { filename: string; mimetype: string; toBuffer: () => Promise<Buffer>; file?: { truncated?: boolean } }
+          | undefined
+        >
       }).file()
       if (!file) throw err.badRequest('请上传文件（字段名 file）')
       const buf = await file.toBuffer()
+      // 超过 limits.fileSize 时 multipart 会把流截断，必须显式判失败，否则会把半个文件当完整解析
+      if (file.file?.truncated) {
+        throw err.articleTooLarge(`文件超过 ${Math.round(config.copy.articleMaxBytes / 1024 / 1024)}MB，请压缩后上传`, {
+          max: config.copy.articleMaxBytes,
+        })
+      }
       const head = buf.subarray(0, 16)
       const ext = validateFileMeta(file.filename, buf.length, head)
       const parsed = await parseArticleBuffer(ext, buf)
@@ -990,7 +1000,8 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
   /* ── 工具：合规扫描试算（前端实时扫描用）────────────────────────── */
 
   app.post('/copy/compliance/scan', async (req) => {
-    const body = (req.body ?? {}) as { sections?: unknown; copyId?: string }
+    // P1-22：前端编辑时实时调用的接口，支持传 title 一起扫（FR-R1 要求标题也纳入）
+    const body = (req.body ?? {}) as { sections?: unknown; title?: string; copyId?: string }
     const sections = Array.isArray(body.sections) ? (body.sections as never) : []
     const words = await listComplianceWords({ enabledOnly: true })
     let claims: string[] = []
@@ -1001,7 +1012,7 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
         claims = p?.ipProfile?.forbiddenClaims ?? []
       }
     }
-    return ok({ hits: scanCompliance(sections, words, claims) })
+    return ok({ hits: scanCompliance(sections, words, claims, body.title ?? null) })
   })
 
   /* ── 提示词预览（编辑器「查看提示词」，仅预览不落库）───────────── */

@@ -119,12 +119,24 @@ export function currentModelLabel(): string {
 
 /* ── 主调用 ──────────────────────────────────────────────────────── */
 
+/**
+ * P1-13：记账统一在接入层完成，调用方不要再写 `api_call_log`。
+ * `ref` 用于把这次调用归集到具体业务对象（如 copy_generation / generationId）。
+ */
+export interface LlmCallRef {
+  type?: string | null
+  id?: string | null
+}
+
 export async function chat(
   messages: ChatMessage[],
   opts: { temperature?: number; maxTokens?: number } = {},
+  ref: LlmCallRef = {},
 ): Promise<LlmResult> {
   const started = Date.now()
   const resolved = resolveLlm()
+  const refType = ref.type ?? null
+  const refId = ref.id ?? null
 
   if (!resolved) {
     if (!config.mockFallback) throw new Error('未配置文案模型（COPY_LLM_API_KEY / DASHSCOPE_API_KEY 均为空）')
@@ -132,6 +144,8 @@ export async function chat(
     await logApiCall({
       provider: 'dashscope',
       endpoint: 'chat/completions(mock)',
+      refType,
+      refId,
       ok: true,
       durationMs: Date.now() - started,
       cost: 0,
@@ -144,6 +158,8 @@ export async function chat(
     await logApiCall({
       provider: r.provider,
       endpoint: r.endpoint,
+      refType,
+      refId,
       ok: true,
       httpStatus: r.status,
       durationMs: Date.now() - started,
@@ -161,6 +177,8 @@ export async function chat(
         await logApiCall({
           provider: r.provider,
           endpoint: `${r.endpoint}(no_json_mode)`,
+          refType,
+          refId,
           ok: true,
           httpStatus: r.status,
           durationMs: Date.now() - started,
@@ -177,7 +195,7 @@ export async function chat(
           protocol: resolved.protocol,
         }
       } catch (e2: any) {
-        await logFailure(resolved, e2, started)
+        await logFailure(resolved, e2, started, ref)
         throw new Error(`LLM 调用失败：${e2?.message ?? '未知错误'}`)
       }
     }
@@ -195,6 +213,8 @@ export async function chat(
         await logApiCall({
           provider: r.provider,
           endpoint: `${r.endpoint}(protocol_retry)`,
+          refType,
+          refId,
           ok: true,
           httpStatus: r.status,
           durationMs: Date.now() - started,
@@ -210,6 +230,8 @@ export async function chat(
             await logApiCall({
               provider: r.provider,
               endpoint: `${r.endpoint}(protocol_retry,no_json_mode)`,
+              refType,
+              refId,
               ok: true,
               httpStatus: r.status,
               durationMs: Date.now() - started,
@@ -229,11 +251,11 @@ export async function chat(
             /* 落到下面的统一失败处理 */
           }
         }
-        await logFailure(resolved, e2, started)
+        await logFailure(resolved, e2, started, ref)
         throw new Error(`LLM 调用失败：${e2?.message ?? '未知错误'}`)
       }
     }
-    await logFailure(resolved, e, started)
+    await logFailure(resolved, e, started, ref)
     throw new Error(`LLM 调用失败：${e?.message ?? '未知错误'}`)
   }
 }
@@ -248,9 +270,16 @@ function isJsonModeUnsupported(e: any): boolean {
   )
 }
 
-async function logFailure(resolved: ResolvedLlm, e: any, started: number): Promise<void> {
+async function logFailure(
+  resolved: ResolvedLlm,
+  e: any,
+  started: number,
+  ref: LlmCallRef = {},
+): Promise<void> {
   const msg = e?.message ?? 'LLM 调用失败'
   await logApiCall({
+    refType: ref.type ?? null,
+    refId: ref.id ?? null,
     provider: resolved.provider,
     endpoint: resolved.protocol === 'anthropic' ? 'messages' : 'chat/completions',
     ok: false,

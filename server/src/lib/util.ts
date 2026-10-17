@@ -63,11 +63,24 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }
 
-/** 简单互斥锁：用于手动刷新与定时任务并发（P2-8） */
+/**
+ * 简单互斥锁：用于手动刷新与定时任务并发（P2-8）。
+ *
+ * ⚠️ 已踩坑：早期实现是「已锁定就直接返回 busy」，这在采集变慢后是致命的——
+ * 接入 FinStep 后单轮采集要 60~90s（两个源各一次 LLM ReAct），期间任何手动刷新
+ * 都拿到 202 busy，前端表现为「点了刷新没反应」，smoke 也永远等不到 200。
+ *
+ * 正确语义分两种，由调用方选择：
+ *   - `run(key, fn, onBusy)`：**立即失败**（onBusy 返回兜底值）。适合「重复触发无意义」的场景；
+ *   - `runQueued(key, fn, waitMs)`：**排队等待**，拿到锁后再执行。适合「用户主动点击、期望有结果」的场景。
+ */
 export class Mutex {
   private locked = false
   private key = ''
+  /** 等待队列：当前持有者释放后依次唤醒 */
+  private waiters: Array<() => void> = []
   constructor(private name = 'mutex') {}
+
   async run<T>(key: string, fn: () => Promise<T>, onBusy?: () => T | null): Promise<T | null> {
     if (this.locked && this.key === key) {
       if (onBusy) return onBusy()
@@ -80,6 +93,63 @@ export class Mutex {
     } finally {
       this.locked = false
       this.key = ''
+      this.wakeNext()
     }
+  }
+
+  /**
+   * 排队版：同一 key 的并发请求按到达顺序串行执行。
+   * 超过 `waitMs` 仍未拿到锁则放弃（返回 onTimeout 的值），避免请求无限挂起。
+   */
+  async runQueued<T>(
+    key: string,
+    fn: () => Promise<T>,
+    waitMs = 120_000,
+    onTimeout?: () => T | null,
+  ): Promise<T | null> {
+    if (!(this.locked && this.key === key)) {
+      // 无人占用，直接拿锁
+    } else {
+      const acquired = await this.waitForRelease(waitMs)
+      if (!acquired) return onTimeout ? onTimeout() : null
+    }
+    this.locked = true
+    this.key = key
+    try {
+      return await fn()
+    } finally {
+      this.locked = false
+      this.key = ''
+      this.wakeNext()
+    }
+  }
+
+  /** 当前是否被占用 */
+  get busy(): boolean {
+    return this.locked
+  }
+
+  private waitForRelease(waitMs: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      let done = false
+      const timer = setTimeout(() => {
+        if (done) return
+        done = true
+        this.waiters = this.waiters.filter((w) => w !== onWake)
+        resolve(false)
+      }, waitMs)
+      const onWake = () => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        resolve(true)
+      }
+      this.waiters.push(onWake)
+    })
+  }
+
+  private wakeNext(): void {
+    const next = this.waiters.shift()
+    if (next) next()
   }
 }

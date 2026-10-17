@@ -4,8 +4,7 @@ import { err } from '../../errors.js'
 import { logger } from '../../log.js'
 import { newId, jenc } from '../../lib/util.js'
 import { toDb, utcNow } from '../../lib/time.js'
-import { chat, currentModelLabel, resolveLlm } from '../../integrations/copy-llm/index.js'
-import { logApiCall } from '../metrics/call-log.js'
+import { chat, currentModelLabel } from '../../integrations/copy-llm/index.js'
 import { recordOperation } from '../audit/repo.js'
 import { enqueue, QUEUE_NAMES } from '../../queue/index.js'
 import {
@@ -413,7 +412,8 @@ export async function runGeneration(generationId: string): Promise<void> {
         }
       }
 
-      const hits = scanCompliance(parsed.sections, words, persona.ipProfile.forbiddenClaims)
+      // P1-14①：标题也纳入扫描
+      const hits = scanCompliance(parsed.sections, words, persona.ipProfile.forbiddenClaims, parsed.title)
       // draftNo 必须串行取号：并发下两个线程会读到同一个 MAX，撞 UNIQUE(copy_id, draft_no)
       const draftNo = await withDraftNoLock(async () => (await maxDraftNo(copy.id, db)) + 1)
       const draftId = await insertDraft(
@@ -534,6 +534,11 @@ async function maxDraftNo(copyId: string, db: Db): Promise<number> {
 }
 
 /** 调 LLM；非法 JSON 重试 1 次（FR-G4） */
+/**
+ * P1-13：记账只在接入层 `chat()` 里写一次（通过 ref 归集到本 generationId），
+ * 这里负责重试控制与文案工坊侧的 provider/endpoint 语义，不再重复写 api_call_log，
+ * 否则 /api-calls/summary 的当日费用会翻倍。
+ */
 async function callLlmWithRetry(
   system: string,
   user: string,
@@ -541,11 +546,7 @@ async function callLlmWithRetry(
 ): Promise<{ content: string; cost: number }> {
   const retries = Math.max(0, config.copy.llmRetry)
   let lastErr: Error | null = null
-  // provider 由接入层决定（copy_llm / dashscope / mock），这里显式取，便于成本按供应商归集
-  const provider: 'dashscope' | 'copy_llm' = resolveLlm()?.provider === 'copy_llm' ? 'copy_llm' : 'dashscope'
-  const endpointTag = provider === 'copy_llm' ? 'messages|chat/completions(copy_generate)' : 'chat/completions(copy_generate)'
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const started = Date.now()
     try {
       const res = await chat(
         [
@@ -553,29 +554,11 @@ async function callLlmWithRetry(
           { role: 'user', content: user },
         ],
         { temperature: 0.8, maxTokens: 4000 },
+        { type: 'copy_generation', id: generationId },
       )
-      await logApiCall({
-        provider: res.mock ? 'dashscope' : ((res.provider === 'copy_llm' ? 'copy_llm' : 'dashscope') as 'dashscope' | 'copy_llm'),
-        endpoint: res.mock ? 'chat/completions(mock)' : endpointTag,
-        refType: 'copy_generation',
-        refId: generationId,
-        cost: res.cost,
-        ok: true,
-        durationMs: Date.now() - started,
-        requestId: null,
-      })
       return { content: res.content, cost: res.cost }
     } catch (e) {
       lastErr = e as Error
-      await logApiCall({
-        provider,
-        endpoint: endpointTag,
-        refType: 'copy_generation',
-        refId: generationId,
-        ok: false,
-        durationMs: Date.now() - started,
-        error: lastErr.message,
-      })
       if (attempt >= retries) break
     }
   }
@@ -836,7 +819,9 @@ export async function applyVariant(
   const nextSections = sections.map((s, i) => (i === idx ? { ...s, text: v.text } : { ...s }))
   const rev = Number(draftRow.rev ?? 0)
   const wc = countSectionsWords(draftRow.title ?? null, nextSections)
-  await db.run(
+  // P1-12：必须检查乐观锁结果。之前 affectedRows=0（期间自动保存把 rev 改了）也照样往下走，
+  // 结果写入了变体版本并把变体标为已应用，但稿内容没变，版本内容与稿内容不一致。
+  const w = await db.run(
     `UPDATE \`copy_draft\` SET \`sections\` = ?, \`plain_text\` = ?, \`word_count\` = ?, \`rev\` = \`rev\` + 1, \`updated_at\` = ?
      WHERE \`id\` = ? AND \`rev\` = ?`,
     [
@@ -848,6 +833,12 @@ export async function applyVariant(
       rev,
     ],
   )
+  if (!w.affectedRows) {
+    throw err.conflict('稿件已被修改（rev 已变化），请刷新后重新应用该变体', {
+      draftId: v.draftId,
+      expectedRev: rev,
+    })
+  }
   const version = await insertVersion(
     {
       copyId: copy.id,

@@ -187,10 +187,11 @@ export const config = {
   },
 
   defaultOperator: str('DEFAULT_OPERATOR', 'ops'),
-  mockFallback: bool('MOCK_FALLBACK', true),
+  // P1-7：生产环境默认**关闭** mock 兜底；否则漏配 key 时会静默返回假账号/假视频/假转写。
+  mockFallback: bool('MOCK_FALLBACK', str('NODE_ENV', 'development') !== 'production'),
 
-  // §2.4 防 SSRF 白名单
-  linkWhitelist: ['v.douyin.com', 'www.douyin.com', 'www.iesdouyin.com', 'douyin.com', 'iesdouyin.com'],
+  // §2.4 防 SSRF 白名单：与任务书 §2.4 的 3 个域名保持一致（P2-14）
+  linkWhitelist: ['v.douyin.com', 'www.douyin.com', 'www.iesdouyin.com'],
   maxRedirects: 3,
 }
 

@@ -250,7 +250,7 @@ export interface ComplianceHit {
   word: string
   level: 'hard' | 'soft'
   category: string
-  /** 命中位置：段落序号 + 段内起止（用于编辑器高亮） */
+  /** 命中位置：段落序号 + 段内起止（用于编辑器高亮）；-1 表示标题 */
   sectionIndex: number
   start: number
   end: number
@@ -259,42 +259,163 @@ export interface ComplianceHit {
 }
 
 /**
- * 扫描正文：词库两级 + 人物 forbiddenClaims（视为硬禁用）。
- * forbiddenClaims 常写成整句话（如「不承诺收益」），此处按「含否定前缀则取核心词」处理，
- * 同时整句也会被匹配，保证不漏。
+ * 否定前缀白名单（P1-14②）。
+ * 「基金**不保本**」「本内容**不承诺收益**」是**合规的免责表述**，
+ * 之前用 indexOf 直接匹配硬禁用词，反而会拦住这些正确写法。
+ */
+const NEGATION_PREFIXES = ['不', '非', '并非', '不得', '不会', '不能', '严禁', '禁止', '切勿', '勿', '避免', '没有', '无']
+
+/** 该位置前是否紧邻否定词（只看紧邻的 1~3 个字，避免跨句误判） */
+function isNegated(text: string, start: number): boolean {
+  const head = text.slice(Math.max(0, start - 3), start)
+  return NEGATION_PREFIXES.some((p) => head.endsWith(p))
+}
+
+/**
+ * 疑问 / 反问 / 引述语境白名单（AC-G5 回归暴露）。
+ * 「债基真的**稳赚不赔**吗？」「听到"**保本稳赚**"，先问一句依据在哪」
+ * 是**辟谣式反问与引述**，语义与「承诺稳赚」完全相反，不能判违规。
+ * 判定口径：命中词落在疑问句里（紧邻前后出现「吗 / 呢 / 真的…吗 / 是不是 / …？」），
+ * 或被引号包裹（「」/『』/“”/""），即视为未作出承诺。
+ */
+const QUESTION_SUFFIX = /^(吗|呢|么|嘛|吧)/
+const QUESTION_PREFIX = /(是不是|会不会|能不能|该不该|要不要|真的|难道|是否|有无)$/
+const QUOTE_PAIRS: Array<[string, string]> = [
+  ['「', '」'],
+  ['『', '』'],
+  ['“', '”'],
+  ['"', '"'],
+]
+
+/** 命中处是否处于引述（被引号包裹） */
+function isQuoted(text: string, start: number, end: number): boolean {
+  for (const [open, close] of QUOTE_PAIRS) {
+    const before = text.lastIndexOf(open, start)
+    if (before < 0) continue
+    // 引号内不能再夹一个同类型的收引号，否则说明命中的不在这一对里
+    const innerClose = text.indexOf(close, before + open.length)
+    if (innerClose >= 0 && innerClose < start) continue
+    const after = text.indexOf(close, end)
+    if (after < 0) continue
+    const innerOpen = text.indexOf(open, before + open.length)
+    if (innerOpen >= 0 && innerOpen > end) continue
+    return true
+  }
+  return false
+}
+
+/** 命中处是否处于疑问 / 反问语境：看本句内该词之后是否以问号收尾，或紧跟疑问语气词 */
+function isQuestion(text: string, start: number, end: number): boolean {
+  // 句界（中英文句末标点 + 换行）
+  const sentStart = Math.max(
+    0,
+    ...[...'。！!；;\n'].map((p) => text.lastIndexOf(p, start) + 1).filter((x) => x > 0).concat(0),
+  )
+  const nextEnd = [...'。！!；;\n'].map((p) => text.indexOf(p, end)).filter((x) => x >= 0)
+  const sentEnd = nextEnd.length ? Math.min(...nextEnd) : text.length
+  const sentence = text.slice(sentStart, sentEnd + 1)
+
+  // 1) 词组后紧跟疑问语气词：「稳赚不赔吗」「保本吧」
+  if (QUESTION_SUFFIX.test(text.slice(end, end + 2))) return true
+  // 2) 词组前是「是不是 / 会不会 / 真的 / 是否」等疑问引导词
+  if (QUESTION_PREFIX.test(text.slice(Math.max(0, start - 4), start))) return true
+  // 3) 本句以问号收尾（反问句）
+  if (/[?？]/.test(text.slice(end, sentEnd + 2))) return true
+  // 4) 整句是「…是什么 / 为什么…」这类设问标题
+  if (/[?？]/.test(sentence) && /(是什么|为什么|怎么|如何|多少|哪|谁)/.test(sentence)) return true
+  return false
+}
+
+/** 该命中是否属于「非承诺」语境（否定 / 引述 / 疑问反问） */
+function isNonClaim(text: string, start: number, end: number): boolean {
+  if (isNegated(text, start)) return true
+  if (isQuoted(text, start, end)) return true
+  return isQuestion(text, start, end)
+}
+
+/**
+ * 人物禁用表达 → 词表条目（P1-14③）。
+ * forbiddenClaims 常写成**规则句**（「使用绝对化表述（稳赚、必涨）」「给出个股买卖建议」），
+ * 之前截掉否定前缀后仍按整句匹配，正文里几乎永远匹配不到，等于没约束。
+ * 这里把规则句拆成可匹配的词：
+ *  - 括号里的列举 → 逐词；
+ *  - 「...」/“...”/《》里的引用 → 逐段；
+ *  - 去掉「使用/给出/出现/不得/严禁」等动词性前缀后的剩余部分，长度 ≥2 才保留。
+ */
+function claimsToWords(raw: string): string[] {
+  const out: string[] = []
+  const src = String(raw ?? '').trim()
+  if (!src) return out
+
+  // 1) 括号内列举：(稳赚、必涨) / （保本；零风险）
+  for (const m of src.matchAll(/[（(]([^）)]{2,})[）)]/g)) {
+    for (const p of m[1]!.split(/[、,，;；/\/]/)) {
+      const w = p.trim()
+      if (w.length >= 2) out.push(w)
+    }
+  }
+  // 2) 引号内引用：「必涨」/“稳赚”/《…》
+  for (const m of src.matchAll(/[「『"“《]([^」』"”》]{2,})[」』"”》]/g)) {
+    const w = m[1]!.trim()
+    if (w.length >= 2) out.push(w)
+  }
+  // 3) 规则句去前缀后的核心短语
+  const core = src
+    .replace(/\{|\}/g, '')
+    .replace(/^(不得|严禁|禁止|避免|勿|不要)/, '')
+    .replace(/^(使用|给出|出现|包含|含有|采用|做|进行)/, '')
+    .replace(/[（(][^）)]*[）)]/g, '')
+    .replace(/[「『"“《][^」』"”》]*[」』"”》]/g, '')
+    .trim()
+  if (core.length >= 2 && core.length <= 12 && core !== src.replace(/[（(][^）)]*[）)]/g, '').trim()) {
+    out.push(core)
+  }
+  return Array.from(new Set(out))
+}
+
+/**
+ * 扫描稿内容：
+ *  - P1-14①：**标题**与正文段落都要扫（之前只扫 sections，「稳赚」放标题也能提交）；
+ *  - P1-14②：命中位置前面紧邻否定词时不算违规（「不保本」「不承诺收益」）；
+ *  - P1-14③：人物 forbiddenClaims 拆成可匹配的词，不再整句硬匹配。
  */
 export function scanCompliance(
   sections: Section[],
   words: ComplianceWordRow[],
   forbiddenClaims: string[] = [],
+  title?: string | null,
 ): ComplianceHit[] {
   const hits: ComplianceHit[] = []
+
+  // 标题作为「第 -1 段」参与扫描
+  const targets: Array<{ index: number; text: string }> = []
+  const t = String(title ?? '')
+  if (t) targets.push({ index: -1, text: t })
+  sections.forEach((s, index) => targets.push({ index, text: s.text ?? '' }))
+
   const push = (word: string, level: 'hard' | 'soft', category: string, fromPersona: boolean) => {
     if (!word.trim()) return
-    sections.forEach((s, index) => {
-      const text = s.text ?? ''
+    for (const { index, text } of targets) {
       let from = 0
       for (;;) {
         const at = text.indexOf(word, from)
         if (at < 0) break
-        hits.push({ word, level, category, sectionIndex: index, start: at, end: at + word.length, fromPersona })
         from = at + word.length
+        // 非承诺语境（否定 / 引述 / 疑问反问）视为合规表达，不计命中
+        if (isNonClaim(text, at, at + word.length)) continue
+        hits.push({ word, level, category, sectionIndex: index, start: at, end: at + word.length, fromPersona })
         if (hits.length > 500) break
       }
-    })
+    }
   }
 
   for (const w of words) {
     push(w.word, w.level, w.category ?? '词库', false)
   }
   for (const claim of forbiddenClaims) {
-    const raw = String(claim ?? '').trim()
-    if (!raw) continue
-    // 整句匹配（如「不给出个股买卖建议」不太可能出现在正文，但保留以防漏）
-    push(raw, 'hard', '人物禁用表述', true)
-    // 去否定前缀后的核心词（「不承诺收益」→「承诺收益」）
-    const core = raw.replace(/^(不|严禁|禁止|避免|不得|勿)/, '').trim()
-    if (core && core !== raw && core.length >= 2) push(core, 'hard', '人物禁用表述', true)
+    for (const w of claimsToWords(String(claim ?? ''))) {
+      push(w, 'hard', '人物禁用表述', true)
+    }
   }
 
   // 去重（同位置同词）并按位置排序

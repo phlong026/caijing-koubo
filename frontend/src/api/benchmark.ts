@@ -156,8 +156,9 @@ export function getBenchmarkVideos(query: BenchmarkVideoQuery) {
   return apiGet<BenchmarkVideoPage>('/benchmark/videos', { ...query })
 }
 
-export function extractVideo(id: string) {
-  return apiPost<{ status: string; cacheId: string }>(`/benchmark/videos/${encodeURIComponent(id)}/extract`)
+/** P1-3①：uncertain 状态必须由界面二次确认（confirm=true）才允许重新入队 */
+export function extractVideo(id: string, confirm = false) {
+  return apiPost<{ status: string; cacheId: string }>(`/benchmark/videos/${encodeURIComponent(id)}/extract`, { confirm })
 }
 
 export function getExtractStatus(id: string) {

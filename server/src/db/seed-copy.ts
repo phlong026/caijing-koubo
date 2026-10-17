@@ -184,9 +184,12 @@ export const COMPLIANCE_SEED: Array<{ word: string; level: 'hard' | 'soft'; cate
   { word: '极致', level: 'soft', category: '绝对化用语' },
   { word: '翻倍', level: 'soft', category: '夸大收益' },
   { word: '暴涨', level: 'soft', category: '夸大收益' },
-  { word: '稳赢', level: 'soft', category: '夸大收益' },
-  { word: '一定涨', level: 'soft', category: '确定性判断' },
-  { word: '肯定赚', level: 'soft', category: '夸大收益' },
+  // P1-14④：语义与硬禁用的「稳赚」「必涨」相同，分级不应更低，统一升为 hard。
+  { word: '稳赢', level: 'hard', category: '收益承诺' },
+  { word: '一定涨', level: 'hard', category: '确定性判断' },
+  { word: '肯定赚', level: 'hard', category: '收益承诺' },
+  { word: '一定赚', level: 'hard', category: '收益承诺' },
+  { word: '必赚', level: 'hard', category: '收益承诺' },
   { word: '无脑', level: 'soft', category: '夸大收益' },
   { word: '随便买', level: 'soft', category: '投资建议' },
 ]

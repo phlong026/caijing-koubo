@@ -11,16 +11,25 @@
       </template>
       <template #actions>
         <a-button @click="listVisible = true">
-          <template #icon><icon-list /></template>
-          文案列表
+          <template #icon><icon-file /></template>
+          草稿记录
         </a-button>
-        <a-button @click="versionVisible = true" :disabled="!copy">
-          <template #icon><icon-history /></template>
-          历史版本
+        <!-- P1-21：效果图页头为「草稿记录 / 保存草稿 / 提交审核」，补回「保存草稿」（FR-E3 manual_save） -->
+        <a-button
+          :disabled="!copy || !store.editor || !store.isDirty || !store.canEdit"
+          :loading="store.editor?.saving"
+          @click="onSaveDraft"
+        >
+          <template #icon><icon-save /></template>
+          保存草稿
         </a-button>
-        <a-button @click="configVisible = true">
-          <template #icon><icon-settings /></template>
-          配置
+        <a-button
+          v-if="copy && copy.status === 'in_review'"
+          type="text"
+          @click="onWithdraw"
+        >
+          <template #icon><icon-undo /></template>
+          撤回提交
         </a-button>
         <a-button
           v-if="copy && (copy.status === 'draft' || copy.status === 'rejected')"
@@ -31,9 +40,9 @@
           <template #icon><icon-send /></template>
           提交审核
         </a-button>
-        <a-button v-else-if="copy && copy.status === 'approved'" type="primary" disabled>
-          <template #icon><icon-check /></template>
-          已通过
+        <a-button v-else-if="copy && copy.status === 'approved'" type="primary" @click="onGoVideo">
+          <template #icon><icon-video-camera /></template>
+          去视频创作
         </a-button>
       </template>
     </PageHead>
@@ -92,6 +101,7 @@
     <!-- 弹层 -->
     <CopyListDrawer
       v-model:visible="listVisible"
+      :initial-ids="pendingIds"
       @picked="(id) => router.replace({ query: { id } })"
     />
     <VersionDrawer v-model:visible="versionVisible" />
@@ -116,8 +126,8 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { Message } from '@arco-design/web-vue'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
+import { Message, Modal } from '@arco-design/web-vue'
 import PageHead from '@/components/PageHead.vue'
 import { useCopyStore } from '@/stores/copy'
 import { copyApi, type DurationTier } from '@/api/copy'
@@ -147,22 +157,54 @@ const configVisible = ref(false)
 const variantVisible = ref(false)
 const variantIndex = ref(0)
 
-/** 路由 query.id 是当前文案的唯一入口，兼容 ?ids=a,b（取第一条） */
-function resolveId(): string | null {
+/**
+ * P1-20 / FR-S1：`?ids=a,b` 时不能只打开第一条（爆款选题一次送 2 个人物，用户会漏看）。
+ * 多条时打开列表抽屉并按 ids 过滤；只有 1 条时直接打开。
+ */
+const pendingIds = ref<string[]>([])
+
+/** 路由 query.id 是当前文案的唯一入口 */
+function routeId(): string | null {
   const qid = route.query.id as string | undefined
-  if (qid) return qid
-  const ids = route.query.ids as string | undefined
-  if (ids) return ids.split(',')[0]?.trim() || null
-  return null
+  return qid || null
+}
+
+/** ?ids=a,b 解析为数组 */
+function routeIds(): string[] {
+  const raw = route.query.ids as string | undefined
+  if (!raw) return []
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+function resolveId(): string | null {
+  const id = routeId()
+  if (id) return id
+  const ids = routeIds()
+  return ids[0] ?? null
 }
 
 async function loadByRoute(): Promise<void> {
-  const id = resolveId()
-  if (!id) {
+  const id = routeId()
+  const ids = routeIds()
+
+  // P1-20：多条 ids → 打开列表并按 ids 过滤；单条 → 直接打开
+  if (!id && ids.length > 1) {
+    pendingIds.value = ids
+    store.reset()
+    listVisible.value = true
+    return
+  }
+  pendingIds.value = []
+
+  const target = id ?? ids[0] ?? null
+  if (!target) {
     store.reset()
     return
   }
-  await store.load(id)
+  await store.load(target)
   // 载入后按人物刷新可选风格（Q4 按线过滤）
   if (store.copy?.persona?.id) {
     await store.loadOptions(store.copy.persona.id)
@@ -174,10 +216,82 @@ watch(() => route.query, loadByRoute, { immediate: false })
 onMounted(async () => {
   await store.loadOptions()
   await loadByRoute()
-  if (!resolveId()) listVisible.value = true
+  if (!routeId() && routeIds().length === 0) listVisible.value = true
 })
 
-onBeforeUnmount(() => store.stopPolling())
+onBeforeUnmount(() => {
+  store.stopPolling()
+  window.removeEventListener('beforeunload', onBeforeUnload)
+})
+
+/* ── P0-5：离开拦截（未保存内容不能静默丢失）──────────────���─────── */
+
+function onBeforeUnload(e: BeforeUnloadEvent): void {
+  if (!store.isDirty) return
+  e.preventDefault()
+  // 部分浏览器需要设置 returnValue 才会弹确认
+  e.returnValue = ''
+}
+
+onMounted(() => window.addEventListener('beforeunload', onBeforeUnload))
+
+onBeforeRouteLeave(async () => {
+  if (!store.isDirty) return true
+  // 先尝试自动保存一次，成功就放行
+  const r = await store.save()
+  if (r === 'ok') return true
+  return await new Promise<boolean>((resolve) => {
+    Modal.confirm({
+      title: '还有未保存的改动',
+      content: '离开后这些改动只保留在本机暂存里，下次打开该稿时可以恢复。是否离开？',
+      okText: '离开',
+      cancelText: '留下继续编辑',
+      onOk: () => resolve(true),
+      onCancel: () => resolve(false),
+    })
+  })
+})
+
+/* ── P1-21：保存草稿（生成 manual_save 版本）────────────────────── */
+
+const savingDraft = ref(false)
+
+async function onSaveDraft(): Promise<void> {
+  if (!copy.value || !store.editor) return
+  savingDraft.value = true
+  try {
+    // 先落盘，再生成版本，保证版本内容就是屏幕上看到的内容
+    const r = await store.save()
+    if (r !== 'ok') {
+      if (r === 'need_confirm') Message.warning('该稿已通过审核，重新编辑需确认；请先在编辑区确认后重试')
+      else if (r !== 'conflict') Message.error(store.error ?? '保存失败')
+      return
+    }
+    // P1-21：生成 manual_save 版本（后端按内容 hash 去重，内容没变时 created=false）
+    const v = await copyApi.saveVersion(copy.value.id, store.editor.draftId)
+    await store.load(copy.value.id)
+    Message.success(v.created ? `已保存草稿 v${v.versionNo}` : `内容未变化，已是 v${v.versionNo}`)
+  } catch (e) {
+    Message.error((e as Error).message)
+  } finally {
+    savingDraft.value = false
+  }
+}
+
+async function onWithdraw(): Promise<void> {
+  if (!copy.value) return
+  try {
+    await copyApi.withdraw(copy.value.id)
+    await store.load(copy.value.id)
+    Message.success('已撤回提交，可继续编辑')
+  } catch (e) {
+    Message.error((e as Error).message)
+  }
+}
+
+function onGoVideo(): void {
+  Message.info('视频创作模块尚未接入，请在内测环境验证')
+}
 
 function reload(): void {
   void loadByRoute()

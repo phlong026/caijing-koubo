@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { ok } from '../../app.js'
 import { err } from '../../errors.js'
-import { createDraftsFromTopics } from './service.js'
+import { createDraftsFromTopics, createInitialDrafts } from './service.js'
 
 /**
  * FR-C3 出口契约：暴露给文案工坊联调，本模块前端不调用
@@ -15,6 +15,8 @@ export function registerCopyRoutes(app: FastifyInstance): void {
     const body = (req.body ?? {}) as { topicIds?: string[]; personaIds?: string[] }
     const topicIds = Array.isArray(body.topicIds) ? body.topicIds : []
     if (!topicIds.length) throw err.badRequest('topicIds 必填')
-    return ok(await createDraftsFromTopics({ topicIds, personaIds: body.personaIds, operator: req.operator }))
+    const r = await createDraftsFromTopics({ topicIds, personaIds: body.personaIds, operator: req.operator })
+    await createInitialDrafts(r.copyIds, req.operator)
+    return ok(r)
   })
 }

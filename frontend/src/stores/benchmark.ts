@@ -138,9 +138,9 @@ export const useBenchmarkStore = defineStore('benchmark', () => {
     return loadVideos()
   }
 
-  /** FR-B6：触发提取；并发重复点击服务端做幂等去重 */
-  async function extract(videoId: string): Promise<void> {
-    const res = await extractVideo(videoId)
+  /** FR-B6：触发提取；并发重复点击服务端做幂等去重。P1-3①：uncertain 重试必须带 confirm */
+  async function extract(videoId: string, confirm = false): Promise<void> {
+    const res = await extractVideo(videoId, confirm)
     const v = videos.value.find((x) => x.id === videoId)
     if (v) v.extractStatus = res.status as ExtractStatus
   }

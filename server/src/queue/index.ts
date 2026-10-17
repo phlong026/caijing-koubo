@@ -50,8 +50,22 @@ export function getQueueEvents(name: QueueName): QueueEvents {
 }
 
 /**
- * 注册/更新 repeatable 任务（幂等：同一 schedulerId 重复调用只更新，不产生重复任务）。
- * BullMQ v5 推荐用 Job Scheduler（替代已废弃的 repeat + every）。
+ * 注册/更新 repeatable 任务。
+ *
+ * ── 为什么不是简单地每次 upsert ────────────────────────────────────
+ *
+ * BullMQ 的 `every` 模式在 Lua 里用 `nextMillis = prevMillis + every` 推进排期，
+ * 而 `upsertJobScheduler` **每次调用都会读到上次存的 prevMillis 再往后加一个周期**。
+ * 于是「每次启动都 upsert」= 每次重启把排期往后推一格。实测反复重启后，
+ * delayed zset 里堆了 134 条、最晚排到了 23 万年之后（`+234595-01-03`），
+ * 周期性采集彻底失效，同时 `news-fetch` 永远处于「有任务待执行」的假忙状态。
+ *
+ * 正确语义：
+ *   - 已存在且周期未变 → **完全跳过**，什么都不做（真正的幂等）；
+ *   - 已存在但周期变了 → `removeJobScheduler` 后重建，避免新旧叠加；
+ *   - 不存在 → 建。
+ *
+ * 另注：`repeatOpts.limit` 是「总迭代次数上限」，不是「副本数」。设 limit:1 会让任务只跑一次，别用。
  */
 export async function scheduleRepeatable(
   queueName: QueueName,
@@ -62,8 +76,65 @@ export async function scheduleRepeatable(
   opts: JobsOptions = {},
 ): Promise<void> {
   const q = getQueue(queueName)
-  await (q as any).upsertJobScheduler(schedulerId, { every: everyMs }, { name: jobName, data, opts })
+  const existing = await (q as any)
+    .getJobSchedulers()
+    .then((list: any[]) => list.find((s) => s.id === schedulerId || s.key === schedulerId))
+    .catch(() => undefined)
+
+  if (existing && Number(existing.every) === everyMs) {
+    // 周期一致，保持现状。绝不能重复 upsert（会让排期不断后移）。
+    logger.info({ queue: queueName, schedulerId, everyMs, next: existing.next }, 'queue.schedule_kept')
+    return
+  }
+
+  if (existing) {
+    // 周期变了：先摘掉旧的，再重建，避免 prevMillis 叠加。
+    await (q as any).removeJobScheduler(schedulerId).catch(() => {})
+    logger.info({ queue: queueName, schedulerId, oldEvery: existing.every, everyMs }, 'queue.schedule_replaced')
+  }
+
+  await (q as any).upsertJobScheduler(
+    schedulerId,
+    { every: everyMs },
+    {
+      name: jobName,
+      data,
+      opts: { removeOnComplete: 100, removeOnFail: 200, ...opts },
+    },
+  )
   logger.info({ queue: queueName, schedulerId, everyMs }, 'queue.scheduled')
+}
+
+/**
+ * 一次性体检：清理某 scheduler 下陈旧的预生成副本。
+ *
+ * 只在显式调用时执行（不挂在启动路径上），避免误删 BullMQ 正在使用的排期。
+ * 用于升级后清理历史残留。判定「陈旧」的条件：该 hash 的 `timestamp` 早于 7 天前。
+ */
+export async function pruneStaleRepeatKeys(
+  queueName: QueueName,
+  schedulerId: string,
+  olderThanMs = 7 * 24 * 60 * 60 * 1000,
+): Promise<number> {
+  const base = `${config.queuePrefix}:${queueName}:repeat:${schedulerId}`
+  const cutoff = Date.now() - olderThanMs
+  try {
+    const keys = await redis.keys(`${base}:*`)
+    const stale: string[] = []
+    for (const k of keys) {
+      const raw = await redis.hget(k, 'timestamp')
+      const ts = raw ? Number(raw) : Number.NaN
+      // 没有 timestamp 字段的（老格式）也一并视为可清理
+      if (!Number.isFinite(ts) || ts < cutoff) stale.push(k)
+    }
+    if (!stale.length) return 0
+    await redis.del(...stale)
+    logger.info({ queue: queueName, schedulerId, pruned: stale.length }, 'queue.repeat_pruned')
+    return stale.length
+  } catch (e) {
+    logger.debug({ err: (e as Error).message }, 'queue.repeat_prune_skipped')
+    return 0
+  }
 }
 
 export async function nextScheduledRun(queueName: QueueName, schedulerId: string): Promise<number | null> {
@@ -83,9 +154,20 @@ export async function enqueue(
   opts: JobsOptions = {},
 ): Promise<Job | null> {
   const q = getQueue(queueName)
-  // FR-B3 入队去重：同一 jobId 未完成时不会重复入队
+  // FR-B3 入队去重：**必须用 deduplication**，不要用固定 jobId。
+  // BullMQ 5.x 的 jobId 语义是「同 id 的任务哈希存在即视为重复」（含已完成/已失败但未清理的
+  // 任务），配合 removeOnComplete 会把后续所有入队静默丢弃。deduplication.id 只在任务
+  // 未结束时去重，任务落地后自动释放，正是周期任务与「失败重试」需要的语义。
   const job = await q.add(jobName, data, opts)
   return job ?? null
+}
+
+/**
+ * 生成「仅未完成时去重」的 job 配置。
+ * 用法：入队时传 `{ ...dedupOpts(`fetch-${accountId}`), attempts: 3 }`，不要设置 jobId。
+ */
+export function dedupOpts(id: string): JobsOptions {
+  return { deduplication: { id } } as JobsOptions
 }
 
 export function registerWorker(
@@ -171,9 +253,13 @@ export async function warnIfQueuePrefixShared(): Promise<void> {
           'job 可能被错误实例消费导致状态长期 pending。请为每个实例设置不同的 QUEUE_PREFIX（或 REDIS_DB）。',
       )
     }
-    // 登记心跳（不带 TTL，实例退出时删除；异常退出留下的陈旧条目只用于提示，不影响运行）
-    await redis.set(key, dbTag)
-    process.once('beforeExit', () => void redis.del(key).catch(() => {}))
+    // 登记心跳（带 TTL，30 分钟后自动过期；异常退出留下的陈旧条目会自行消失）
+    await redis.set(key, dbTag, 'EX', 1800)
+    const clear = () => void redis.del(key).catch(() => {})
+    // P2-11：shutdown 走 process.exit(0)，beforeExit 不会触发，必须显式监听 SIGINT/SIGTERM
+    process.once('SIGINT', clear)
+    process.once('SIGTERM', clear)
+    process.once('beforeExit', clear)
   } catch (e) {
     logger.debug({ err: (e as Error).message }, 'queue.instance_check_skipped')
   }

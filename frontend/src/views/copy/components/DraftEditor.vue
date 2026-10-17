@@ -55,7 +55,7 @@
 
         <div class="flex items-center gap-2 shrink-0">
           <span v-if="saveHint" class="mw-subtle">{{ saveHint }}</span>
-          <a-button size="small" :disabled="!editor?.dirty || !store.canEdit" :loading="editor?.saving" @click="onSave">
+          <a-button size="small" :disabled="!store.isDirty || !store.canEdit" :loading="editor?.saving" @click="onSave">
             保存
           </a-button>
         </div>
@@ -171,7 +171,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
 import { copyApi, type ComplianceHit } from '@/api/copy'
@@ -196,14 +196,17 @@ const riskHint = computed(() => {
   )
 })
 
+/** P0-5：底栏保存状态（FR-E2：保存中 / 已自动保存 HH:mm / 保存失败可重试） */
 const saveHint = computed(() => {
   if (!editor.value) return ''
-  if (editor.value.saving) return '保存中…'
-  if (editor.value.dirty) return '有未保存改动'
+  const state = store.saveState
+  if (state === 'saving') return '保存中…'
+  if (state === 'error') return `保存失败：${editor.value.saveError ?? '可重试'}`
+  if (state === 'dirty') return '有未保存改动'
   if (editor.value.lastSavedAt) {
     const d = new Date(editor.value.lastSavedAt)
     const pad = (n: number) => String(n).padStart(2, '0')
-    return `已保存 ${pad(d.getHours())}:${pad(d.getMinutes())}`
+    return `已自动保存 ${pad(d.getHours())}:${pad(d.getMinutes())}`
   }
   return ''
 })
@@ -256,14 +259,88 @@ const wordOffsetHint = computed(() => {
   return { text: '字数在建议区间内', cls: 'text-[#12805c]' }
 })
 
-/** 合规命中（来自最近一次预检或保存时的版本快照） */
-const hits = computed<ComplianceHit[]>(() => store.precheck?.complianceHits ?? [])
+/**
+ * P1-22 / FR-R1：编辑时防抖实时合规扫描（800ms），与「预检」的两份命中取并集。
+ * 之前只读 store.precheck，必须先跑预检才有高亮，边写边改看不到风险词。
+ */
+const liveHits = ref<ComplianceHit[]>([])
+const liveScanning = ref(false)
+let liveTimer: ReturnType<typeof setTimeout> | null = null
+
+const hits = computed<ComplianceHit[]>(() => {
+  const pre = store.precheck?.complianceHits ?? []
+  if (!liveHits.value.length) return pre
+  // 同一位置同一词只保留一次（预检与实时扫描可能都命中）
+  const seen = new Set<string>()
+  const out: ComplianceHit[] = []
+  for (const h of [...pre, ...liveHits.value]) {
+    const k = `${h.sectionIndex}:${h.start}:${h.end}:${h.word}`
+    if (seen.has(k)) continue
+    seen.add(k)
+    out.push(h)
+  }
+  return out
+})
+
+async function runLiveScan(): Promise<void> {
+  const e = editor.value
+  const c = store.copy
+  if (!e || !c) {
+    liveHits.value = []
+    return
+  }
+  liveScanning.value = true
+  try {
+    const r = await copyApi.scanCompliance({
+      copyId: c.id,
+      title: e.title,
+      sections: e.sections,
+    })
+    liveHits.value = r.hits
+  } catch {
+    // 实时扫描是辅助能力，失败不打扰用户（预检仍会在提交前把关）
+  } finally {
+    liveScanning.value = false
+  }
+}
+
+function scheduleLiveScan(): void {
+  if (liveTimer) clearTimeout(liveTimer)
+  liveTimer = setTimeout(() => {
+    liveTimer = null
+    void runLiveScan()
+  }, 800)
+}
+
+// 段落文本 / 标题 / 当前稿变化时重新扫描
+watch(
+  () => [
+    editor.value?.draftId,
+    editor.value?.title,
+    editor.value?.editSeq,
+    editor.value?.sections.map((s) => `${s.label}|${s.text}`).join('\u0001'),
+  ],
+  () => {
+    if (!editor.value) {
+      liveHits.value = []
+      return
+    }
+    scheduleLiveScan()
+  },
+)
+
+onBeforeUnmount(() => {
+  if (liveTimer) clearTimeout(liveTimer)
+})
 
 const violations = computed(() => new Set(hits.value.map((h) => h.sectionIndex)))
 
 function hitsOfSection(index: number): ComplianceHit[] {
   return hits.value.filter((h) => h.sectionIndex === index)
 }
+
+/** P1-22：标题的命中（sectionIndex = -1） */
+const titleHits = computed(() => hits.value.filter((h) => h.sectionIndex === -1))
 
 function onSectionInput(_index: number): void {
   store.markDirty()
@@ -314,7 +391,7 @@ async function onSaveAsNew(): Promise<void> {
 
 async function onSwitchDraft(draftId: string): Promise<void> {
   if (draftId === editor.value?.draftId) return
-  if (editor.value?.dirty) {
+  if (store.isDirty) {
     Modal.confirm({
       title: '当前稿有未保存改动',
       content: '切换稿件会丢失这些改动，是否先保存？',
@@ -325,7 +402,8 @@ async function onSwitchDraft(draftId: string): Promise<void> {
         if (r === 'ok') await store.switchDraft(draftId)
       },
       onCancel: async () => {
-        if (editor.value) editor.value.dirty = false
+        // 放弃改动：丢掉本地暂存并让 store 认为无脏数据
+        store.acceptServerState()
         await store.switchDraft(draftId)
       },
     })
@@ -335,7 +413,7 @@ async function onSwitchDraft(draftId: string): Promise<void> {
 }
 
 async function onNewDraft(): Promise<void> {
-  if (editor.value?.dirty) {
+  if (store.isDirty) {
     Message.warning('请先保存当前稿再新建')
     return
   }

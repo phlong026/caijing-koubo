@@ -111,7 +111,7 @@ function kindLabel(k: string): string {
 async function onGenerate(): Promise<void> {
   if (!store.copy || !store.editor) return
   // 变体基于已保存内容生成，先落盘
-  if (store.editor.dirty) {
+  if (store.isDirty) {
     const r = await store.save()
     if (r !== 'ok') {
       Message.warning('请先保存当前稿')

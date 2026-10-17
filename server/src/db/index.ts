@@ -203,6 +203,22 @@ async function createMysql(): Promise<Db> {
 }
 
 /* ── SQLite（仅本地开发验证用，内置 node:sqlite 免安装） ─────────────── */
+
+/**
+ * P1-19：SQLite 单连接上的事务串行锁。
+ * SQLite 只有一个连接，事务内的 await 期间不允许别的请求写进来，
+ * 否则那些语句会随本事务一起提交/回滚。这里的 Promise 链把 tx() 串行化。
+ */
+let sqliteTxChain: Promise<unknown> = Promise.resolve()
+const sqliteTxLock = {
+  run<T>(fn: () => Promise<T>): Promise<T> {
+    const next = sqliteTxChain.then(fn, fn)
+    // 无论成功失败都放开下一个，避免一次异常让整条链永久卡死
+    sqliteTxChain = next.catch(() => undefined)
+    return next
+  },
+}
+
 async function createSqlite(file: string): Promise<Db> {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const { DatabaseSync } = (await import('node:sqlite')) as unknown as {
@@ -238,20 +254,26 @@ async function createSqlite(file: string): Promise<Db> {
     async tx(fn) {
       const inTx = (database as any).__inTx === true
       if (inTx) return fn(db) // sqlite 单连接，嵌套事务直接透传
-      database.exec('BEGIN IMMEDIATE')
-      ;(database as any).__inTx = true
-      try {
-        const r = await fn(db)
-        database.exec('COMMIT')
-        return r
-      } catch (e) {
+      // P1-19：SQLite 是单连接，BEGIN IMMEDIATE 之后 fn 里有 await，期间其它 HTTP 请求的
+      // 语句会落进这个事务并随它一起回滚。这里用进程内互斥把事务**串行化**：
+      // 拿到锁之后其它请求的 tx() 会排队（而不是看到 __inTx=true 直接透传进来），
+      // 从而避免「别人的写操作混进我的事务」。
+      return sqliteTxLock.run(async () => {
+        database.exec('BEGIN IMMEDIATE')
+        ;(database as any).__inTx = true
         try {
-          database.exec('ROLLBACK')
-        } catch {}
-        throw e
-      } finally {
-        ;(database as any).__inTx = false
-      }
+          const r = await fn(db)
+          database.exec('COMMIT')
+          return r
+        } catch (e) {
+          try {
+            database.exec('ROLLBACK')
+          } catch {}
+          throw e
+        } finally {
+          ;(database as any).__inTx = false
+        }
+      })
     },
     async tableExists(name) {
       const rows = raw("SELECT name FROM sqlite_master WHERE type='table' AND name = ?", [name]) as Row[]

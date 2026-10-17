@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { ok } from '../../app.js'
 import { listNews, newsCategories } from './repo.js'
-import { runFetchExclusive } from './service.js'
+import { runFetchExclusive, runFetchQueued } from './service.js'
 import { nextFetchAt } from './jobs.js'
 import { recordOperation } from '../audit/repo.js'
 import { getDb } from '../../db/index.js'
@@ -12,6 +12,12 @@ import { err } from '../../errors.js'
 import { sleep } from '../../lib/util.js'
 
 const MANUAL_TIMEOUT_MS = 12_000
+/**
+ * 手动刷新最长排队时间。
+ * 采集接入 FinStep 后单轮 60~90s（两个源各一次 LLM ReAct），12s 的同步窗口必然超时。
+ * 这里允许手动请求**排队**等前一轮跑完再执行，最多等 3 分钟，超时才转异步。
+ */
+const MANUAL_QUEUE_WAIT_MS = 180_000
 
 export function registerNewsRoutes(app: FastifyInstance): void {
   /** FR-N3 列表检索 */
@@ -23,8 +29,10 @@ export function registerNewsRoutes(app: FastifyInstance): void {
   /** FR-N3 手动刷新：立即采集并返回本次增量（超时转异步，P2-8） */
   app.post('/news/refresh', async (req, reply) => {
     const operator = req.operator
+    // 用排队语义：若定时任务正在采集，本次请求排队等它结束再跑，而不是立刻返回 busy。
+    // 12s 内跑完就同步返回；跑不完返回 202，但后台仍在继续（不取消）。
     const outcome = await Promise.race([
-      runFetchExclusive(),
+      runFetchQueued(MANUAL_QUEUE_WAIT_MS),
       sleep(MANUAL_TIMEOUT_MS).then(() => 'timeout' as const),
     ])
     const nextAt = await nextFetchAt().catch(() => null)
@@ -50,7 +58,7 @@ export function registerNewsRoutes(app: FastifyInstance): void {
           inserted: 0,
           bySource: [],
           nextRunAt: nextAt ? new Date(nextAt).toISOString() : null,
-          message: '已有采集任务在执行中',
+          message: '采集队列繁忙，请稍后重试',
         }),
       )
     }

@@ -71,3 +71,12 @@ export async function fetchAndStore(): Promise<FetchOutcome> {
 export async function runFetchExclusive(): Promise<FetchOutcome | null> {
   return mutex.run('fetch', fetchAndStore, () => null)
 }
+
+/**
+ * 排队版：手动刷新用。
+ * 若定时任务正在采集，本次请求排队等待（最多 waitMs），拿到锁后立即执行一次采集。
+ * 与 runFetchExclusive 的区别只在「忙时行为」：前者立刻返回 null，这里会等。
+ */
+export async function runFetchQueued(waitMs = 180_000): Promise<FetchOutcome | null> {
+  return mutex.runQueued('fetch', fetchAndStore, waitMs, () => null)
+}
