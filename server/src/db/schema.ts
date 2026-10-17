@@ -435,6 +435,9 @@ export const TABLES: TableDef[] = [
       vc('target_section_text', 64, { nullable: true }),
       { name: 'persona_snapshot', type: 'json', nullable: true },
       { name: 'prompt_text', type: 'longtext', nullable: true },
+      // 受理时的 system 段（prompt_text = system + 空行 + user）；执行时据此拆回 system / user，
+      // 直接用落库快照调用模型，不再按运行时最新的人物 / 模板重拼（FR-G6 追溯一致）
+      { name: 'prompt_system', type: 'longtext', nullable: true },
       vc('prompt_hash', 64, { nullable: true }),
       vc('model', 64, { nullable: true }),
       vc('status', 16, { def: 'pending' }), // pending | running | done | partial | failed

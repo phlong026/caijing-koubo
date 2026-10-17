@@ -526,6 +526,7 @@ export interface GenerationRow {
   targetSection: number | null
   personaSnapshot: Record<string, unknown> | null
   promptText: string | null
+  promptSystem: string | null
   promptHash: string | null
   model: string | null
   status: string
@@ -557,6 +558,7 @@ export function mapGeneration(r: Row): GenerationRow {
     targetSection: r.target_section === null || r.target_section === undefined ? null : Number(r.target_section),
     personaSnapshot: jdec<Record<string, unknown> | null>(r.persona_snapshot, null),
     promptText: r.prompt_text ?? null,
+    promptSystem: r.prompt_system ?? null,
     promptHash: r.prompt_hash ?? null,
     model: r.model ?? null,
     status: r.status,
@@ -569,6 +571,17 @@ export function mapGeneration(r: Row): GenerationRow {
     createdAt: fromDb(r.created_at),
     finishedAt: fromDb(r.finished_at),
   }
+}
+
+/**
+ * 从受理时落库的快照拆回 system / user（P2-15 / P2-16）。
+ * 老记录没有 prompt_system 或内容对不上时返回 null，由调用方按旧逻辑兜底。
+ */
+export function storedPrompt(g: GenerationRow): { system: string; user: string } | null {
+  if (!g.promptSystem || !g.promptText) return null
+  const head = `${g.promptSystem}\n\n`
+  if (!g.promptText.startsWith(head)) return null
+  return { system: g.promptSystem, user: g.promptText.slice(head.length) }
 }
 
 export async function getGeneration(id: string, db: Db = getDb()): Promise<GenerationRow | null> {
@@ -607,9 +620,9 @@ export async function insertGeneration(
     `INSERT INTO \`copy_generation\`
       (\`id\`, \`copy_id\`, \`draft_id\`, \`kind\`, \`mode\`, \`template_id\`, \`template_rev\`, \`style_id\`, \`style_rev\`,
        \`duration_tier\`, \`duration_seconds\`, \`count\`, \`instructions\`, \`target_section\`, \`target_section_text\`,
-       \`persona_snapshot\`, \`prompt_text\`, \`prompt_hash\`, \`model\`, \`status\`, \`succeeded\`, \`failed\`, \`error\`, \`cost\`,
+       \`persona_snapshot\`, \`prompt_text\`, \`prompt_system\`, \`prompt_hash\`, \`model\`, \`status\`, \`succeeded\`, \`failed\`, \`error\`, \`cost\`,
        \`idempotency_key\`, \`created_by\`, \`created_at\`, \`finished_at\`)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       row.copy_id,
@@ -628,6 +641,7 @@ export async function insertGeneration(
       row.target_section_text ?? null,
       jenc(row.persona_snapshot ?? null),
       row.prompt_text ?? null,
+      row.prompt_system ?? null,
       row.prompt_hash ?? null,
       row.model ?? null,
       row.status ?? 'pending',

@@ -36,7 +36,7 @@ import {
   type Section,
 } from './constants.js'
 import { getPersonaById } from './persona-bridge.js'
-import { insertVersion, listComplianceWords } from './repo.js'
+import { insertVersion, listComplianceWords, storedPrompt } from './repo.js'
 
 /**
  * 文案引擎（W2 / FR-G1~G7）。
@@ -191,6 +191,7 @@ export async function acceptGeneration(args: GenerateArgs): Promise<GenerateAcce
         target_section: null,
         persona_snapshot: personaSnapshot,
         prompt_text: assembled.promptText,
+        prompt_system: assembled.system,
         prompt_hash: assembled.promptHash,
         model: currentModelLabel(),
         status: 'pending',
@@ -332,10 +333,13 @@ export async function runGeneration(generationId: string): Promise<void> {
     return
   }
 
+  // P2-15：优先用受理时落库的提示词快照，保证「记录的提示词 = 实际发给模型的提示词」；
+  // 老记录没有 prompt_system 时才按当前人物 / 模板 / 风格重拼（并回写快照）
   const persona = copy.personaId ? await getPersonaById(copy.personaId, true) : null
-  const style = gen.styleId ? await getStyle(gen.styleId, db) : null
-  const template = gen.templateId ? await getTemplate(gen.templateId, db) : null
-  if (!persona || !style || !template) {
+  const stored = storedPrompt(gen)
+  const style = !stored && gen.styleId ? await getStyle(gen.styleId, db) : null
+  const template = !stored && gen.templateId ? await getTemplate(gen.templateId, db) : null
+  if (!persona || (!stored && (!style || !template))) {
     await updateGeneration(
       generationId,
       { status: 'failed', error: '人物、模板或风格已失效，请重新生成', finished_at: toDb(utcNow()) },
@@ -344,27 +348,30 @@ export async function runGeneration(generationId: string): Promise<void> {
     return
   }
 
-  const assembled = assemblePrompt({
-    mode: copy.source as GenerationMode,
-    persona: {
-      name: persona.name,
-      line: persona.line,
-      role: persona.ipProfile.role,
-      serviceScope: persona.ipProfile.serviceScope,
-      targetAudience: persona.ipProfile.targetAudience,
-      expressionStyle: persona.ipProfile.expressionStyle,
-      forbiddenClaims: persona.ipProfile.forbiddenClaims,
-      audienceNeeds: (persona.ipProfile as unknown as Record<string, string | undefined>).audienceNeeds,
-      factualBackground: (persona.ipProfile as unknown as Record<string, string | undefined>).factualBackground,
-      sampleScript: (persona.ipProfile as unknown as Record<string, string | undefined>).sampleScript,
-    },
-    template: { name: template.name, prompt: template.prompt, structureHint: template.structureHint },
-    style: { name: style.name, prompt: style.prompt },
-    durationTier: gen.durationTier,
-    durationSeconds: gen.durationSeconds,
-    instructions: gen.instructions,
-    source: await buildSourceBlock(copy),
-  })
+  const assembled = stored
+    ? null
+    : assemblePrompt({
+        mode: copy.source as GenerationMode,
+        persona: {
+          name: persona.name,
+          line: persona.line,
+          role: persona.ipProfile.role,
+          serviceScope: persona.ipProfile.serviceScope,
+          targetAudience: persona.ipProfile.targetAudience,
+          expressionStyle: persona.ipProfile.expressionStyle,
+          forbiddenClaims: persona.ipProfile.forbiddenClaims,
+          audienceNeeds: persona.ipProfile.audienceNeeds,
+          factualBackground: persona.ipProfile.factualBackground,
+          sampleScript: persona.ipProfile.sampleScript,
+        },
+        template: { name: template!.name, prompt: template!.prompt, structureHint: template!.structureHint },
+        style: { name: style!.name, prompt: style!.prompt },
+        durationTier: gen.durationTier,
+        durationSeconds: gen.durationSeconds,
+        instructions: gen.instructions,
+        source: await buildSourceBlock(copy),
+      })
+  const prompt = stored ?? { system: assembled!.system, user: assembled!.user }
 
   const words = await listComplianceWords({ enabledOnly: true }, db)
   const range = wordRangeOf(gen.durationTier, gen.durationSeconds)
@@ -388,7 +395,7 @@ export async function runGeneration(generationId: string): Promise<void> {
       let cost = 0
       let parsed: ReturnType<typeof parseDraftJson> = null
       for (let attempt = 0; attempt <= 1 && !parsed; attempt++) {
-        const r = await callLlmWithRetry(assembled.system, assembled.user, generationId)
+        const r = await callLlmWithRetry(prompt.system, prompt.user, generationId)
         cost += r.cost
         parsed = parseDraftJson(r.content)
       }
@@ -495,8 +502,10 @@ export async function runGeneration(generationId: string): Promise<void> {
       cost: totalCost,
       error: failures.length ? failures.join('；').slice(0, 2000) : null,
       finished_at: toDb(utcNow()),
-      prompt_hash: assembled.promptHash,
-      prompt_text: assembled.promptText,
+      // 只有老记录（无快照、刚重拼）才回写；有快照时保持受理时的原文
+      ...(assembled
+        ? { prompt_hash: assembled.promptHash, prompt_text: assembled.promptText, prompt_system: assembled.system }
+        : {}),
     },
     db,
   )
@@ -609,6 +618,7 @@ export async function acceptVariant(args: VariantArgs): Promise<{ generationId: 
       target_section_text: (target.label ?? '').slice(0, 60),
       persona_snapshot: { id: persona.id, name: persona.name, line: persona.line, ipProfile: persona.ipProfile },
       prompt_text: assembled.promptText,
+      prompt_system: assembled.system,
       prompt_hash: assembled.promptHash,
       model: currentModelLabel(),
       status: 'pending',
@@ -643,7 +653,6 @@ export async function runVariant(generationId: string): Promise<void> {
     return
   }
 
-  // 重新组装提示词（不依赖落库的 prompt_text 解析，保证一致）
   const sections = JSON.parse(String(draft.sections ?? '[]')) as Section[]
   const idx = gen.targetSection ?? 0
   const target = sections[idx]
@@ -658,14 +667,18 @@ export async function runVariant(generationId: string): Promise<void> {
     .map((s) => s.trim())
     .filter(Boolean)
 
+  const textAtAccept =
+    /--- 原始段落开始 ---\n([\s\S]*?)\n--- 原始段落结束 ---/.exec(gen.promptText ?? '')?.[1] ?? target.text
+
   let created = 0
   let cost = 0
   try {
-    const res = await callLlmWithRetry(
-      gen.promptText?.split('\n\n【本次任务】')[0] ?? '',
-      gen.promptText?.split('【本次任务】')[1] ?? '',
-      generationId,
-    )
+    // P2-16：用受理时落库的 system / user 快照。老记录没有 prompt_system 时按旧方式拆分兜底
+    const prompt = storedPrompt(gen) ?? {
+      system: gen.promptText?.split('\n\n【本次任务】')[0] ?? '',
+      user: gen.promptText?.split('【本次任务】')[1] ?? '',
+    }
+    const res = await callLlmWithRetry(prompt.system, prompt.user, generationId)
     cost += res.cost
     const variants = parseVariantJson(res.content) ?? []
     for (const v of variants) {
@@ -675,7 +688,9 @@ export async function runVariant(generationId: string): Promise<void> {
           draftId: gen.draftId,
           generationId,
           sectionIndex: idx,
-          sectionTextAtGen: target.text,
+          // AC-V3 的比对基准是「受理时」的段落原文（即提示词里给模型看的那段），
+          // 而不是执行时的文本，否则排队期间用户改了这段也比对不出来
+          sectionTextAtGen: textAtAccept,
           kind: v.kind,
           text: v.text,
         },
