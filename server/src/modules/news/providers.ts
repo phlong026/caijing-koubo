@@ -52,10 +52,12 @@ const MOCK_SEEDS: Array<{ title: string; summary: string; cat: string }> = [
 class MockProvider implements NewsProvider {
   name = 'mock'
   label = '内置示意源'
-  // P1-7：必须受 MOCK_FALLBACK 控制。此前恒为 true，生产环境每 15 分钟
-  // 会把「内置示意源」的假资讯写进正式库。
+  // P1-7：必须受开关控制。此前恒为 true，生产环境每 15 分钟会把假资讯写进正式库。
+  //
+  // 这里改用独立的 `newsMockSource` 而非 `mockFallback`：后者是 TikHub/百炼/OSS/文案模型
+  // 共用的兜底开关，为了让资讯只看真实数据而关掉它，会连带让视频提取和文案生成报错。
   get enabled(): boolean {
-    return config.mockFallback
+    return config.newsMockSource
   }
 
   async fetchLatest(): Promise<NewsDTO[]> {

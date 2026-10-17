@@ -213,6 +213,19 @@ export const config = {
   // P1-7：生产环境默认**关闭** mock 兜底；否则漏配 key 时会静默返回假账号/假视频/假转写。
   mockFallback: bool('MOCK_FALLBACK', str('NODE_ENV', 'development') !== 'production'),
 
+  /**
+   * 资讯「内置示意源」开关（与 mockFallback 解耦）。
+   *
+   * 为什么必须拆开：`mockFallback` 同时是 TikHub / 百炼 ASR / 百炼 LLM / OSS / 文案模型
+   * 的兜底开关。为了让热点资讯只用真实数据就把 MOCK_FALLBACK 关掉，会让视频提取、
+   * 文案生成一并报「未配置密钥」——用一个全局开关去控制单个数据源的展示口径，
+   * 是明显的粒度错误。
+   *
+   * 默认：开发环境 true（免得没配 key 时资讯列表空白），生产 false。
+   * 想让资讯只出现真实来源时，单独设 `NEWS_MOCK_SOURCE=false`。
+   */
+  newsMockSource: bool('NEWS_MOCK_SOURCE', str('NODE_ENV', 'development') !== 'production'),
+
   // §2.4 防 SSRF 白名单：与任务书 §2.4 的 3 个域名保持一致（P2-14）
   linkWhitelist: ['v.douyin.com', 'www.douyin.com', 'www.iesdouyin.com'],
   maxRedirects: 3,
