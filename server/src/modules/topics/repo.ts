@@ -93,8 +93,15 @@ export async function listTopics(q: Record<string, unknown>): Promise<PageResult
   const where: string[] = []
   const params: unknown[] = []
   if (q.status) {
-    where.push('t.`status` = ?')
-    params.push(String(q.status))
+    // 支持逗号分隔多状态（如 candidate,assigned = 尚未送入的候选），只接受已知状态值
+    const known: TopicStatus[] = ['candidate', 'assigned', 'sent', 'archived']
+    const list = String(q.status)
+      .split(',')
+      .map((x) => x.trim())
+      .filter((x): x is TopicStatus => (known as string[]).includes(x))
+    if (!list.length) throw err.badRequest('status 取值无效', { allowed: known })
+    where.push(`t.\`status\` IN (${list.map(() => '?').join(', ')})`)
+    params.push(...list)
   }
   if (q.source) {
     where.push('t.`source` = ?')

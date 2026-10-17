@@ -43,7 +43,7 @@ import {
   saveDraftVersion,
   switchCurrentDraft,
 } from './service.js'
-import { acceptGeneration, acceptVariant, applyVariant } from './generation.js'
+import { acceptGeneration, acceptVariant, applyVariant, assembleForCopy, validateDuration } from './generation.js'
 import {
   assertReviewStubEnabled,
   getApprovedCopy,
@@ -58,7 +58,6 @@ import { getVersion, listVersions, getSubmission, getGeneration, listVariantsByG
 import { parseArticleBuffer, parsePastedText, saveArticle, validateFileMeta, writeTempFile } from './article.js'
 import { getArticle } from './repo.js'
 import { scanCompliance } from './text.js'
-import { assemblePrompt } from './prompt.js'
 import { getPersonaById } from './persona-bridge.js'
 import { toDb, utcNow } from '../../lib/time.js'
 import { newId } from '../../lib/util.js'
@@ -1033,29 +1032,14 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
     const style = body.styleId ? await getStyle(body.styleId) : null
     const persona = copy.personaId ? await getPersonaById(copy.personaId, true) : null
     if (!template || !style || !persona) throw err.badRequest('模板 / 风格 / 人物不完整')
-    const ip = persona.ipProfile as unknown as Record<string, unknown>
-    const a = assemblePrompt({
-      mode: copy.source as never,
-      persona: {
-        name: persona.name,
-        line: persona.line,
-        role: String(ip.role ?? ''),
-        serviceScope: String(ip.serviceScope ?? ''),
-        targetAudience: String(ip.targetAudience ?? ''),
-        expressionStyle: String(ip.expressionStyle ?? ''),
-        forbiddenClaims: (ip.forbiddenClaims as string[]) ?? [],
-        audienceNeeds: ip.audienceNeeds as string | undefined,
-        factualBackground: ip.factualBackground as string | undefined,
-        sampleScript: ip.sampleScript as string | undefined,
-      },
-      template: { name: template.name, prompt: template.prompt, structureHint: template.structureHint },
-      style: { name: style.name, prompt: style.prompt },
-      durationTier: body.durationTier ?? 'medium',
-      durationSeconds: body.durationSeconds ?? null,
-      instructions: body.instructions ?? null,
-      source: { mode: copy.source as never, sourceText: copy.sourceText ?? '' },
+    // 与真实生成同一套组装（含资讯 / 对标 / 文章大纲等完整来源块），预览即实际发给模型的提示词
+    const durationTier = body.durationTier ?? 'medium'
+    const a = await assembleForCopy(copy, persona, template, style, {
+      durationTier,
+      durationSeconds: validateDuration(durationTier, body.durationSeconds),
+      instructions: body.instructions ? String(body.instructions).trim().slice(0, config.copy.maxInstructions) : null,
     })
-    return ok({ system: a.system, user: a.user, promptHash: a.promptHash, wordRange: a.wordRange })
+    return ok({ system: a.system, user: a.user, prompt: a.promptText, promptHash: a.promptHash, wordRange: a.wordRange })
   })
 
   void withReply

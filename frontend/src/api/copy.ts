@@ -165,12 +165,13 @@ export interface Variant {
   createdAt: string
 }
 
+/** 审核单 gate_results 的单项（§5.3 契约，与后端 review.ts gateResult 一致） */
 export interface GateResult {
   gate: string
-  label: string
-  status: string
-  conclusion: string
-  note: string | null
+  result: 'pass' | 'fail'
+  reason: string | null
+  riskPoints: string[] | null
+  confidence: number | null
   at: string | null
 }
 
@@ -483,8 +484,12 @@ export const copyApi = {
   submission(submissionId: string) {
     return apiGet<Submission>(`/review/submissions/${submissionId}`)
   },
-  decision(submissionId: string, body: { decision: 'approve' | 'reject'; reason?: string; note?: string }) {
-    return apiPost<Submission>(`/review/submissions/${submissionId}/decision`, body)
+  /** 审核桩人工裁决（§5.3，仅桩开启时可用；退回必须带原因） */
+  decision(
+    submissionId: string,
+    body: { result: 'approved' | 'rejected'; reason?: string; rejectedGate?: string; riskPoints?: string[] },
+  ) {
+    return apiPost<{ copyId: string; status: 'approved' | 'rejected' }>(`/review/submissions/${submissionId}/decision`, body)
   },
 
   /* 工具 */
@@ -493,7 +498,7 @@ export const copyApi = {
     return apiPost<{ hits: ComplianceHit[] }>('/copy/compliance/scan', body)
   },
   promptPreview(copyId: string, body: { templateId: string; styleId: string; durationTier: DurationTier; durationSeconds?: number | null; instructions?: string }) {
-    return apiPost<{ prompt: string; promptHash: string; wordRange: { min: number; max: number; seconds: number } }>(
+    return apiPost<{ system: string; user: string; prompt: string; promptHash: string; wordRange: { min: number; max: number } }>(
       `/copy/${copyId}/prompt-preview`,
       body,
     )

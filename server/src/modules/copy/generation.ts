@@ -141,26 +141,10 @@ export async function acceptGeneration(args: GenerateArgs): Promise<GenerateAcce
 
   // 4) 组装提示词与快照
   const ip = persona.ipProfile
-  const assembled = assemblePrompt({
-    mode: copy.source as GenerationMode,
-    persona: {
-      name: persona.name,
-      line: persona.line,
-      role: ip.role,
-      serviceScope: ip.serviceScope,
-      targetAudience: ip.targetAudience,
-      expressionStyle: ip.expressionStyle,
-      forbiddenClaims: ip.forbiddenClaims,
-      audienceNeeds: (ip as unknown as Record<string, string | undefined>).audienceNeeds,
-      factualBackground: (ip as unknown as Record<string, string | undefined>).factualBackground,
-      sampleScript: (ip as unknown as Record<string, string | undefined>).sampleScript,
-    },
-    template: { name: template.name, prompt: template.prompt, structureHint: template.structureHint },
-    style: { name: style.name, prompt: style.prompt },
+  const assembled = await assembleForCopy(copy, persona, template, style, {
     durationTier: args.durationTier,
     durationSeconds,
     instructions,
-    source: await buildSourceBlock(copy),
   })
 
   const personaSnapshot = {
@@ -253,6 +237,45 @@ export async function acceptGeneration(args: GenerateArgs): Promise<GenerateAcce
   })
 
   return { generationId, status: 'pending' }
+}
+
+type PersonaRow = NonNullable<Awaited<ReturnType<typeof getPersonaById>>>
+type TemplateRow = NonNullable<Awaited<ReturnType<typeof getTemplate>>>
+type StyleRow = NonNullable<Awaited<ReturnType<typeof getStyle>>>
+
+/**
+ * 某条文案的整稿提示词组装（受理生成、老记录重拼、「查看提示词」预览共用）。
+ * 三处必须同源：预览若只拼 copy.sourceText，看到的就不是实际发给模型的提示词。
+ */
+export async function assembleForCopy(
+  copy: CopyRow,
+  persona: PersonaRow,
+  template: TemplateRow,
+  style: StyleRow,
+  opts: { durationTier: string; durationSeconds: number | null; instructions: string | null },
+): Promise<ReturnType<typeof assemblePrompt>> {
+  const ip = persona.ipProfile
+  return assemblePrompt({
+    mode: copy.source as GenerationMode,
+    persona: {
+      name: persona.name,
+      line: persona.line,
+      role: ip.role,
+      serviceScope: ip.serviceScope,
+      targetAudience: ip.targetAudience,
+      expressionStyle: ip.expressionStyle,
+      forbiddenClaims: ip.forbiddenClaims,
+      audienceNeeds: ip.audienceNeeds,
+      factualBackground: ip.factualBackground,
+      sampleScript: ip.sampleScript,
+    },
+    template: { name: template.name, prompt: template.prompt, structureHint: template.structureHint },
+    style: { name: style.name, prompt: style.prompt },
+    durationTier: opts.durationTier,
+    durationSeconds: opts.durationSeconds,
+    instructions: opts.instructions,
+    source: await buildSourceBlock(copy),
+  })
 }
 
 /** 按来源组装来源块（FR-G3 四种模式） */
@@ -350,26 +373,10 @@ export async function runGeneration(generationId: string): Promise<void> {
 
   const assembled = stored
     ? null
-    : assemblePrompt({
-        mode: copy.source as GenerationMode,
-        persona: {
-          name: persona.name,
-          line: persona.line,
-          role: persona.ipProfile.role,
-          serviceScope: persona.ipProfile.serviceScope,
-          targetAudience: persona.ipProfile.targetAudience,
-          expressionStyle: persona.ipProfile.expressionStyle,
-          forbiddenClaims: persona.ipProfile.forbiddenClaims,
-          audienceNeeds: persona.ipProfile.audienceNeeds,
-          factualBackground: persona.ipProfile.factualBackground,
-          sampleScript: persona.ipProfile.sampleScript,
-        },
-        template: { name: template!.name, prompt: template!.prompt, structureHint: template!.structureHint },
-        style: { name: style!.name, prompt: style!.prompt },
+    : await assembleForCopy(copy, persona, template!, style!, {
         durationTier: gen.durationTier,
         durationSeconds: gen.durationSeconds,
         instructions: gen.instructions,
-        source: await buildSourceBlock(copy),
       })
   const prompt = stored ?? { system: assembled!.system, user: assembled!.user }
 

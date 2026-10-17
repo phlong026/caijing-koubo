@@ -4,6 +4,7 @@ import { newId } from '../../lib/util.js'
 import { addDays, addHours, fromDb, jitter, toDb, utcNow } from '../../lib/time.js'
 import { err } from '../../errors.js'
 import { fetchUserInfo, isMockMode } from '../../integrations/tikhub/client.js'
+import type { TikUser } from '../../integrations/tikhub/types.js'
 import { parseUserOrVideoLink } from './link.js'
 import { recordOperation } from '../audit/repo.js'
 import { logger } from '../../log.js'
@@ -73,6 +74,22 @@ export async function listAccounts(includeRemoved = false): Promise<AccountRow[]
   return rows.map(mapAccount)
 }
 
+/**
+ * 预览结果缓存（P2-7）：「解析预览 → 确认添加」是同一条链接的连续两步，
+ * 添加时复用预览阶段的解析与用户信息，省掉一次链接解析和一次 TikHub 用户信息调用。
+ * 只缓存服务端自己拿到的结果（不信任前端回传的 secUid），按链接取，10 分钟过期；
+ * 未命中（过期 / 多实例）时退回现解析、现拉取。
+ */
+const PREVIEW_TTL_MS = 10 * 60 * 1000
+const previewCache = new Map<string, { secUid: string; finalUrl: string; user: TikUser; at: number }>()
+
+function takePreview(url: string): { secUid: string; finalUrl: string; user: TikUser } | null {
+  const key = url.trim()
+  const hit = previewCache.get(key)
+  previewCache.delete(key)
+  return hit && Date.now() - hit.at < PREVIEW_TTL_MS ? hit : null
+}
+
 /** FR-B1 解析预览：白名单校验 → sec_uid → TikHub 用户信息 */
 export async function previewAccount(rawUrl: string): Promise<{
   secUid: string
@@ -89,6 +106,9 @@ export async function previewAccount(rawUrl: string): Promise<{
   }
   const user = await fetchUserInfo(parsed.secUid)
   const existing = await findAccountBySecUid(parsed.secUid)
+  const now = Date.now()
+  for (const [k, v] of previewCache) if (now - v.at >= PREVIEW_TTL_MS) previewCache.delete(k)
+  previewCache.set(rawUrl.trim(), { secUid: parsed.secUid, finalUrl: parsed.finalUrl, user, at: now })
   return {
     secUid: parsed.secUid,
     nickname: user.nickname || null,
@@ -114,16 +134,13 @@ export interface AddAccountInput {
   url: string
   intervalHours?: number
   operator?: string
-  /** 解析预览已确认过的 secUid，避免重复解析 */
-  knownSecUid?: string
 }
 
 /** FR-B1 添加账号：解析 → 回填信息 → 入库（周期可配） */
 export async function addAccount(input: AddAccountInput): Promise<{ account: AccountRow; restored: boolean }> {
   const db = getDb()
-  const parsed = input.knownSecUid
-    ? { secUid: input.knownSecUid, finalUrl: input.url }
-    : await parseUserOrVideoLink(input.url)
+  const cached = takePreview(input.url)
+  const parsed = cached ?? (await parseUserOrVideoLink(input.url))
   if (!parsed.secUid) throw err.badRequest('未能解析出主页 sec_uid')
 
   const intervalHours = normalizeInterval(input.intervalHours ?? 24)
@@ -133,7 +150,7 @@ export async function addAccount(input: AddAccountInput): Promise<{ account: Acc
     throw err.conflict('该账号已在监控列表中，可直接修改监控周期', { id: existing.id })
   }
 
-  const user = await fetchUserInfo(parsed.secUid)
+  const user = cached?.user ?? (await fetchUserInfo(parsed.secUid))
   const now = utcNow()
 
   if (existing && existing.removedAt) {

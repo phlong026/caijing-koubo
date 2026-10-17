@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ApiError } from '@/api/client'
 import { copyApi, type CopyDetail, type CopyOptions, type Draft, type Generation, type PrecheckResult, type Section } from '@/api/copy'
 
@@ -111,6 +111,74 @@ export const useCopyStore = defineStore('copy', () => {
     if (e.editSeq > e.savedSeq) return 'dirty'
     return 'saved'
   })
+
+  /* ── 撤销 / 重做（W4 精简工具栏）── */
+  /**
+   * 以「标题 + 段落」整体快照为单位。连续输入 800ms 内合并为一步，最多保留 50 步。
+   * committed 始终是最近一次编辑之后的内容：新一轮输入开始时把它压入撤销栈，
+   * 即「这一轮输入之前」的状态。换稿或重新载入（editor 被整体替换）时清空历史。
+   */
+  type EditorSnap = { title: string; sections: Section[] }
+  const UNDO_LIMIT = 50
+  const UNDO_MERGE_MS = 800
+  const undoStack = ref<EditorSnap[]>([])
+  const redoStack = ref<EditorSnap[]>([])
+  let committed: EditorSnap | null = null
+  let lastEditAt = 0
+  const canUndo = computed(() => undoStack.value.length > 0)
+  const canRedo = computed(() => redoStack.value.length > 0)
+
+  function snapEditor(): EditorSnap | null {
+    const e = editor.value
+    return e ? { title: e.title, sections: e.sections.map((x) => ({ ...x })) } : null
+  }
+
+  function resetHistory(): void {
+    undoStack.value = []
+    redoStack.value = []
+    committed = snapEditor()
+    lastEditAt = 0
+  }
+  // 只在 editor 被整体替换（换稿 / 载入 / 放弃改动）时触发，段落内的修改不会触发
+  watch(editor, resetHistory)
+
+  function recordHistory(): void {
+    const now = Date.now()
+    if (committed && now - lastEditAt > UNDO_MERGE_MS) {
+      undoStack.value.push(committed)
+      if (undoStack.value.length > UNDO_LIMIT) undoStack.value.shift()
+      redoStack.value = []
+    }
+    lastEditAt = now
+    committed = snapEditor()
+  }
+
+  function applySnap(snap: EditorSnap): void {
+    const e = editor.value
+    if (!e) return
+    e.title = snap.title
+    e.sections = snap.sections.map((x) => ({ ...x }))
+    committed = snapEditor()
+    lastEditAt = 0
+    precheck.value = null
+    markDirty(false)
+  }
+
+  function undo(): void {
+    const prev = undoStack.value.pop()
+    const cur = snapEditor()
+    if (!prev || !cur || !canEdit.value) return
+    redoStack.value.push(cur)
+    applySnap(prev)
+  }
+
+  function redo(): void {
+    const next = redoStack.value.pop()
+    const cur = snapEditor()
+    if (!next || !cur || !canEdit.value) return
+    undoStack.value.push(cur)
+    applySnap(next)
+  }
 
   let autosaveTimer: ReturnType<typeof setTimeout> | null = null
   /** 串行化：同一时刻只有一个保存请求在飞，期间的新改动等它回来后再合并发送 */
@@ -245,10 +313,11 @@ export const useCopyStore = defineStore('copy', () => {
     return true
   }
 
-  /** P0-5：标记改动 —— editSeq++ + 写本地暂存 + 安排 2 秒防抖自动保存 */
-  function markDirty(): void {
+  /** P0-5：标记改动 —— editSeq++ + 写本地暂存 + 安排 2 秒防抖自动保存；用户编辑同时记入撤销历史 */
+  function markDirty(history = true): void {
     const e = editor.value
     if (!e) return
+    if (history) recordHistory()
     e.editSeq += 1
     e.saveError = null
     persistLocal()
@@ -313,6 +382,17 @@ export const useCopyStore = defineStore('copy', () => {
   function removeSection(index: number): void {
     if (!editor.value) return
     editor.value.sections.splice(index, 1)
+    markDirty()
+    precheck.value = null
+  }
+
+  /** 段落上移 / 下移（W4 工具栏「段落增删移动」） */
+  function moveSection(index: number, delta: -1 | 1): void {
+    const list = editor.value?.sections
+    const to = index + delta
+    if (!list || to < 0 || to >= list.length) return
+    const [item] = list.splice(index, 1)
+    list.splice(to, 0, item!)
     markDirty()
     precheck.value = null
   }
@@ -689,6 +769,11 @@ export const useCopyStore = defineStore('copy', () => {
     updateTitle,
     addSection,
     removeSection,
+    moveSection,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
     save,
     autosave,
     cancelAutosave,

@@ -46,7 +46,8 @@ export interface TopicTemplate {
 }
 
 export interface TopicQuery {
-  status?: TopicStatus
+  /** 单个状态，或逗号分隔多个（如 `candidate,assigned`） */
+  status?: TopicStatus | string
   source?: TopicSource
   batchId?: string
   page?: number
