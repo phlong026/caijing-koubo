@@ -1,0 +1,41 @@
+{
+  "name": "viral-topics-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "财经口播数字人 · 爆款选题模块 服务端（Fastify + MySQL + BullMQ）",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "migrate": "tsx src/db/migrate-cli.ts",
+    "smoke": "tsx scripts/smoke.ts",
+    "check:mysql-ddl": "tsx scripts/check-mysql-ddl.ts",
+    "check:mysql-ddl:self": "tsx scripts/check-mysql-ddl.ts --selftest",
+    "test:finstep:clean": "tsx scripts/test-finstep-clean.ts",
+    "test:finstep": "tsx scripts/test-finstep.ts",
+    "check": "npm run typecheck && npm run check:mysql-ddl && npm run check:mysql-ddl:self && npm run test:finstep:clean"
+  },
+  "dependencies": {
+    "@esbuild/win32-x64": "^0.28.2",
+    "@fastify/cors": "^10.0.1",
+    "ali-oss": "^6.21.0",
+    "axios": "^1.7.7",
+    "bullmq": "^5.21.2",
+    "dotenv": "^16.4.5",
+    "fastify": "^5.1.0",
+    "ioredis": "^5.4.1",
+    "mammoth": "^1.13.0",
+    "mysql2": "^3.11.4",
+    "pdf-parse": "^2.4.5",
+    "pino": "^9.4.0",
+    "pino-pretty": "^11.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "node-sql-parser": "^5.4.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

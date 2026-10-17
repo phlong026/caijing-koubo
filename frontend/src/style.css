@@ -1,0 +1,518 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   矩阵工场 · 设计令牌（Design Tokens）
+   层次 / 圆角 / 排印 / 动效 / 色板 统一由这里驱动
+   ============================================================ */
+:root {
+  /* 色板：中性色偏冷灰，层次更细腻 */
+  --mw-bg: #f5f6f8;
+  --mw-border: #e8ecf1;
+  --mw-border-light: #eef1f5;
+  --mw-text: #17233a;
+  --mw-text2: #4a5568;
+  --mw-text3: #97a1b2;
+
+  /* 主色与派生 */
+  --mw-primary: #1d4ed8;
+  --mw-primary-light: #2e63e7;
+  --mw-primary-bg: #eef4ff;
+  --mw-primary-ring: rgba(29, 78, 216, 0.14);
+
+  /* 层次阴影：双层柔光，替代硬边框 */
+  --mw-shadow-xs: 0 1px 2px rgba(23, 32, 52, 0.04);
+  --mw-shadow-sm: 0 1px 2px rgba(23, 32, 52, 0.04), 0 2px 6px rgba(23, 32, 52, 0.05);
+  --mw-shadow-md: 0 2px 4px rgba(23, 32, 52, 0.04), 0 8px 20px rgba(23, 32, 52, 0.08);
+  --mw-shadow-primary: 0 1px 2px rgba(29, 78, 216, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+
+  /* 圆角与动效 */
+  --mw-radius: 14px;
+  --mw-radius-sm: 9px;
+  --mw-ease: cubic-bezier(0.22, 0.8, 0.32, 1);
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--mw-bg);
+  color: var(--mw-text);
+  font-family: 'PingFang SC', 'HarmonyOS Sans SC', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei',
+    'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: rgba(29, 78, 216, 0.16);
+}
+
+/* Arco 主色向品牌深蓝靠拢（Arco 变量为 RGB 三元组格式） */
+body {
+  --arcoblue-1: 238, 244, 255;
+  --arcoblue-2: 220, 231, 253;
+  --arcoblue-3: 189, 211, 251;
+  --arcoblue-4: 143, 181, 247;
+  --arcoblue-5: 92, 143, 240;
+  --arcoblue-6: 29, 78, 216;
+  --arcoblue-7: 26, 69, 189;
+  --arcoblue-8: 22, 58, 153;
+  --arcoblue-9: 18, 47, 118;
+  --arcoblue-10: 14, 36, 83;
+}
+
+/* ============================================================
+   卡片与排版
+   ============================================================ */
+.mw-card {
+  background: #fff;
+  border: 1px solid var(--mw-border-light);
+  border-radius: var(--mw-radius);
+  box-shadow: var(--mw-shadow-sm);
+  transition: box-shadow 0.22s var(--mw-ease), transform 0.22s var(--mw-ease);
+}
+
+.mw-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--mw-text);
+  letter-spacing: 0.2px;
+}
+
+.mw-subtle {
+  color: var(--mw-text3);
+  font-size: 12px;
+  letter-spacing: 0.1px;
+}
+
+.mw-link {
+  color: var(--mw-primary);
+  cursor: pointer;
+  font-size: 13px;
+  transition: color 0.16s var(--mw-ease);
+}
+.mw-link:hover {
+  color: var(--mw-primary-light);
+}
+
+/* 页面头部：更大的字重对比 + 微字距 */
+.mw-page-title {
+  font-size: 25px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: #131f38;
+}
+.mw-page-sub {
+  color: var(--mw-text3);
+  font-size: 13px;
+  margin-top: 5px;
+  line-height: 1.55;
+}
+
+/* ============================================================
+   标签体系：细边内衬 + 中等字重
+   ============================================================ */
+.mw-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+  white-space: nowrap;
+  box-shadow: inset 0 0 0 1px rgba(23, 32, 52, 0.04);
+}
+.mw-tag-blue {
+  background: #eef4ff;
+  color: #1d4ed8;
+}
+.mw-tag-deep {
+  background: linear-gradient(180deg, var(--mw-primary-light), var(--mw-primary));
+  color: #fff;
+  box-shadow: 0 1px 2px var(--mw-primary-shadow);
+}
+.mw-tag-green {
+  background: #e9f7ef;
+  color: #12805c;
+}
+.mw-tag-yellow {
+  background: #fdf4e3;
+  color: #a26a08;
+}
+.mw-tag-red {
+  background: #fdeeee;
+  color: #c03e35;
+}
+.mw-tag-purple {
+  background: #f4eefe;
+  color: #6d3fc0;
+}
+.mw-tag-orange {
+  background: #fdefe2;
+  color: #b95f1d;
+}
+.mw-tag-gray {
+  background: #f4f5f7;
+  color: #6b7688;
+}
+
+.mw-cat {
+  display: inline-block;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+/* 阶段圆点：柔光晕 */
+.mw-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0);
+}
+
+/* 顶部警示条 */
+.mw-alert-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: linear-gradient(180deg, #fdf6e8, #fcf1da);
+  border: 1px solid #f3ddae;
+  color: #96690f;
+  border-radius: 10px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+}
+
+/* ============================================================
+   步骤条
+   ============================================================ */
+.mw-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--mw-text3);
+  transition: color 0.2s var(--mw-ease);
+}
+.mw-step-index {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #eceff3;
+  color: #7d8797;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.2s var(--mw-ease);
+}
+.mw-step.active {
+  color: var(--mw-primary);
+  font-weight: 600;
+}
+.mw-step.active .mw-step-index {
+  background: linear-gradient(180deg, var(--mw-primary-light), var(--mw-primary));
+  color: #fff;
+  box-shadow: 0 1px 3px var(--mw-primary-shadow);
+}
+.mw-step-line {
+  flex: 1;
+  height: 2px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, #e6eaef, #eef1f5);
+  margin: 0 12px;
+}
+
+/* ============================================================
+   表单行
+   ============================================================ */
+.mw-form-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 0;
+}
+.mw-form-label {
+  width: 76px;
+  flex-shrink: 0;
+  color: var(--mw-text2);
+  font-size: 13px;
+}
+
+/* ============================================================
+   Arco 组件精修
+   ============================================================ */
+.arco-select-view-single,
+.arco-input,
+.arco-textarea {
+  border-radius: var(--mw-radius-sm);
+  transition: border-color 0.18s var(--mw-ease), box-shadow 0.18s var(--mw-ease);
+}
+.arco-select-view-single:hover,
+.arco-input:hover,
+.arco-textarea:hover {
+  border-color: #ccd6e8;
+}
+.arco-select-view-single.arco-select-view-focus,
+.arco-input-focus,
+.arco-textarea-focus {
+  border-color: var(--mw-primary) !important;
+  box-shadow: 0 0 0 3px var(--mw-primary-ring);
+  background: #fff;
+}
+
+/* 按钮：主按钮渐变+投影，次按钮清爽描边 */
+.arco-btn {
+  border-radius: var(--mw-radius-sm);
+  transition: all 0.18s var(--mw-ease);
+}
+.arco-btn-primary {
+  background: linear-gradient(180deg, var(--mw-primary-light), var(--mw-primary));
+  border: none;
+  box-shadow: 0 1px 2px var(--mw-primary-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+.arco-btn-primary:hover {
+  background: linear-gradient(180deg, var(--mw-primary-light), var(--mw-primary));
+  filter: brightness(1.06);
+  box-shadow: 0 2px 5px rgba(29, 78, 216, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+.arco-btn-primary:active {
+  transform: translateY(0.5px);
+  box-shadow: 0 1px 2px rgba(29, 78, 216, 0.3);
+}
+.arco-btn-secondary {
+  border-color: #dfe3ea;
+  color: var(--mw-text2);
+}
+.arco-btn-secondary:hover {
+  background: #f6f8fb;
+  border-color: #ccd5e2;
+  color: var(--mw-text);
+}
+.arco-btn-status-danger.arco-btn-secondary {
+  color: #c03e35;
+}
+
+.arco-card {
+  border-radius: var(--mw-radius);
+  box-shadow: var(--mw-shadow-sm);
+}
+
+/* 页签：激活加粗、下划线圆角 */
+.arco-tabs-nav::before {
+  border-bottom: 1px solid var(--mw-border-light);
+}
+.arco-tabs-tab {
+  font-size: 14px;
+  letter-spacing: 0.2px;
+  transition: color 0.18s var(--mw-ease);
+}
+.arco-tabs-tab-active .arco-tabs-tab-title {
+  font-weight: 600 !important;
+  color: var(--mw-primary) !important;
+}
+.arco-tabs-ink-bar {
+  border-radius: 2px;
+  height: 2.5px !important;
+}
+
+/* 表格行分隔更轻 */
+.arco-table-td {
+  border-bottom-color: var(--mw-border-light);
+}
+
+/* 进度条圆润 */
+.arco-progress-line-bar {
+  border-radius: 999px;
+}
+.arco-progress-line-bar-buffer,
+.arco-progress-line-bar-main {
+  border-radius: 999px;
+}
+
+/* 滑杆 */
+.arco-slider-road {
+  border-radius: 999px;
+}
+
+/* 开关 */
+.arco-switch {
+  border-radius: 999px;
+}
+
+/* ============================================================
+   人物库详情页签压缩
+   ============================================================ */
+.people-tabs .arco-tabs-tab {
+  padding: 8px 0;
+  margin-right: 10px;
+  font-size: 13px;
+}
+
+/* ============================================================
+   侧边导航项：激活态渐变底 + 圆角指示条
+   ============================================================ */
+.mw-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  height: 38px;
+  border-radius: 10px;
+  margin-bottom: 2px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--mw-text2);
+  transition: background 0.18s var(--mw-ease), color 0.18s var(--mw-ease);
+}
+.mw-nav-item:hover {
+  background: #f6f8fb;
+  color: var(--mw-text);
+}
+.mw-nav-item.active {
+  background: linear-gradient(90deg, var(--mw-primary-bg), rgba(255, 255, 255, 0.4));
+  color: var(--mw-primary);
+  font-weight: 600;
+}
+.mw-nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--mw-primary-light), var(--mw-primary));
+}
+
+/* ============================================================
+   表头底色（原 bg-[#fafbfc] 的语义化替代）
+   ============================================================ */
+.mw-thead {
+  background: #fafbfd;
+  color: var(--mw-text3);
+  letter-spacing: 0.2px;
+}
+
+/* ============================================================
+   时间线
+   ============================================================ */
+.mw-timeline-item {
+  position: relative;
+  padding-left: 24px;
+  padding-bottom: 18px;
+}
+.mw-timeline-item::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 20px;
+  bottom: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: #e8ecf1;
+}
+.mw-timeline-item:last-child::before {
+  display: none;
+}
+.mw-timeline-dot {
+  position: absolute;
+  left: 0;
+  top: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 3px var(--mw-primary-ring);
+}
+
+/* ============================================================
+   缩略图占位：内阴影 + 渐变更有质感
+   ============================================================ */
+.mw-thumb {
+  border-radius: 8px;
+  object-fit: cover;
+  display: block;
+  box-shadow: inset 0 0 0 1px rgba(23, 32, 52, 0.05);
+}
+
+/* ============================================================
+   页面右下角水印注
+   ============================================================ */
+.mw-corner-note {
+  position: fixed;
+  right: 18px;
+  bottom: 14px;
+  color: #b9c2cf;
+  font-size: 12px;
+  letter-spacing: 0.3px;
+  z-index: 10;
+  user-select: none;
+}
+
+/* ============================================================
+   品牌语义工具类（页面内替代硬编码品牌色）
+   ============================================================ */
+.text-primary-c { color: var(--mw-primary) !important; }
+.border-primary-c { border-color: var(--mw-primary) !important; }
+.ring-primary-c { --tw-ring-color: var(--mw-primary) !important; }
+.border-primary-mid { border-color: var(--mw-primary-mid) !important; }
+.border-primary-soft { border-color: var(--mw-primary-soft) !important; }
+.ring-primary-soft { --tw-ring-color: var(--mw-primary-soft) !important; }
+.bg-primary-faint { background: var(--mw-primary-faint) !important; }
+
+/* ============================================================
+   滚动条与焦点
+   ============================================================ */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d6dce4;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c2cbd7;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ============================================================
+   页面进入动效
+   ============================================================ */
+@keyframes mw-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+main > * {
+  animation: mw-page-in 0.3s var(--mw-ease);
+}

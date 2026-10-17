@@ -1,0 +1,884 @@
+import { getDb, isDuplicateKey, type Db } from '../../db/index.js'
+import { config } from '../../config.js'
+import { err } from '../../errors.js'
+import { logger } from '../../log.js'
+import { newId, jenc } from '../../lib/util.js'
+import { toDb, utcNow } from '../../lib/time.js'
+import { chat, currentModelLabel, resolveLlm } from '../../integrations/copy-llm/index.js'
+import { logApiCall } from '../metrics/call-log.js'
+import { recordOperation } from '../audit/repo.js'
+import { enqueue, QUEUE_NAMES } from '../../queue/index.js'
+import {
+  countDrafts,
+  getCopy,
+  getGeneration,
+  getStyle,
+  getTemplate,
+  insertDraft,
+  insertGeneration,
+  insertVariant,
+  requireCopy,
+  touchCopy,
+  updateCopy,
+  updateGeneration,
+  type CopyRow,
+} from './repo.js'
+import {
+  countSectionsWords,
+  contentHash,
+  scanCompliance,
+  toPlainText,
+} from './text.js'
+import { assemblePrompt, assembleVariantPrompt, parseDraftJson, parseVariantJson } from './prompt.js'
+import {
+  tierOf,
+  wordRangeOf,
+  type GenerationMode,
+  type Section,
+} from './constants.js'
+import { getPersonaById } from './persona-bridge.js'
+import { insertVersion, listComplianceWords } from './repo.js'
+
+/**
+ * 文案引擎（W2 / FR-G1~G7）。
+ * 规则要点：
+ *  - 生成**永远产出新稿**，不覆盖任何已有稿（W5）；
+ *  - 单 copy 稿数上限（默认 10），超出拒绝 COPY_DRAFT_LIMIT；
+ *  - `Idempotency-Key` 唯一，同 key 重复请求返回同一 generationId；
+ *  - 部分成功：成功的份数建稿，失败的份数记原因，生成记录 status=partial；
+ *  - LLM 输出非法 JSON 自动重试 1 次，仍失败则该份记失败，**不落半截稿**（FR-G4）。
+ */
+
+export interface GenerateArgs {
+  copyId: string
+  templateId: string
+  styleId: string
+  durationTier: string
+  durationSeconds?: number | null
+  count: number
+  instructions?: string | null
+  preferences?: unknown
+  operator: string
+  idempotencyKey?: string | null
+}
+
+export interface GenerateAccept {
+  generationId: string
+  status: string
+  reused?: boolean
+}
+
+/* ── 参数校验 ─────────────────────────────────────────────────────── */
+
+export function validateDuration(tier: string, durationSeconds: unknown): number | null {
+  const def = tierOf(tier)
+  if (!def) throw err.badRequest(`不支持的目标时长档：${tier}`, { allowed: ['short', 'medium', 'long', 'custom'] })
+  if (def.key !== 'custom') return null
+
+  // AC-G8：custom 必填、10–180 整数
+  if (durationSeconds === undefined || durationSeconds === null || durationSeconds === '') {
+    throw err.badRequest('选择「自定义」时长时必须填写秒数', { field: 'durationSeconds' })
+  }
+  const n = Number(durationSeconds)
+  if (!Number.isFinite(n) || !Number.isInteger(n)) {
+    throw err.badRequest('自定义时长必须是整数秒', { value: durationSeconds })
+  }
+  if (n < def.minSeconds || n > def.maxSeconds) {
+    throw err.badRequest(`自定义时长需在 ${def.minSeconds}–${def.maxSeconds} 秒之间`, {
+      value: n,
+      min: def.minSeconds,
+      max: def.maxSeconds,
+    })
+  }
+  return n
+}
+
+/* ── 接受生成请求（同步部分：校验 + 落记录 + 入队）──────────────────── */
+
+export async function acceptGeneration(args: GenerateArgs): Promise<GenerateAccept> {
+  const db = getDb()
+
+  // 1) 幂等：同 key 直接返回既有记录（AC-G2）
+  if (args.idempotencyKey) {
+    const existed = await db.get<{ id: string; status: string }>(
+      'SELECT `id`, `status` FROM `copy_generation` WHERE `idempotency_key` = ?',
+      [args.idempotencyKey],
+    )
+    if (existed) return { generationId: existed.id, status: existed.status, reused: true }
+  }
+
+  const copy = await requireCopy(args.copyId, db)
+  if (copy.status === 'archived') throw err.invalidState('该文案已归档，不可生成')
+  if (copy.status === 'in_review') throw err.copyLocked()
+
+  // 2) 稿数上限（AC-G2）
+  const current = await countDrafts(copy.id, db)
+  const count = Math.max(1, Math.min(config.copy.maxBatchCount, Number(args.count) || 1))
+  if (current + count > config.copy.maxDrafts) {
+    throw err.draftLimit(
+      `该文案已有 ${current} 份稿，本次生成 ${count} 份将超过上限 ${config.copy.maxDrafts}；请先删除旧稿或减少生成数量`,
+      { current, requested: count, max: config.copy.maxDrafts },
+    )
+  }
+
+  // 3) 模板 / 风格 / 时长
+  const template = await getTemplate(args.templateId, db)
+  if (!template || !template.enabled) throw err.badRequest('模板不存在或已停用，请重新选择')
+  const style = await getStyle(args.styleId, db)
+  if (!style || !style.enabled) throw err.badRequest('风格不存在或已停用，请重新选择')
+
+  const persona = copy.personaId ? await getPersonaById(copy.personaId, true) : null
+  if (!persona) throw err.badRequest('文案未绑定有效人物，无法生成')
+  // Q4：风格严格按线过滤
+  if (style.line !== persona.line) {
+    throw err.badRequest(`风格「${style.name}」不适用于 ${persona.line} 生产线`, {
+      styleLine: style.line,
+      personaLine: persona.line,
+    })
+  }
+
+  const durationSeconds = validateDuration(args.durationTier, args.durationSeconds)
+  const instructions = args.instructions ? String(args.instructions).trim().slice(0, config.copy.maxInstructions) : null
+
+  // 4) 组装提示词与快照
+  const ip = persona.ipProfile
+  const assembled = assemblePrompt({
+    mode: copy.source as GenerationMode,
+    persona: {
+      name: persona.name,
+      line: persona.line,
+      role: ip.role,
+      serviceScope: ip.serviceScope,
+      targetAudience: ip.targetAudience,
+      expressionStyle: ip.expressionStyle,
+      forbiddenClaims: ip.forbiddenClaims,
+      audienceNeeds: (ip as unknown as Record<string, string | undefined>).audienceNeeds,
+      factualBackground: (ip as unknown as Record<string, string | undefined>).factualBackground,
+      sampleScript: (ip as unknown as Record<string, string | undefined>).sampleScript,
+    },
+    template: { name: template.name, prompt: template.prompt, structureHint: template.structureHint },
+    style: { name: style.name, prompt: style.prompt },
+    durationTier: args.durationTier,
+    durationSeconds,
+    instructions,
+    source: await buildSourceBlock(copy),
+  })
+
+  const personaSnapshot = {
+    id: persona.id,
+    name: persona.name,
+    line: persona.line,
+    ipProfile: ip,
+    capturedAt: toDb(utcNow()),
+  }
+
+  const generationId = newId('gen')
+  try {
+    await insertGeneration(
+      {
+        id: generationId,
+        copy_id: copy.id,
+        draft_id: null,
+        kind: 'generate',
+        mode: copy.source,
+        template_id: template.id,
+        template_rev: template.revision,
+        style_id: style.id,
+        style_rev: style.revision,
+        duration_tier: args.durationTier,
+        duration_seconds: durationSeconds,
+        count,
+        instructions,
+        target_section: null,
+        persona_snapshot: personaSnapshot,
+        prompt_text: assembled.promptText,
+        prompt_hash: assembled.promptHash,
+        model: currentModelLabel(),
+        status: 'pending',
+        idempotency_key: args.idempotencyKey ?? null,
+        created_by: args.operator,
+      },
+      db,
+    )
+  } catch (e) {
+    // 幂等兜底：并发同 key 时，上面的「先查后插」会双写，唯一索引在此拦下后写者。
+    // 此时把先写者的记录返回给调用方，保持「同 key 只有一个生成记录」的语义（AC-G2）。
+    if (args.idempotencyKey && isDuplicateKey(e)) {
+      const existed = await db.get<{ id: string; status: string }>(
+        'SELECT `id`, `status` FROM `copy_generation` WHERE `idempotency_key` = ?',
+        [args.idempotencyKey],
+      )
+      if (existed) return { generationId: existed.id, status: existed.status, reused: true }
+    }
+    throw e
+  }
+
+  // 5) 记住创作设置（下次打开回填，FR-G1）
+  const settings = {
+    ...(copy.settings ?? {}),
+    templateId: template.id,
+    styleId: style.id,
+    durationTier: args.durationTier,
+    durationSeconds,
+    count,
+    instructions,
+  }
+  await updateCopy(copy.id, { settings: jenc(settings), updated_at: toDb(utcNow()) }, db)
+
+  // 6) 入队（jobId 用 generationId，天然去重）
+  await enqueue(
+    QUEUE_NAMES.copyGenerate,
+    'generate',
+    { generationId },
+    { jobId: generationId, attempts: 1 },
+  ).catch((e) => {
+    logger.error({ err: (e as Error).message, generationId }, 'copy.generate.enqueue_failed')
+  })
+
+  await recordOperation({
+    operator: args.operator,
+    action: 'copy.generate',
+    targetType: 'copy',
+    targetId: copy.id,
+    detail: {
+      generationId,
+      templateId: template.id,
+      styleId: style.id,
+      durationTier: args.durationTier,
+      durationSeconds,
+      count,
+      wordRange: assembled.wordRange,
+      promptHash: assembled.promptHash,
+    },
+  })
+
+  return { generationId, status: 'pending' }
+}
+
+/** 按来源组装来源块（FR-G3 四种模式） */
+async function buildSourceBlock(copy: CopyRow): Promise<Parameters<typeof assemblePrompt>[0]['source']> {
+  const db = getDb()
+  const base = {
+    mode: copy.source as GenerationMode,
+    sourceText: copy.sourceText ?? '',
+  }
+  if (copy.source === 'news' && copy.sourceRefId) {
+    const n = await db.get<{ title: string; summary: string | null; content_url: string | null }>(
+      'SELECT `title`, `summary`, `content_url` FROM `news_item` WHERE `id` = ?',
+      [copy.sourceRefId],
+    )
+    return {
+      ...base,
+      sourceText: [n?.title, n?.summary].filter(Boolean).join('\n') || base.sourceText,
+      sourceUrl: n?.content_url ?? null,
+    }
+  }
+  if (copy.source === 'benchmark' && copy.sourceRefId) {
+    const v = await db.get<{ title: string | null; author_nickname: string | null }>(
+      'SELECT `title`, `author_nickname` FROM `benchmark_video` WHERE `id` = ?',
+      [copy.sourceRefId],
+    )
+    return {
+      ...base,
+      benchmarkTitle: v?.title ?? null,
+      benchmarkAuthor: v?.author_nickname ?? null,
+    }
+  }
+  if (copy.source === 'article') {
+    const article = copy.sourceRefId
+      ? await db.get<{ outline: string | null; plain_text: string | null }>(
+          'SELECT `outline`, `plain_text` FROM `article_source` WHERE `id` = ?',
+          [copy.sourceRefId],
+        )
+      : null
+    const outline = article?.outline ? (JSON.parse(article.outline) as Array<{ index: number; level: number; title: string }>) : []
+    return {
+      ...base,
+      sourceText: article?.plain_text ?? base.sourceText,
+      outline,
+    }
+  }
+  // manual
+  const topic = copy.topicId
+    ? await db.get<{ title: string; hook: string | null }>('SELECT `title`, `hook` FROM `topic` WHERE `id` = ?', [
+        copy.topicId,
+      ])
+    : null
+  return {
+    ...base,
+    manualTitle: copy.title ?? topic?.title ?? null,
+    manualKeywords: topic?.hook ?? null,
+  }
+}
+
+/* ── 异步执行（BullMQ worker 调用）────────────────────────────────── */
+
+export async function runGeneration(generationId: string): Promise<void> {
+  const db = getDb()
+  const gen = await getGeneration(generationId, db)
+  if (!gen) {
+    logger.warn({ generationId }, 'copy.generate.missing')
+    return
+  }
+  if (gen.status === 'done' || gen.status === 'partial' || gen.status === 'failed') return
+
+  await updateGeneration(generationId, { status: 'running' }, db)
+  const copy = await getCopy(gen.copyId, db)
+  if (!copy) {
+    await updateGeneration(
+      generationId,
+      { status: 'failed', error: '文案已不存在', finished_at: toDb(utcNow()) },
+      db,
+    )
+    return
+  }
+
+  const persona = copy.personaId ? await getPersonaById(copy.personaId, true) : null
+  const style = gen.styleId ? await getStyle(gen.styleId, db) : null
+  const template = gen.templateId ? await getTemplate(gen.templateId, db) : null
+  if (!persona || !style || !template) {
+    await updateGeneration(
+      generationId,
+      { status: 'failed', error: '人物、模板或风格已失效，请重新生成', finished_at: toDb(utcNow()) },
+      db,
+    )
+    return
+  }
+
+  const assembled = assemblePrompt({
+    mode: copy.source as GenerationMode,
+    persona: {
+      name: persona.name,
+      line: persona.line,
+      role: persona.ipProfile.role,
+      serviceScope: persona.ipProfile.serviceScope,
+      targetAudience: persona.ipProfile.targetAudience,
+      expressionStyle: persona.ipProfile.expressionStyle,
+      forbiddenClaims: persona.ipProfile.forbiddenClaims,
+      audienceNeeds: (persona.ipProfile as unknown as Record<string, string | undefined>).audienceNeeds,
+      factualBackground: (persona.ipProfile as unknown as Record<string, string | undefined>).factualBackground,
+      sampleScript: (persona.ipProfile as unknown as Record<string, string | undefined>).sampleScript,
+    },
+    template: { name: template.name, prompt: template.prompt, structureHint: template.structureHint },
+    style: { name: style.name, prompt: style.prompt },
+    durationTier: gen.durationTier,
+    durationSeconds: gen.durationSeconds,
+    instructions: gen.instructions,
+    source: await buildSourceBlock(copy),
+  })
+
+  const words = await listComplianceWords({ enabledOnly: true }, db)
+  const range = wordRangeOf(gen.durationTier, gen.durationSeconds)
+
+  let succeeded = 0
+  let failed = 0
+  let totalCost = 0
+  const failures: string[] = []
+  const draftIds: string[] = []
+  const warnings: string[] = []
+
+  /**
+   * 单份生成的完整处理（LLM → 解析 → 校验 → 落稿 + 落版本）。
+   * 抽成函数是为了支持批内并发：真实模型单份耗时约 40–60 秒，串行跑 3 份会超过 2 分钟，
+   * 前端轮询早已超时（本地 mock 瞬时返回，掩盖了这个问题）。
+   * 落稿在函数内部串行化（draftNo 需要 MAX+1，并发会撞号）。
+   */
+  const runOne = async (i: number): Promise<{ ok: boolean; draftId?: string; cost: number }> => {
+    try {
+      const r = await callLlmWithRetry(assembled.system, assembled.user, generationId)
+      const parsed = parseDraftJson(r.content)
+      if (!parsed || !parsed.sections.length) {
+        failed += 1
+        failures.push(`第 ${i} 份：模型返回内容不是合法 JSON 或段落为空`)
+        return { ok: false, cost: r.cost }
+      }
+
+      // 字数偏离只提示不失败（FR-G4 / FR-E5）
+      const wc = countSectionsWords(parsed.title, parsed.sections)
+      if (wc < range.min || wc > range.max) warnings.push(`第 ${i} 份字数 ${wc} 字，超出 ${range.min}–${range.max} 字区间`)
+
+      // article 模式：sourceRefs 非递减校验（AC-G3）
+      if (copy.source === 'article') {
+        const refs = parsed.sections.flatMap((s) => s.sourceRefs ?? [])
+        const sorted = [...refs].sort((a, b) => a - b)
+        if (refs.join(',') !== sorted.join(',')) {
+          warnings.push(`第 ${i} 份 sourceRefs 非非递减，已按原文顺序重排`)
+          let last = 0
+          for (const s of parsed.sections) {
+            if (s.sourceRefs?.length) {
+              s.sourceRefs = s.sourceRefs.map((x) => Math.max(x, last)).sort((a, b) => a - b)
+              last = s.sourceRefs[s.sourceRefs.length - 1] ?? last
+            }
+          }
+        }
+      }
+
+      const hits = scanCompliance(parsed.sections, words, persona.ipProfile.forbiddenClaims)
+      // draftNo 必须串行取号：并发下两个线程会读到同一个 MAX，撞 UNIQUE(copy_id, draft_no)
+      const draftNo = await withDraftNoLock(async () => (await maxDraftNo(copy.id, db)) + 1)
+      const draftId = await insertDraft(
+        {
+          copyId: copy.id,
+          draftNo,
+          name: `稿 ${draftNo}`,
+          title: parsed.title || copy.title,
+          sections: parsed.sections,
+          plainText: toPlainText(parsed.title, parsed.sections),
+          wordCount: wc,
+          origin: 'ai',
+          generationId,
+          createdBy: gen.createdBy ?? 'system',
+        },
+        db,
+      )
+      await insertVersion(
+        {
+          copyId: copy.id,
+          draftId,
+          title: parsed.title || copy.title,
+          sections: parsed.sections,
+          plainText: toPlainText(parsed.title, parsed.sections),
+          wordCount: wc,
+          contentHash: contentHash(parsed.title, parsed.sections),
+          origin: 'ai_generate',
+          complianceHits: hits,
+          createdBy: gen.createdBy ?? 'system',
+        },
+        db,
+      )
+      await db.run('UPDATE `copy_draft` SET `latest_version_no` = ? WHERE `id` = ?', [
+        (await db.get<{ n: number | null }>('SELECT MAX(`version_no`) AS n FROM `copy_version` WHERE `copy_id` = ?', [
+          copy.id,
+        ]))?.n ?? 0,
+        draftId,
+      ])
+      draftIds.push(draftId)
+      succeeded += 1
+      return { ok: true, draftId, cost: r.cost }
+    } catch (e) {
+      failed += 1
+      failures.push(`第 ${i} 份：${(e as Error).message}`)
+      logger.warn({ generationId, index: i, err: (e as Error).message }, 'copy.generate.item_failed')
+      return { ok: false, cost: 0 }
+    }
+  }
+
+  // 批内并发：默认 3，上限不超过份数。并发过高会被上游限流，3 是「时长/成功率」的折中。
+  const batchConcurrency = Math.max(1, Math.min(config.copy.generateItemConcurrency, gen.count))
+  const indexes = Array.from({ length: gen.count }, (_, k) => k + 1)
+  const results: Array<{ ok: boolean; cost: number }> = []
+  for (let c = 0; c < indexes.length; c += batchConcurrency) {
+    const slice = indexes.slice(c, c + batchConcurrency)
+    results.push(...(await Promise.all(slice.map((i) => runOne(i)))))
+  }
+  totalCost = results.reduce((s, r) => s + (r.cost ?? 0), 0)
+  // draftIds 的顺序受并发影响，按 draftNo 重排，保证「current_draft_id 取第一份生成稿」语义稳定
+  if (draftIds.length > 1) {
+    const nos = await db.all<{ id: string; draft_no: number }>(
+      `SELECT \`id\`, \`draft_no\` FROM \`copy_draft\` WHERE \`id\` IN (${draftIds.map(() => '?').join(',')})`,
+      draftIds,
+    )
+    const order = new Map(nos.map((r) => [r.id, Number(r.draft_no)]))
+    draftIds.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0))
+  }
+
+  const status = failed === 0 ? 'done' : succeeded === 0 ? 'failed' : 'partial'
+  await updateGeneration(
+    generationId,
+    {
+      status,
+      succeeded,
+      failed,
+      cost: totalCost,
+      error: failures.length ? failures.join('；').slice(0, 2000) : null,
+      finished_at: toDb(utcNow()),
+      prompt_hash: assembled.promptHash,
+      prompt_text: assembled.promptText,
+    },
+    db,
+  )
+
+  // 当前稿切到本次生成的第一份（AI 产出物，不覆盖已有稿内容 W5）
+  if (draftIds.length) {
+    await db.run('UPDATE `copy` SET `current_draft_id` = ?, `updated_at` = ? WHERE `id` = ?', [
+      draftIds[0],
+      toDb(utcNow()),
+      copy.id,
+    ])
+  }
+  if (warnings.length) {
+    logger.info({ generationId, warnings }, 'copy.generate.warnings')
+  }
+  logger.info({ generationId, succeeded, failed, cost: totalCost, status }, 'copy.generate.finished')
+}
+
+/**
+ * 单进程内串行化 draftNo 取号。
+ * 批内并发后，「SELECT MAX(draft_no) + 1 → INSERT」之间存在竞态，两个任务会拿到同一个号并撞
+ * UNIQUE(copy_id, draft_no)。这里用一个 Promise 链把取号到插入的临界区串起来；
+ * 多进程部署时仍需 DB 层唯一约束兜底（已有），这里只解决单实例内的常见冲突。
+ */
+let draftNoChain: Promise<unknown> = Promise.resolve()
+function withDraftNoLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = draftNoChain.then(fn, fn)
+  // 让链条不因单次失败而断掉
+  draftNoChain = next.catch(() => undefined)
+  return next
+}
+
+async function maxDraftNo(copyId: string, db: Db): Promise<number> {
+  const r = await db.get<{ n: number | null }>('SELECT MAX(`draft_no`) AS n FROM `copy_draft` WHERE `copy_id` = ?', [
+    copyId,
+  ])
+  return Number(r?.n ?? 0)
+}
+
+/** 调 LLM；非法 JSON 重试 1 次（FR-G4） */
+async function callLlmWithRetry(
+  system: string,
+  user: string,
+  generationId: string,
+): Promise<{ content: string; cost: number }> {
+  const retries = Math.max(0, config.copy.llmRetry)
+  let lastErr: Error | null = null
+  // provider 由接入层决定（copy_llm / dashscope / mock），这里显式取，便于成本按供应商归集
+  const provider: 'dashscope' | 'copy_llm' = resolveLlm()?.provider === 'copy_llm' ? 'copy_llm' : 'dashscope'
+  const endpointTag = provider === 'copy_llm' ? 'messages|chat/completions(copy_generate)' : 'chat/completions(copy_generate)'
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const started = Date.now()
+    try {
+      const res = await chat(
+        [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        { temperature: 0.8, maxTokens: 4000 },
+      )
+      await logApiCall({
+        provider: res.mock ? 'dashscope' : ((res.provider === 'copy_llm' ? 'copy_llm' : 'dashscope') as 'dashscope' | 'copy_llm'),
+        endpoint: res.mock ? 'chat/completions(mock)' : endpointTag,
+        refType: 'copy_generation',
+        refId: generationId,
+        cost: res.cost,
+        ok: true,
+        durationMs: Date.now() - started,
+        requestId: null,
+      })
+      return { content: res.content, cost: res.cost }
+    } catch (e) {
+      lastErr = e as Error
+      await logApiCall({
+        provider,
+        endpoint: endpointTag,
+        refType: 'copy_generation',
+        refId: generationId,
+        ok: false,
+        durationMs: Date.now() - started,
+        error: lastErr.message,
+      })
+      if (attempt >= retries) break
+    }
+  }
+  throw lastErr ?? new Error('LLM 调用失败')
+}
+
+/* ── AI 变体（FR-G5 / AC-V1~V3）───────────────────────────────────── */
+
+export interface VariantArgs {
+  copyId: string
+  draftId: string
+  sectionIndex: number
+  kinds?: string[]
+  operator: string
+}
+
+export async function acceptVariant(args: VariantArgs): Promise<{ generationId: string }> {
+  const db = getDb()
+  const copy = await requireCopy(args.copyId, db)
+  if (copy.status === 'archived') throw err.invalidState('该文案已归档，不可操作')
+  if (copy.status === 'in_review') throw err.copyLocked()
+
+  const draft = await db.get<Record<string, any>>(
+    'SELECT * FROM `copy_draft` WHERE `id` = ? AND `copy_id` = ? AND `deleted_at` IS NULL',
+    [args.draftId, args.copyId],
+  )
+  if (!draft) throw err.notFound('稿不存在')
+  const sections = JSON.parse(String(draft.sections ?? '[]')) as Section[]
+  const idx = Number(args.sectionIndex ?? 0)
+  if (!Number.isInteger(idx) || idx < 0 || idx >= sections.length) {
+    throw err.badRequest('段落序号超出范围', { sectionIndex: idx, total: sections.length })
+  }
+  const kinds = (args.kinds?.length ? args.kinds : ['口语化', '专业型']).map((k) => String(k).slice(0, 32)).slice(0, 3)
+
+  const persona = copy.personaId ? await getPersonaById(copy.personaId, true) : null
+  if (!persona) throw err.badRequest('文案未绑定有效人物')
+
+  const target = sections[idx]!
+  const context = [
+    draft.title ? `标题：${draft.title}` : '',
+    ...sections.map((s, i) => (i === idx ? '' : `${s.label}：${s.text.slice(0, 60)}`)),
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  const assembled = assembleVariantPrompt({
+    personaName: persona.name,
+    line: persona.line,
+    sectionLabel: target.label,
+    sectionText: target.text,
+    kinds,
+    context,
+  })
+
+  const generationId = newId('gen')
+  await insertGeneration(
+    {
+      id: generationId,
+      copy_id: copy.id,
+      draft_id: args.draftId,
+      kind: 'variant',
+      mode: copy.source,
+      duration_tier: (copy.settings as Record<string, string> | null)?.durationTier ?? 'medium',
+      count: kinds.length,
+      target_section: idx,
+      target_section_text: (target.label ?? '').slice(0, 60),
+      persona_snapshot: { id: persona.id, name: persona.name, line: persona.line, ipProfile: persona.ipProfile },
+      prompt_text: assembled.promptText,
+      prompt_hash: assembled.promptHash,
+      model: currentModelLabel(),
+      status: 'pending',
+      created_by: args.operator,
+    },
+    db,
+  )
+
+  await enqueue(QUEUE_NAMES.copyGenerate, 'variant', { generationId }, { jobId: generationId, attempts: 1 }).catch(
+    (e) => logger.error({ err: (e as Error).message, generationId }, 'copy.variant.enqueue_failed'),
+  )
+  return { generationId }
+}
+
+export async function runVariant(generationId: string): Promise<void> {
+  const db = getDb()
+  const gen = await getGeneration(generationId, db)
+  if (!gen || gen.status === 'done' || gen.status === 'failed') return
+  await updateGeneration(generationId, { status: 'running' }, db)
+
+  const copy = await getCopy(gen.copyId, db)
+  if (!copy || !gen.draftId) {
+    await updateGeneration(generationId, { status: 'failed', error: '目标稿已不存在', finished_at: toDb(utcNow()) }, db)
+    return
+  }
+  const draft = await db.get<Record<string, any>>(
+    'SELECT * FROM `copy_draft` WHERE `id` = ? AND `deleted_at` IS NULL',
+    [gen.draftId],
+  )
+  if (!draft) {
+    await updateGeneration(generationId, { status: 'failed', error: '目标稿已删除', finished_at: toDb(utcNow()) }, db)
+    return
+  }
+
+  // 重新组装提示词（不依赖落库的 prompt_text 解析，保证一致）
+  const sections = JSON.parse(String(draft.sections ?? '[]')) as Section[]
+  const idx = gen.targetSection ?? 0
+  const target = sections[idx]
+  const persona = copy.personaId ? await getPersonaById(copy.personaId, true) : null
+  if (!target || !persona) {
+    await updateGeneration(generationId, { status: 'failed', error: '段落或人物已失效', finished_at: toDb(utcNow()) }, db)
+    return
+  }
+  const kindsLine = /【需要的变体类型】(.+)/.exec(gen.promptText ?? '')?.[1] ?? '1) 口语化  2) 专业型'
+  const kinds = kindsLine
+    .split(/\d\)\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+  let created = 0
+  let cost = 0
+  try {
+    const res = await callLlmWithRetry(
+      gen.promptText?.split('\n\n【本次任务】')[0] ?? '',
+      gen.promptText?.split('【本次任务】')[1] ?? '',
+      generationId,
+    )
+    cost += res.cost
+    const variants = parseVariantJson(res.content) ?? []
+    for (const v of variants) {
+      await insertVariant(
+        {
+          copyId: copy.id,
+          draftId: gen.draftId,
+          generationId,
+          sectionIndex: idx,
+          sectionTextAtGen: target.text,
+          kind: v.kind,
+          text: v.text,
+        },
+        db,
+      )
+      created += 1
+    }
+    await updateGeneration(
+      generationId,
+      {
+        status: created ? 'done' : 'failed',
+        succeeded: created,
+        failed: created ? 0 : kinds.length,
+        cost,
+        error: created ? null : '模型未返回可用变体',
+        finished_at: toDb(utcNow()),
+      },
+      db,
+    )
+  } catch (e) {
+    await updateGeneration(
+      generationId,
+      { status: 'failed', error: (e as Error).message, cost, finished_at: toDb(utcNow()) },
+      db,
+    )
+  }
+  // 变体生成**不改动稿内容**（AC-V1）
+  await touchCopy(copy.id, db)
+}
+
+/* ── 应用变体（W5 / AC-V2 / AC-V3）────────────────────────────────── */
+
+export async function applyVariant(
+  variantId: string,
+  mode: 'replace' | 'new_draft',
+  confirmChanged: boolean,
+  operator: string,
+): Promise<{ draftId: string; versionId: string; changed: boolean }> {
+  const db = getDb()
+  const { getVariant } = await import('./repo.js')
+  const v = await getVariant(variantId, db)
+  if (!v) throw err.notFound('变体不存在')
+  if (v.appliedAt) throw err.invalidState('该变体已应用过')
+
+  const copy = await requireCopy(v.copyId, db)
+  if (copy.status === 'archived') throw err.invalidState('该文案已归档，不可操作')
+  if (copy.status === 'in_review') throw err.copyLocked()
+
+  const draftRow = await db.get<Record<string, any>>(
+    'SELECT * FROM `copy_draft` WHERE `id` = ? AND `deleted_at` IS NULL',
+    [v.draftId],
+  )
+  if (!draftRow) throw err.notFound('目标稿已删除')
+  const sections = JSON.parse(String(draftRow.sections ?? '[]')) as Section[]
+  const idx = v.sectionIndex
+  if (!sections[idx]) throw err.invalidState('目标段落已不存在（稿结构已变化），请重新生成变体')
+
+  // AC-V3：生成期间目标段被改过 → 需确认
+  const changed = (sections[idx]!.text ?? '') !== (v.sectionTextAtGen ?? '')
+  if (changed && !confirmChanged) {
+    return { draftId: v.draftId, versionId: '', changed: true }
+  }
+
+  if (mode === 'new_draft') {
+    const current = await db.get<{ c: number }>(
+      'SELECT COUNT(*) AS c FROM `copy_draft` WHERE `copy_id` = ? AND `deleted_at` IS NULL',
+      [copy.id],
+    )
+    if (Number(current?.c ?? 0) >= config.copy.maxDrafts) {
+      throw err.draftLimit(`该文案稿数已达上限 ${config.copy.maxDrafts}`, { max: config.copy.maxDrafts })
+    }
+    const nextNo = (await maxDraftNo(copy.id, db)) + 1
+    const newSections = sections.map((s) => ({ ...s }))
+    newSections[idx] = { ...newSections[idx]!, text: v.text }
+    const wc = countSectionsWords(draftRow.title ?? null, newSections)
+    const newDraftId = await insertDraft(
+      {
+        copyId: copy.id,
+        draftNo: nextNo,
+        name: `稿 ${nextNo}`,
+        title: draftRow.title ?? null,
+        sections: newSections,
+        plainText: toPlainText(draftRow.title ?? null, newSections),
+        wordCount: wc,
+        origin: 'variant',
+        generationId: v.generationId,
+        createdBy: operator,
+      },
+      db,
+    )
+    const version = await insertVersion(
+      {
+        copyId: copy.id,
+        draftId: newDraftId,
+        title: draftRow.title ?? null,
+        sections: newSections,
+        plainText: toPlainText(draftRow.title ?? null, newSections),
+        wordCount: wc,
+        contentHash: contentHash(draftRow.title ?? null, newSections),
+        origin: 'variant',
+        createdBy: operator,
+      },
+      db,
+    )
+    await db.run('UPDATE `copy_draft` SET `latest_version_no` = ? WHERE `id` = ?', [version.versionNo, newDraftId])
+    await db.run('UPDATE `copy_variant` SET `applied_at` = ?, `applied_version_id` = ? WHERE `id` = ?', [
+      toDb(utcNow()),
+      version.id,
+      variantId,
+    ])
+    await updateCopy(copy.id, { current_draft_id: newDraftId, updated_at: toDb(utcNow()) }, db)
+    await recordOperation({
+      operator,
+      action: 'copy.variant_apply',
+      targetType: 'copy',
+      targetId: copy.id,
+      detail: { variantId, mode, newDraftId, versionNo: version.versionNo },
+    })
+    return { draftId: newDraftId, versionId: version.id, changed: false }
+  }
+
+  // replace：替换目标段并产生新版本
+  const nextSections = sections.map((s, i) => (i === idx ? { ...s, text: v.text } : { ...s }))
+  const rev = Number(draftRow.rev ?? 0)
+  const wc = countSectionsWords(draftRow.title ?? null, nextSections)
+  await db.run(
+    `UPDATE \`copy_draft\` SET \`sections\` = ?, \`plain_text\` = ?, \`word_count\` = ?, \`rev\` = \`rev\` + 1, \`updated_at\` = ?
+     WHERE \`id\` = ? AND \`rev\` = ?`,
+    [
+      jenc(nextSections),
+      toPlainText(draftRow.title ?? null, nextSections),
+      wc,
+      toDb(utcNow()),
+      v.draftId,
+      rev,
+    ],
+  )
+  const version = await insertVersion(
+    {
+      copyId: copy.id,
+      draftId: v.draftId,
+      title: draftRow.title ?? null,
+      sections: nextSections,
+      plainText: toPlainText(draftRow.title ?? null, nextSections),
+      wordCount: wc,
+      contentHash: contentHash(draftRow.title ?? null, nextSections),
+      origin: 'variant',
+      createdBy: operator,
+    },
+    db,
+  )
+  await db.run('UPDATE `copy_draft` SET `latest_version_no` = ? WHERE `id` = ?', [version.versionNo, v.draftId])
+  await db.run('UPDATE `copy_variant` SET `applied_at` = ?, `applied_version_id` = ? WHERE `id` = ?', [
+    toDb(utcNow()),
+    version.id,
+    variantId,
+  ])
+  if (copy.status === 'approved') {
+    const { downgradeApprovedToDraft } = await import('./service.js')
+    await downgradeApprovedToDraft(copy, operator, db)
+  }
+  await touchCopy(copy.id, db)
+  await recordOperation({
+    operator,
+    action: 'copy.variant_apply',
+    targetType: 'copy',
+    targetId: copy.id,
+    detail: { variantId, mode, draftId: v.draftId, versionNo: version.versionNo },
+  })
+  return { draftId: v.draftId, versionId: version.id, changed: false }
+}

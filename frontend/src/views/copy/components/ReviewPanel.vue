@@ -1,0 +1,206 @@
+<template>
+  <div v-if="review || copy?.status === 'approved' || copy?.status === 'rejected'" class="mw-card p-5">
+    <div class="flex items-center justify-between mb-3">
+      <div class="mw-card-title">审核进度</div>
+      <a-tag :color="statusColor" size="small">{{ statusText }}</a-tag>
+    </div>
+
+    <!-- 三关进度 -->
+    <div v-if="review" class="space-y-1.5 mb-3">
+      <div v-for="g in review.gates" :key="g.gate" class="gate-row">
+        <span class="gate-dot" :class="gateClass(g)" />
+        <span class="text-[13px] text-[#3c4a63] w-[68px] shrink-0">{{ g.label }}</span>
+        <span class="text-[12px] flex-1" :class="g.status === 'failed' ? 'text-[#c03e35]' : 'text-[#6b7688]'">
+          {{ g.conclusion || '等待中' }}
+        </span>
+        <span v-if="g.at" class="mw-subtle tabular-nums shrink-0">{{ fmtTime(g.at) }}</span>
+      </div>
+    </div>
+
+    <!-- 驳回原因 -->
+    <div v-if="copy?.status === 'rejected'" class="mb-3 px-3 py-2 rounded-lg bg-[#fdeeee] text-[12.5px] text-[#c03e35] leading-[1.7]">
+      驳回原因：{{ review?.rejectReason || copy.rejectReason || '未填写' }}
+      <template v-if="review?.rejectedGate">
+        <br />拦截环节：{{ gateName(review.rejectedGate) }}
+      </template>
+    </div>
+
+    <!-- 操作 -->
+    <div class="flex items-center gap-2 flex-wrap">
+      <a-button v-if="canWithdraw" size="small" :loading="withdrawing" @click="onWithdraw">撤回审核</a-button>
+      <a-button v-if="copy?.status === 'approved'" size="small" type="primary" @click="onFetchApproved">
+        <template #icon><icon-download /></template>
+        取已通过稿
+      </a-button>
+      <span v-if="copy?.status === 'in_review'" class="mw-subtle">
+        送审后可撤回；进入人工复核后不可撤回。
+      </span>
+    </div>
+
+    <!-- 已通过稿预览 -->
+    <a-modal v-model:visible="approvedVisible" title="已通过稿" :width="680" :footer="false" unmount-on-close>
+      <a-spin :loading="approvedLoading">
+        <div v-if="approved">
+          <div class="flex items-center gap-2 mb-3">
+            <a-tag color="green" size="small">v{{ approved.versionNo }}</a-tag>
+            <span class="text-[14px] font-semibold text-[#131f38]">{{ approved.title || '（无标题）' }}</span>
+          </div>
+          <div class="space-y-2.5 mb-4">
+            <div v-for="(s, i) in approved.sections" :key="i" class="text-[13px] leading-[1.85] text-[#3c4a63]">
+              <span class="text-[#9aa6ba] mr-1.5">{{ s.label }}</span>{{ s.text }}
+            </div>
+          </div>
+          <div class="px-3 py-2 rounded-lg bg-[#f8fafd] text-[12px] leading-[1.75] text-[#7c8798]">
+            {{ approved.riskHint }}
+          </div>
+          <div class="mt-4 flex justify-end gap-2">
+            <a-button @click="onCopyText">复制全文</a-button>
+          </div>
+        </div>
+      </a-spin>
+    </a-modal>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import { Message, Modal } from '@arco-design/web-vue'
+import { useCopyStore } from '@/stores/copy'
+import { copyApi, type GateResult, type Section } from '@/api/copy'
+
+const store = useCopyStore()
+
+const copy = computed(() => store.copy)
+const review = computed(() => store.detail?.review ?? null)
+
+const WITHDRAWABLE = ['submitted', 'gate1', 'gate2', 'gate3']
+const canWithdraw = computed(() => !!review.value && WITHDRAWABLE.includes(review.value.status))
+const withdrawing = ref(false)
+
+const statusText = computed(() => {
+  if (review.value) return review.value.statusLabel
+  if (copy.value?.status === 'approved') return '已通过'
+  if (copy.value?.status === 'rejected') return '已驳回'
+  return '未提交'
+})
+
+const statusColor = computed(() => {
+  const s = copy.value?.status
+  if (s === 'approved') return 'green'
+  if (s === 'rejected') return 'red'
+  if (s === 'in_review') return 'orange'
+  return 'gray'
+})
+
+function gateClass(g: GateResult): string {
+  if (g.status === 'passed') return 'ok'
+  if (g.status === 'failed') return 'fail'
+  if (g.status === 'running' || g.status === 'done') return 'done'
+  return 'idle'
+}
+
+function gateName(gate: string): string {
+  return store.options?.labels.gates?.[gate] ?? gate
+}
+
+async function onWithdraw(): Promise<void> {
+  if (!copy.value) return
+  Modal.confirm({
+    title: '撤回审核？',
+    content: '撤回后文案回到可编辑状态，需重新提交审核。',
+    okText: '撤回',
+    cancelText: '取消',
+    onOk: async () => {
+      const id = copy.value?.id
+      if (!id) return
+      withdrawing.value = true
+      try {
+        await copyApi.withdraw(id)
+        Message.success('已撤回')
+        await store.load(id)
+      } catch (e) {
+        Message.error((e as Error).message)
+      } finally {
+        withdrawing.value = false
+      }
+    },
+  })
+}
+
+/* ── 取已通过稿 ── */
+const approvedVisible = ref(false)
+const approvedLoading = ref(false)
+const approved = ref<{
+  versionNo: number
+  title: string | null
+  sections: Section[]
+  plainText: string
+  riskHint: string | null
+} | null>(null)
+
+async function onFetchApproved(): Promise<void> {
+  if (!copy.value) return
+  approvedVisible.value = true
+  approvedLoading.value = true
+  approved.value = null
+  try {
+    approved.value = await copyApi.approved(copy.value.id)
+  } catch (e) {
+    Message.error((e as Error).message)
+    approvedVisible.value = false
+  } finally {
+    approvedLoading.value = false
+  }
+}
+
+async function onCopyText(): Promise<void> {
+  if (!approved.value) return
+  const text = [approved.value.title, ...approved.value.sections.map((s) => s.text), approved.value.riskHint]
+    .filter(Boolean)
+    .join('\n\n')
+  try {
+    await navigator.clipboard.writeText(text)
+    Message.success('已复制到剪贴板')
+  } catch {
+    Message.error('复制失败，请手动选择文本')
+  }
+}
+
+function fmtTime(iso: string): string {
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+</script>
+
+<style scoped>
+.gate-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  background: #fbfcfe;
+}
+.gate-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.gate-dot.ok {
+  background: #12805c;
+  box-shadow: 0 0 0 3px rgba(18, 128, 92, 0.12);
+}
+.gate-dot.fail {
+  background: #c03e35;
+  box-shadow: 0 0 0 3px rgba(192, 62, 53, 0.12);
+}
+.gate-dot.done {
+  background: #2f6bff;
+  box-shadow: 0 0 0 3px rgba(47, 107, 255, 0.12);
+}
+.gate-dot.idle {
+  background: #d5dce7;
+}
+</style>
