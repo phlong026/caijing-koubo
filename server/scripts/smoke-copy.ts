@@ -481,6 +481,28 @@ if (!genOnly) {
     const drafts: any[] = (await req('GET', `/copy/${multi.copyId}`)).data?.drafts ?? []
     const nos = drafts.map((d) => d.draftNo)
     check('稿号互不重复', new Set(nos).size === nos.length && nos.length === 4, nos)
+
+    // 审核桩接口守卫：非法关卡名被拒；已裁决的审核单不再接受进度回写
+    const aiDraft = done?.drafts?.[0]
+    const cur = aiDraft ? await req('GET', `/copy/${multi.copyId}/drafts/${aiDraft.id}`) : null
+    const sub = aiDraft
+      ? await req('POST', `/copy/${multi.copyId}/submit`, { draftId: aiDraft.id, rev: cur?.data?.draft?.rev ?? cur?.data?.rev })
+      : null
+    const subId = sub?.data?.submissionId
+    if (subId) {
+      let st = ''
+      for (let i = 0; i < 40 && st !== 'pending_manual'; i++) {
+        await sleep(250)
+        st = (await req('GET', `/review/submissions/${subId}`)).data?.status
+      }
+      const bogus = await req('POST', `/review/submissions/${subId}/progress`, { gate: 'approved', result: 'pass' })
+      check('进度回写拒绝非关卡状态', bogus.status === 400, { status: bogus.status, code: bogus.error?.code })
+      const dec = await req('POST', `/review/submissions/${subId}/decision`, { result: 'approved' })
+      const late = await req('POST', `/review/submissions/${subId}/progress`, { gate: 'gate2', result: 'pass' })
+      check('已裁决的审核单不再接受进度回写', !!dec.ok && late.status === 409, { decision: dec.status, late: late.status })
+    } else {
+      check('提交审核成功', false, sub?.error)
+    }
   }
 
   // 分配人物：不存在的人物 id 被拒绝，不写入悬空 persona_id

@@ -162,6 +162,12 @@ export const config = {
     /** 单次生成内多份稿的批内并发：真实模型单份 40–60 秒，串行会超过前端轮询窗口 */
     generateItemConcurrency: num('COPY_GENERATE_ITEM_CONCURRENCY', 3),
     llmRetry: num('COPY_LLM_RETRY', 1),
+    /**
+     * 审核桩开关（W1）：开启时提交后自动模拟三关并开放人工裁决接口，仅供审核模块就绪前联调。
+     * 项目尚无登录鉴权、X-Operator 由请求方自填，开着桩等于任何人都能把文案批成通过，
+     * 因此生产环境默认关闭；关闭后审核单停在「已提交」，等待真实审核模块回写结果。
+     */
+    reviewStubEnabled: bool('REVIEW_STUB_ENABLED', str('NODE_ENV', 'development') !== 'production'),
     /** 审核桩：每关模拟耗时（毫秒），smoke 可调小 */
     reviewStubStepMs: num('REVIEW_STUB_STEP_MS', 300),
   },

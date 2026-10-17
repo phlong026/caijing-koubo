@@ -9,6 +9,7 @@ import { registerTopicJobs } from './modules/topics/jobs.js'
 import { registerBenchmarkJobs } from './modules/benchmark/sweep.js'
 import { registerExtractWorker } from './modules/benchmark/extract.js'
 import { registerCopyWorker } from './modules/copy/worker.js'
+import { resumeStubSubmissions } from './modules/copy/review.js'
 import { checkFfmpeg } from './media/pipeline.js'
 import { ossStatus } from './integrations/aliyun-oss/client.js'
 import { describeUpstream } from './integrations/tikhub/client.js'
@@ -50,9 +51,16 @@ async function main(): Promise<void> {
       oss: oss.enabled ? `bucket=${oss.bucket}` : 'mock 本地目录',
       tikhub: describeUpstream(),
       extractMode: config.extract.mode,
+      reviewStub: config.copy.reviewStubEnabled ? 'on（联调用，提交后自动模拟三关）' : 'off（等待真实审核模块回写）',
     },
     'env.check',
   )
+  if (config.copy.reviewStubEnabled && config.env === 'production') {
+    logger.warn(
+      'review.stub_enabled_in_production：生产环境开启了审核桩（REVIEW_STUB_ENABLED=true），' +
+        '任何人都可通过 /review/submissions/:id/decision 把文案批成通过，请确认这是有意为之。',
+    )
+  }
 
   // 任务统一由 server 内 BullMQ 承载（D9）
   // 先做队列前缀冲突自检：两个实例连不同库却共用同一 Redis 前缀时，
@@ -64,6 +72,8 @@ async function main(): Promise<void> {
   await registerExtractWorker()
   // 文案工坊生成队列（W2）
   registerCopyWorker()
+  // 审核桩在进程内推进，重启后续推未走完三关的桩审核单（P2-19）
+  await resumeStubSubmissions().catch((e) => logger.error({ err: (e as Error).message }, 'review.stub.resume_scan_failed'))
 
   const app = await buildApp()
   await app.listen({ port: config.port, host: config.host })

@@ -20,6 +20,7 @@ export type ErrorCode =
   | 'ARTICLE_TOO_LARGE' // 文件或正文超限
   | 'ARTICLE_NO_TEXT' // 无可提取文本（扫描件）
   | 'REVIEW_WITHDRAW_NOT_ALLOWED' // 已进入人工复核，不可撤回
+  | 'REVIEW_STUB_DISABLED' // 审核桩已关闭（生产环境），桩专用接口不可用
 
 export class ApiError extends Error {
   readonly code: ErrorCode
@@ -68,6 +69,8 @@ export const err = {
     new ApiError('ARTICLE_NO_TEXT', msg, 400, details),
   withdrawNotAllowed: (msg = '已进入人工复核，请等待审核结果', details?: unknown) =>
     new ApiError('REVIEW_WITHDRAW_NOT_ALLOWED', msg, 409, details),
+  reviewStubDisabled: (msg = '审核桩已关闭（REVIEW_STUB_ENABLED=false），该接口仅供联调使用') =>
+    new ApiError('REVIEW_STUB_DISABLED', msg, 403),
 }
 
 export function isApiError(e: unknown): e is ApiError {

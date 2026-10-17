@@ -45,6 +45,7 @@ import {
 } from './service.js'
 import { acceptGeneration, acceptVariant, applyVariant } from './generation.js'
 import {
+  assertReviewStubEnabled,
   getApprovedCopy,
   getSubmissionProgress,
   onReviewProgress,
@@ -967,7 +968,12 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
 
   /** 审核桩裁决（审核模块就绪后下线） */
   app.post('/review/submissions/:id/decision', async (req) => {
+    // 桩关闭（生产默认）时拒绝；开启时也只允许裁决桩审核单，真实审核单由审核模块回写
+    assertReviewStubEnabled()
     const { id } = req.params as { id: string }
+    const stubSub = await getSubmission(id)
+    if (!stubSub) throw err.notFound('审核单不存在')
+    if (!stubSub.isStub) throw err.forbidden('该审核单由真实审核模块处理，不能用审核桩裁决')
     const body = (req.body ?? {}) as {
       result?: string
       reason?: string
@@ -989,7 +995,9 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
     )
   })
 
+  /** 关卡推进联调接口（桩专用）；真实审核模块走服务调用 onReviewProgress */
   app.post('/review/submissions/:id/progress', async (req) => {
+    assertReviewStubEnabled()
     const { id } = req.params as { id: string }
     const body = (req.body ?? {}) as { gate?: string; result?: string }
     if (!body.gate) throw err.badRequest('gate 必填')

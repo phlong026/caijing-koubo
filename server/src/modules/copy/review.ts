@@ -147,8 +147,8 @@ export async function submitForReview(
     await t.run(
       `INSERT INTO \`review_submission\`
         (\`id\`, \`copy_id\`, \`copy_version_id\`, \`status\`, \`gate_results\`, \`appended_risk_text\`, \`is_stub\`, \`created_at\`, \`updated_at\`)
-       VALUES (?, ?, ?, 'submitted', '[]', NULL, 1, ?, ?)`,
-      [submissionId, copyId, versionId, now, now],
+       VALUES (?, ?, ?, 'submitted', '[]', NULL, ?, ?, ?)`,
+      [submissionId, copyId, versionId, config.copy.reviewStubEnabled ? 1 : 0, now, now],
     )
 
     await t.run(
@@ -170,10 +170,12 @@ export async function submitForReview(
     detail: { versionId, versionNo, submissionId, draftId, riskHint: template?.riskHint ?? null },
   })
 
-  // 3) 异步推进审核桩（不阻塞响应）
-  void advanceStub(submissionId, template?.riskHint ?? DEFAULT_RISK_HINT).catch((e) => {
-    logger.error({ err: (e as Error).message, submissionId }, 'review.stub.advance_failed')
-  })
+  // 3) 审核桩开启时异步模拟三关（不阻塞响应）；关闭时审核单停在 submitted，等真实审核模块回写
+  if (config.copy.reviewStubEnabled) {
+    void advanceStub(submissionId, template?.riskHint ?? DEFAULT_RISK_HINT).catch((e) => {
+      logger.error({ err: (e as Error).message, submissionId }, 'review.stub.advance_failed')
+    })
+  }
 
   return { versionId, versionNo, submissionId, reused: false }
 }
@@ -191,6 +193,32 @@ async function resolveTemplateForCopy(copy: CopyRow, db: Db) {
 
 /* ── 审核桩推进（三关模拟）────────────────────────────────────────── */
 
+/** 桩专用接口（人工裁决 / 关卡推进）的入口守卫：桩关闭时一律拒绝 */
+export function assertReviewStubEnabled(): void {
+  if (!config.copy.reviewStubEnabled) throw err.reviewStubDisabled()
+}
+
+/**
+ * 启动时续推审核桩（P2-19）：桩在进程内推进，重启会让审核单永久停在 submitted / gate1 / gate2。
+ * 只处理 is_stub=1 的单；桩关闭时不续推，交给真实审核模块。
+ */
+export async function resumeStubSubmissions(): Promise<number> {
+  if (!config.copy.reviewStubEnabled) return 0
+  const db = getDb()
+  const rows = await db.all<{ id: string; copy_id: string }>(
+    "SELECT `id`, `copy_id` FROM `review_submission` WHERE `is_stub` = 1 AND `status` IN ('submitted', 'gate1', 'gate2')",
+  )
+  for (const r of rows) {
+    const copy = await getCopy(r.copy_id, db)
+    const template = copy ? await resolveTemplateForCopy(copy, db) : null
+    void advanceStub(r.id, template?.riskHint ?? DEFAULT_RISK_HINT).catch((e) => {
+      logger.error({ err: (e as Error).message, submissionId: r.id }, 'review.stub.resume_failed')
+    })
+  }
+  if (rows.length) logger.info({ count: rows.length }, 'review.stub.resumed')
+  return rows.length
+}
+
 async function advanceStub(submissionId: string, riskHint: string): Promise<void> {
   const db = getDb()
   const stepMs = Math.max(0, config.copy.reviewStubStepMs)
@@ -206,6 +234,8 @@ async function advanceStub(submissionId: string, riskHint: string): Promise<void
     const sub = await getSubmission(submissionId, db)
     // 撤回后立即中止，不再回写（§5.3 撤回语义 / AC-R8）
     if (!sub || sub.status === 'withdrawn' || sub.status === 'rejected' || sub.status === 'approved') return
+    // 已过本关（重启后续推时从中途接上）
+    if (sub.status !== g.entry) continue
 
     if (stepMs) await new Promise((r) => setTimeout(r, stepMs))
     const results = [...sub.gateResults, gateResult(g.gate, 'pass', g.reason)]
@@ -252,20 +282,33 @@ function gateResult(gate: string, result: 'pass' | 'fail', reason: string, riskP
   }
 }
 
+/** 关卡进度回写只接受这几个状态；终态由 onReviewResult / 撤回负责 */
+const PROGRESS_GATES = ['gate1', 'gate2', 'gate3', 'pending_manual'] as const
+
 /** 审核进度（步骤条实时关卡） */
 export async function onReviewProgress(submissionId: string, gate: string, result: 'pass' | 'fail'): Promise<void> {
+  if (!(PROGRESS_GATES as readonly string[]).includes(gate)) {
+    throw err.badRequest(`gate 只能是 ${PROGRESS_GATES.join(' / ')}`, { gate })
+  }
   const db = getDb()
   const sub = await getSubmission(submissionId, db)
   if (!sub) throw err.notFound('审核单不存在')
+  if (['withdrawn', 'rejected', 'approved'].includes(sub.status)) {
+    throw err.invalidState(`审核单当前状态（${sub.status}）不接受进度回写`, { status: sub.status })
+  }
   const results = [...sub.gateResults, gateResult(gate, result, `关卡 ${gate} 结果：${result}`)]
-  await db.run(
-    'UPDATE `review_submission` SET `status` = ?, `gate_results` = ?, `updated_at` = ? WHERE `id` = ?',
-    [gate, JSON.stringify(results), toDb(utcNow()), submissionId],
+  // 条件更新：读到之后被撤回 / 裁决的审核单不再被拉回进行中（§5.3 撤回后不再回调）
+  const w = await db.run(
+    `UPDATE \`review_submission\` SET \`status\` = ?, \`gate_results\` = ?, \`updated_at\` = ?
+     WHERE \`id\` = ? AND \`status\` = ?`,
+    [gate, JSON.stringify(results), toDb(utcNow()), submissionId, sub.status],
   )
-  await db.run('UPDATE `copy` SET `review_gate` = ?, `updated_at` = ? WHERE `id` = ?', [
+  if (!w.affectedRows) throw err.invalidState('审核单状态已变化，请刷新后重试', { submissionId })
+  await db.run('UPDATE `copy` SET `review_gate` = ?, `updated_at` = ? WHERE `id` = ? AND `review_submission_id` = ?', [
     gate,
     toDb(utcNow()),
     sub.copyId,
+    submissionId,
   ])
 }
 
