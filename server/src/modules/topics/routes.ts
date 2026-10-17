@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { ok } from '../../app.js'
 import { err } from '../../errors.js'
 import { recordOperation } from '../audit/repo.js'
+import { assertPersonasUsable } from '../personas/repo.js'
 import { createDraftsFromTopics, createInitialDrafts } from '../copy-contract/service.js'
 import { enqueueGeneration } from './jobs.js'
 import {
@@ -63,6 +64,7 @@ export function registerTopicRoutes(app: FastifyInstance): void {
       return ok(t)
     }
     if (!Array.isArray(body.personaIds)) throw err.badRequest('personaIds 必须是数组')
+    await assertPersonasUsable(body.personaIds.map(String))
     const t = await assignPersonas(id, body.personaIds)
     await recordOperation({
       operator: req.operator,

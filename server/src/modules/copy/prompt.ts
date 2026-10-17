@@ -261,6 +261,8 @@ export function parseDraftJson(content: string): DraftJson | null {
       const obj = JSON.parse(c) as Record<string, unknown>
       const title = String(obj.title ?? '').trim()
       const sections = normalize(obj.sections)
+      // FR-G4：sections 必须 1–8 段；超过 8 段判为非法输出（走重试），不静默截断丢内容
+      if (sections.length > 8) return null
       if (sections.length) return { title, sections }
     } catch {
       /* 继续尝试下一种候选 */
@@ -283,7 +285,6 @@ function normalize(raw: unknown): Section[] {
       if (nums.length) sec.sourceRefs = nums
     }
     out.push(sec)
-    if (out.length >= 8) break
   }
   return out
 }

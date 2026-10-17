@@ -826,7 +826,7 @@ async function onSaveTemplate() {
 const accModal = reactive({
   visible: false,
   url: '',
-  intervalHours: 2,
+  intervalHours: 24,
   previewing: false,
   submitting: false,
   previewed: null as AccountPreview | null,
@@ -849,7 +849,7 @@ function openAddAccount() {
 function resetAccModal() {
   accModal.visible = false
   accModal.url = ''
-  accModal.intervalHours = 2
+  accModal.intervalHours = 24
   accModal.previewed = null
 }
 
@@ -880,8 +880,9 @@ async function onAddAccount() {
   }
 }
 
+/** 以后端 abnormalAt（连续 3 个周期失败才置）为准；偶发一次失败只显示原因，不标异常 */
 function isAbnormal(a: Account) {
-  return a.monitorStatus === 'on' && (a.consecutiveFailures > 0 || !!a.lastError)
+  return a.monitorStatus === 'on' && !!a.abnormalAt
 }
 
 const quotaTip = computed(() => {

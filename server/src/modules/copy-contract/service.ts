@@ -4,6 +4,7 @@ import { toDb, utcNow } from '../../lib/time.js'
 import { err } from '../../errors.js'
 import { getTopicsByIds, markSent, type TopicRow } from '../topics/repo.js'
 import { logger } from '../../log.js'
+import { assertPersonasUsable } from '../personas/repo.js'
 
 export interface CreateDraftsArgs {
   topicIds: string[]
@@ -52,6 +53,7 @@ export async function createDraftsFromTopics(args: CreateDraftsArgs): Promise<Cr
     if (!pids?.length) {
       throw err.badRequest(`选题「${topic.title}」没有分配人物，请先分配后再送入`, { topicId: topic.id })
     }
+    await assertPersonasUsable(pids)
   }
 
   const copyIds: string[] = []

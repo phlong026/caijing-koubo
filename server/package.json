@@ -19,7 +19,6 @@
     "check": "npm run typecheck && npm run check:mysql-ddl && npm run check:mysql-ddl:self && npm run test:finstep:clean"
   },
   "dependencies": {
-    "@esbuild/win32-x64": "^0.28.2",
     "@fastify/cors": "^10.0.1",
     "@fastify/multipart": "^10.1.4",
     "ali-oss": "^6.21.0",

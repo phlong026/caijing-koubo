@@ -13,7 +13,6 @@ import {
   insertVersion,
   latestVersionOfDraft,
   listDrafts,
-  nextDraftNo,
   requireCopy,
   touchCopy,
   updateCopy,
@@ -366,7 +365,8 @@ export async function getCopyDetail(copyId: string): Promise<CopyDetail> {
           riskHint: submission.appendedRiskText ?? null,
           rejectReason: submission.reason ?? copy.rejectReason ?? null,
           rejectedGate: submission.rejectedGate ?? null,
-          submittedBy: copy.createdBy ?? '',
+          // 提交人取提交时锁定版本的 created_by（submit 写入的就是操作人），而不是文案创建人
+          submittedBy: versions.find((v) => v.id === submission.copyVersionId)?.createdBy ?? '',
           submittedAt: submission.createdAt ?? '',
           decidedAt: submission.decidedBy ? submission.updatedAt : null,
         }
@@ -431,7 +431,6 @@ export async function createDraft(
     })
   }
 
-  const draftNo = await nextDraftNo(copyId, db)
   let title: string | null = copy.title ?? null
   // 空白稿预置一个开场段：避免新建后编辑器整片空白、无从下手（FR-E4「新建空白稿」）
   let sections: Section[] = [{ label: '开场', text: '' }]
@@ -446,11 +445,9 @@ export async function createDraft(
   }
 
   const words = countSectionsWords(title, sections)
-  const id = await insertDraft(
+  const { id } = await insertDraft(
     {
       copyId,
-      draftNo,
-      name: `稿 ${draftNo}`,
       title,
       sections,
       plainText: toPlainText(title, sections),

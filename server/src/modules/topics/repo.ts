@@ -163,7 +163,9 @@ export async function setTopicStatus(id: string, next: TopicStatus, db = getDb()
   const t = await getTopic(id, db)
   if (!t) throw err.notFound('选题不存在')
   assertTransition(t.status, next, t.source)
-  await db.run('UPDATE `topic` SET `status` = ? WHERE `id` = ?', [next, id])
+  // 条件更新：读到的状态在写入前被并发送入 / 归档改掉时，不覆盖对方的结果
+  const r = await db.run('UPDATE `topic` SET `status` = ? WHERE `id` = ? AND `status` = ?', [next, id, t.status])
+  if (!r.affectedRows) throw err.invalidState('选题状态已变化，请刷新后重试', { topicId: id })
   const fresh = await getTopic(id, db)
   return fresh!
 }
@@ -174,11 +176,12 @@ export async function assignPersonas(id: string, personaIds: string[], db = getD
   if (!t) throw err.notFound('选题不存在')
   if (t.status === 'sent') throw err.invalidState('选题已送入文案工坊，不可再改分配')
   if (t.status === 'archived') throw err.invalidState('已归档选题不可再改分配')
-  await db.run('UPDATE `topic` SET `persona_ids` = ?, `status` = ? WHERE `id` = ?', [
-    jenc(personaIds),
-    personaIds.length ? 'assigned' : 'candidate',
-    id,
-  ])
+  // 条件更新：与「送入 / 归档」并发时，只有仍处于 candidate/assigned 才写入
+  const r = await db.run(
+    "UPDATE `topic` SET `persona_ids` = ?, `status` = ? WHERE `id` = ? AND `status` IN ('candidate', 'assigned')",
+    [jenc(personaIds), personaIds.length ? 'assigned' : 'candidate', id],
+  )
+  if (!r.affectedRows) throw err.invalidState('选题已送入或归档，不可再改分配', { topicId: id })
   return (await getTopic(id, db))!
 }
 

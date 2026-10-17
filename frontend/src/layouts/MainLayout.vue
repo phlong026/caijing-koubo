@@ -65,8 +65,8 @@
             <span class="mw-subtle" style="border: 1px solid var(--mw-border); border-radius: 4px; padding: 0 5px">⌘ K</span>
           </template>
         </a-input-search>
-        <a-badge dot :count="1">
-          <a-button type="text" shape="circle">
+        <a-badge dot :count="bench.unread">
+          <a-button type="text" shape="circle" title="对标告警" @click="router.push('/topics')">
             <template #icon><icon-notification :size="18" /></template>
           </a-button>
         </a-badge>
@@ -79,8 +79,10 @@
 </template>
 
 <script setup lang="ts">
-import { h, onMounted } from 'vue'
+import { h, onBeforeUnmount, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { brand, applyBrand } from '@/config/brand'
+import { useBenchmarkStore } from '@/stores/benchmark'
 import {
   IconHome,
   IconFire,
@@ -125,5 +127,14 @@ const navGroups = [
   },
 ]
 
-onMounted(applyBrand)
+const router = useRouter()
+// 导航铃铛：对标告警未读数（FR-B9），60s 刷新一次
+const bench = useBenchmarkStore()
+let unreadTimer: number | undefined
+onMounted(() => {
+  applyBrand()
+  void bench.loadUnread()
+  unreadTimer = window.setInterval(() => void bench.loadUnread(), 60_000)
+})
+onBeforeUnmount(() => window.clearInterval(unreadTimer))
 </script>

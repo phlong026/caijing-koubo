@@ -1,4 +1,4 @@
-import { getDb, isDuplicateKey, type Db } from '../../db/index.js'
+import { getDb, isDuplicateKey } from '../../db/index.js'
 import { config } from '../../config.js'
 import { err } from '../../errors.js'
 import { logger } from '../../log.js'
@@ -380,16 +380,22 @@ export async function runGeneration(generationId: string): Promise<void> {
    * 单份生成的完整处理（LLM → 解析 → 校验 → 落稿 + 落版本）。
    * 抽成函数是为了支持批内并发：真实模型单份耗时约 40–60 秒，串行跑 3 份会超过 2 分钟，
    * 前端轮询早已超时（本地 mock 瞬时返回，掩盖了这个问题）。
-   * 落稿在函数内部串行化（draftNo 需要 MAX+1，并发会撞号）。
+   * 稿号由 insertDraft 按 copy 串行分配，并发落稿不会撞号。
    */
   const runOne = async (i: number): Promise<{ ok: boolean; draftId?: string; cost: number }> => {
     try {
-      const r = await callLlmWithRetry(assembled.system, assembled.user, generationId)
-      const parsed = parseDraftJson(r.content)
+      // FR-G4：非法输出（非 JSON / 段落为空 / 超过 8 段）自动重试 1 次，仍失败才记该份失败
+      let cost = 0
+      let parsed: ReturnType<typeof parseDraftJson> = null
+      for (let attempt = 0; attempt <= 1 && !parsed; attempt++) {
+        const r = await callLlmWithRetry(assembled.system, assembled.user, generationId)
+        cost += r.cost
+        parsed = parseDraftJson(r.content)
+      }
       if (!parsed || !parsed.sections.length) {
         failed += 1
-        failures.push(`第 ${i} 份：模型返回内容不是合法 JSON 或段落为空`)
-        return { ok: false, cost: r.cost }
+        failures.push(`第 ${i} 份：模型返回内容不是合法 JSON，或段落为空 / 超过 8 段`)
+        return { ok: false, cost }
       }
 
       // 字数偏离只提示不失败（FR-G4 / FR-E5）
@@ -414,13 +420,10 @@ export async function runGeneration(generationId: string): Promise<void> {
 
       // P1-14①：标题也纳入扫描
       const hits = scanCompliance(parsed.sections, words, persona.ipProfile.forbiddenClaims, parsed.title)
-      // draftNo 必须串行取号：并发下两个线程会读到同一个 MAX，撞 UNIQUE(copy_id, draft_no)
-      const draftNo = await withDraftNoLock(async () => (await maxDraftNo(copy.id, db)) + 1)
-      const draftId = await insertDraft(
+      // 稿号由 insertDraft 在同一临界区内取号并插入（批内并发不会撞 UNIQUE(copy_id, draft_no)）
+      const { id: draftId } = await insertDraft(
         {
           copyId: copy.id,
-          draftNo,
-          name: `稿 ${draftNo}`,
           title: parsed.title || copy.title,
           sections: parsed.sections,
           plainText: toPlainText(parsed.title, parsed.sections),
@@ -454,7 +457,7 @@ export async function runGeneration(generationId: string): Promise<void> {
       ])
       draftIds.push(draftId)
       succeeded += 1
-      return { ok: true, draftId, cost: r.cost }
+      return { ok: true, draftId, cost }
     } catch (e) {
       failed += 1
       failures.push(`第 ${i} 份：${(e as Error).message}`)
@@ -510,27 +513,6 @@ export async function runGeneration(generationId: string): Promise<void> {
     logger.info({ generationId, warnings }, 'copy.generate.warnings')
   }
   logger.info({ generationId, succeeded, failed, cost: totalCost, status }, 'copy.generate.finished')
-}
-
-/**
- * 单进程内串行化 draftNo 取号。
- * 批内并发后，「SELECT MAX(draft_no) + 1 → INSERT」之间存在竞态，两个任务会拿到同一个号并撞
- * UNIQUE(copy_id, draft_no)。这里用一个 Promise 链把取号到插入的临界区串起来；
- * 多进程部署时仍需 DB 层唯一约束兜底（已有），这里只解决单实例内的常见冲突。
- */
-let draftNoChain: Promise<unknown> = Promise.resolve()
-function withDraftNoLock<T>(fn: () => Promise<T>): Promise<T> {
-  const next = draftNoChain.then(fn, fn)
-  // 让链条不因单次失败而断掉
-  draftNoChain = next.catch(() => undefined)
-  return next
-}
-
-async function maxDraftNo(copyId: string, db: Db): Promise<number> {
-  const r = await db.get<{ n: number | null }>('SELECT MAX(`draft_no`) AS n FROM `copy_draft` WHERE `copy_id` = ?', [
-    copyId,
-  ])
-  return Number(r?.n ?? 0)
 }
 
 /** 调 LLM；非法 JSON 重试 1 次（FR-G4） */
@@ -765,15 +747,12 @@ export async function applyVariant(
     if (Number(current?.c ?? 0) >= config.copy.maxDrafts) {
       throw err.draftLimit(`该文案稿数已达上限 ${config.copy.maxDrafts}`, { max: config.copy.maxDrafts })
     }
-    const nextNo = (await maxDraftNo(copy.id, db)) + 1
     const newSections = sections.map((s) => ({ ...s }))
     newSections[idx] = { ...newSections[idx]!, text: v.text }
     const wc = countSectionsWords(draftRow.title ?? null, newSections)
-    const newDraftId = await insertDraft(
+    const { id: newDraftId } = await insertDraft(
       {
         copyId: copy.id,
-        draftNo: nextNo,
-        name: `稿 ${nextNo}`,
         title: draftRow.title ?? null,
         sections: newSections,
         plainText: toPlainText(draftRow.title ?? null, newSections),

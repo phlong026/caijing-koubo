@@ -54,6 +54,14 @@ export function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v))
 }
 
+/**
+ * 关键词「包含」匹配的 LIKE 参数：转义 % _ 与转义符本身，配合 `LIKE ? ESCAPE '!'` 使用。
+ * 用 `!` 而非反斜杠作转义符，MySQL 与 SQLite 对字符串字面量的解释一致。
+ */
+export function likeContains(keyword: string): string {
+  return `%${keyword.replace(/[!%_]/g, '!$&')}%`
+}
+
 /** 数组去重 + 去空 */
 export function uniq(arr: unknown[]): string[] {
   return Array.from(new Set(arr.filter(Boolean).map((x) => String(x))))

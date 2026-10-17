@@ -35,6 +35,12 @@ function toDate(v: unknown): Date | null {
   return Number.isNaN(d.getTime()) ? null : d
 }
 
+/** 北京时间字符串（如 `2026-10-17 15:30:00`，不带时区）显式按 +08:00 解析，不依赖部署机时区 */
+function toDateCst(v: unknown): Date | null {
+  const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)$/.exec(String(v ?? '').trim())
+  return m ? toDate(`${m[1]}T${m[2]}+08:00`) : toDate(v)
+}
+
 /* ── ① 内置示意 Provider（无外部依赖，保证链路可跑通） ───────────────── */
 const MOCK_SEEDS: Array<{ title: string; summary: string; cat: string }> = [
   { title: '两市成交额环比回升，红利板块获资金净流入', summary: '盘中资金偏好低波品种，成交结构出现分化。', cat: '市场' },
@@ -154,8 +160,8 @@ class EastMoneyProvider implements NewsProvider {
         summary: it.summary ? String(it.summary).slice(0, 500) : null,
         contentUrl: code ? `https://finance.eastmoney.com/a/${code}.html` : null,
         imageUrl,
-        // showTime 为北京时间字符串，按本机时区解析后统一转 UTC 存储
-        publishedAt: toDate(it.showTime ?? it.time),
+        // showTime 为北京时间字符串，显式按 +08:00 解析后统一转 UTC 存储（容器多为 UTC 时区）
+        publishedAt: toDateCst(it.showTime ?? it.time),
       }
     })
   }

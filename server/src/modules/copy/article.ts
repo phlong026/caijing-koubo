@@ -143,7 +143,7 @@ async function parsePdf(buffer: Buffer): Promise<string> {
   // 之前 `mod.default(buffer)` 必然抛 TypeError 并被 catch 静默降级到 minimalPdfText，
   // 该兜底只能识别未压缩的 Tj/TJ，FlateDecode 压缩流与中文 CID 字体全部解析不出。
   let PDFParse: new (o: { data: Buffer }) => {
-    getText: () => Promise<{ text?: string }>
+    getText: (params?: { pageJoiner?: string }) => Promise<{ text?: string }>
     destroy: () => Promise<void>
   }
   try {
@@ -154,7 +154,8 @@ async function parsePdf(buffer: Buffer): Promise<string> {
   }
   const parser = new PDFParse({ data: buffer })
   try {
-    const r = await parser.getText()
+    // 默认会在每页后插入「-- 1 of 3 --」页码行，它会混进大纲与喂给模型的原文，这里关掉
+    const r = await parser.getText({ pageJoiner: '' })
     return r.text ?? ''
   } catch (e) {
     // 加密 / 损坏 / 非真实 PDF：明确报错，不再静默兜底成「扫描件」
