@@ -238,7 +238,8 @@
                       @change="() => topics.toggleCheck(c.id)"
                       @click.prevent
                     />
-                    <ThumbBox :seed="c.id" :width="52" :height="52" />
+                    <!-- 与资讯卡一致：候选选题也没有配图，ThumbBox 占位（渐变底 + 📊）
+                         只占宽度不提供任何识别信息，移除后标题/钩子/人物选择能用满整行。 -->
                     <div class="flex-1 min-w-0">
                       <div class="text-[14px] font-medium leading-5">{{ c.title }}</div>
                       <div v-if="c.direction" class="mt-2 flex items-start gap-2 text-[12px]">
