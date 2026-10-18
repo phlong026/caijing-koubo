@@ -119,6 +119,29 @@ export const config = {
     summaryMaxChars: num('FINSTEP_SUMMARY_MAX_CHARS', 300),
   },
 
+  /**
+   * 曙光舆情 MCP（saturn-news，JSON-RPC over streamableHttp）。
+   * 与 FinStep 相反：这是**纯数据接口**，单次 0.5~2s，可以当主采集源用。
+   * 注意 Authorization 头直接放 key，不要加 Bearer 前缀。
+   */
+  saturnNews: {
+    apiKey: str('SATURN_NEWS_MCP_KEY', ''),
+    url: str('SATURN_NEWS_MCP_URL', 'https://mcpgw.fullgoalservice.com.cn/ext-mcp/saturn-news-mcp'),
+    timeoutMs: num('SATURN_NEWS_TIMEOUT_MS', 30000),
+    /** 采集用的关键词（逗号分隔），逐个检索后合并去重 */
+    keywords: str('SATURN_NEWS_KEYWORDS', 'A股,基金,央行'),
+    /** 回看天数，生成 date_range 用 */
+    lookbackDays: num('SATURN_NEWS_LOOKBACK_DAYS', 1),
+    /** 每个关键词取多少条 */
+    limitPerKeyword: num('SATURN_NEWS_LIMIT', 30),
+    /** 采集哪几个通道：weibo_blog/flash/wechat/web_v1 */
+    channels: str('SATURN_NEWS_CHANNELS', 'flash,wechat,web_v1'),
+    /** 摘要最大字符数（snippet 最多 2000 字，列表页不需要那么长） */
+    summaryMaxChars: num('SATURN_NEWS_SUMMARY_MAX_CHARS', 300),
+    /** 是否在启动时校验连通性（false 可省一次 12s 握手） */
+    probeOnBoot: str('SATURN_NEWS_PROBE_ON_BOOT', 'false') === 'true',
+  },
+
   news: { fetchIntervalMin: num('NEWS_FETCH_INTERVAL_MIN', 15) },  sweep: { intervalMin: num('SWEEP_INTERVAL_MIN', 10), jitterRatio: 0.1 },
 
   hot: {
@@ -190,6 +213,19 @@ export const config = {
   // P1-7：生产环境默认**关闭** mock 兜底；否则漏配 key 时会静默返回假账号/假视频/假转写。
   mockFallback: bool('MOCK_FALLBACK', str('NODE_ENV', 'development') !== 'production'),
 
+  /**
+   * 资讯「内置示意源」开关（与 mockFallback 解耦）。
+   *
+   * 为什么必须拆开：`mockFallback` 同时是 TikHub / 百炼 ASR / 百炼 LLM / OSS / 文案模型
+   * 的兜底开关。为了让热点资讯只用真实数据就把 MOCK_FALLBACK 关掉，会让视频提取、
+   * 文案生成一并报「未配置密钥」——用一个全局开关去控制单个数据源的展示口径，
+   * 是明显的粒度错误。
+   *
+   * 默认：开发环境 true（免得没配 key 时资讯列表空白），生产 false。
+   * 想让资讯只出现真实来源时，单独设 `NEWS_MOCK_SOURCE=false`。
+   */
+  newsMockSource: bool('NEWS_MOCK_SOURCE', str('NODE_ENV', 'development') !== 'production'),
+
   // §2.4 防 SSRF 白名单：与任务书 §2.4 的 3 个域名保持一致（P2-14）
   linkWhitelist: ['v.douyin.com', 'www.douyin.com', 'www.iesdouyin.com'],
   maxRedirects: 3,
@@ -211,4 +247,8 @@ export function hasOss(): boolean {
 /** FinStep 资讯接口是否可用（无 Key 时该源整体不启用，不影响其它资讯源） */
 export function hasFinStep(): boolean {
   return !!config.finstep.apiKey
+}
+/** 曙光舆情 MCP 是否可用 */
+export function hasSaturnNews(): boolean {
+  return !!(config.saturnNews.apiKey && config.saturnNews.url)
 }

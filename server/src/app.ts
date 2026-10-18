@@ -6,7 +6,7 @@ import { config } from './config.js'
 import { logger } from './log.js'
 import { ApiError, isApiError } from './errors.js'
 import { getDb } from './db/index.js'
-import { redis, queueStats } from './queue/index.js'
+import { redis, queueStats, getQueueBackend } from './queue/index.js'
 import { registerRoutes } from './routes.js'
 import { toDb, utcNow } from './lib/time.js'
 
@@ -94,9 +94,15 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   /** 健康检查：DB / Redis / 队列可观测（§2.4） */
   const healthHandler = async (_req: FastifyRequest, reply: FastifyReply) => {
+    // ⚠️ redis.ping() 在连接断开时**不会 reject**，而是挂在 ioredis 的无限重连上，
+    // 导致 /health 永远不返回（表现为 http=000）。必须自己加超时。
     let redisUp = false
     try {
-      redisUp = (await redis.ping()) === 'PONG'
+      redisUp =
+        (await Promise.race([
+          redis.ping(),
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error('redis ping timeout')), 1500)),
+        ])) === 'PONG'
     } catch {
       redisUp = false
     }
@@ -110,16 +116,31 @@ export async function buildApp(): Promise<FastifyInstance> {
     } catch {
       dbUp = false
     }
-    const queues = redisUp ? await queueStats().catch(() => ({})) : {}
-    const healthy = dbUp && redisUp
+    // 队列统计不再依赖 redisUp：内存后端下 queues 依然有意义（waiting/active/completed/failed）
+    const queues = await queueStats().catch(() => ({}))
+    const queueBackend = getQueueBackend()
+    // 判定口径：**DB 可用即视为服务可用**（200）。
+    // Redis 只影响「队列后端选型」：Redis 可用走 BullMQ（持久、跨进程），
+    // 不可用则切进程内队列（memory）——异步链路仍可跑，但不持久化、仅单实例消费。
+    // 因此 degraded 只表示「队列降级」，不代表功能缺失，不要让监控据此判死。
+    const healthy = dbUp
+    const degraded = dbUp && queueBackend === 'memory'
     return reply.status(healthy ? 200 : 503).send(
       ok({
-        status: healthy ? 'ok' : 'degraded',
+        status: healthy ? (degraded ? 'degraded' : 'ok') : 'down',
         env: config.env,
         time: toDb(utcNow()),
         db: { up: dbUp, dialect },
         redis: { up: redisUp, host: config.redis.host, port: config.redis.port },
+        queue: { backend: queueBackend, stats: queues },
         queues,
+        ...(degraded
+          ? {
+              hint:
+                '队列已降级为进程内队列（memory）：选题生成/视频提取/文案生成可用，' +
+                '但任务不持久化、仅本实例消费。启动 Redis 后重启可恢复 BullMQ。',
+            }
+          : {}),
       }),
     )
   }

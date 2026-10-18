@@ -255,7 +255,7 @@ export async function runGeneration(batchId: string): Promise<void> {
             await createTopic({
               source: 'news', sourceId: news.id, title: t.title,
               direction: t.direction, hook: t.hook, rationale: t.rationale,
-              personaIds: [persona.id], status: 'candidate', batchId,
+              personaIds: [persona.id], status: 'assigned', batchId,
               createdBy: batch.createdBy,
             }, tx)
             titles.add(t.title.trim())

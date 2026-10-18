@@ -4,6 +4,30 @@ import { Redis } from 'ioredis'
 import { Queue, QueueEvents, Worker, type Job, type JobsOptions, type WorkerOptions } from 'bullmq'
 import { config } from '../config.js'
 import { logger } from '../log.js'
+import { memCloseQueues, memEnqueue, memQueueStats, memRegisterWorker, memScheduleRepeatable } from './memory.js'
+
+/**
+ * 队列后端选择。
+ *
+ * `redis`  —— 默认，BullMQ（跨进程、可持久、支持多实例）
+ * `memory` —— 降级，进程内队列（无 Redis 时仍然让选题生成/视频提取/文案生成可用）
+ *
+ * 由 `probeRedis()` 在启动时确定，之后 `enqueue` / `registerWorker` /
+ * `scheduleRepeatable` 三个出口按此分流。这样上层业务代码完全不需要感知后端差异。
+ */
+export type QueueBackend = 'redis' | 'memory'
+let backend: QueueBackend = 'redis'
+
+export function getQueueBackend(): QueueBackend {
+  return backend
+}
+
+/** 由启动流程显式设置；设为 memory 时同时把 redisHealthy 置 false */
+export function setQueueBackend(b: QueueBackend): void {
+  backend = b
+  if (b === 'memory') redisHealthy = false
+  logger.warn({ backend: b }, b === 'memory' ? 'queue.backend_memory：使用进程内队列（不持久化、单实例）' : 'queue.backend_redis')
+}
 
 /** BullMQ 连接：maxRetriesPerRequest 必须为 null（长任务要求） */
 export const redis = new Redis({
@@ -15,8 +39,34 @@ export const redis = new Redis({
   enableReadyCheck: true,
 })
 
-redis.on('error', (e: Error) => logger.error({ err: e.message }, 'redis.error'))
-redis.on('connect', () => logger.info({ host: config.redis.host, port: config.redis.port }, 'redis.connected'))
+/**
+ * Redis 连接健康标记。
+ * 连不上时 BullMQ 会持续重连并刷日志，这里做两件事：
+ *   1. 错误日志降频（只打第一次和每 60 秒一次），避免刷屏淹没真正的业务日志；
+ *   2. 让 enqueue 快速失败而不是挂在无限重试上。
+ */
+let redisHealthy = false
+let lastRedisErrorLog = 0
+
+redis.on('error', (e: Error) => {
+  const now = Date.now()
+  if (now - lastRedisErrorLog > 60_000) {
+    lastRedisErrorLog = now
+    logger.error({ err: e.message, host: config.redis.host, port: config.redis.port }, 'redis.error')
+  }
+})
+redis.on('ready', () => {
+  redisHealthy = true
+  logger.info({ host: config.redis.host, port: config.redis.port }, 'redis.connected')
+})
+redis.on('close', () => {
+  redisHealthy = false
+})
+
+/** Redis 当前是否可用（供路由层决定是否走队列） */
+export function isRedisHealthy(): boolean {
+  return redisHealthy && redis.status === 'ready'
+}
 
 export const QUEUE_NAMES = {
   newsFetch: 'news-fetch',
@@ -80,6 +130,11 @@ export async function scheduleRepeatable(
   data: Record<string, unknown> = {},
   opts: JobsOptions = {},
 ): Promise<void> {
+  // 降级后端：内存定时器，幂等由「同 schedulerId 只保留一个 timer」保证
+  if (backend === 'memory') {
+    memScheduleRepeatable(queueName, schedulerId, everyMs, jobName, data)
+    return
+  }
   const q = getQueue(queueName)
   const existing = await (q as any)
     .getJobSchedulers()
@@ -143,6 +198,10 @@ export async function pruneStaleRepeatKeys(
 }
 
 export async function nextScheduledRun(queueName: QueueName, schedulerId: string): Promise<number | null> {
+  // 内存后端没有「下次排期」的概念（timer 自续期），返回 null 表示未知
+  if (backend === 'memory') return null
+  // Redis 不可用时直接返回 null，避免调用方挂在 BullMQ 的重连上
+  if (!isRedisHealthy()) return null
   const q = getQueue(queueName)
   const schedulers = await q.getJobSchedulers()
   const s = schedulers.find((x) => x.id === schedulerId || x.key === schedulerId) as
@@ -158,6 +217,15 @@ export async function enqueue(
   data: Record<string, unknown>,
   opts: JobsOptions = {},
 ): Promise<Job | null> {
+  if (backend === 'memory') {
+    // 内存后端永不「失败」：只要进程活着就能执行，无需关心 Redis
+    const job = memEnqueue(queueName, jobName, data, opts as any)
+    return job as unknown as Job | null
+  }
+  // Redis 不可用时立刻失败，不要把调用方挂在 BullMQ 的无限重连上
+  if (!isRedisHealthy()) {
+    throw new Error(`Redis 不可用（${config.redis.host}:${config.redis.port}），无法入队 ${queueName}/${jobName}`)
+  }
   const q = getQueue(queueName)
   // FR-B3 入队去重：**必须用 deduplication**，不要用固定 jobId。
   // BullMQ 5.x 的 jobId 语义是「同 id 的任务哈希存在即视为重复」（含已完成/已失败但未清理的
@@ -180,6 +248,10 @@ export function registerWorker(
   processor: (job: Job) => Promise<unknown>,
   opts: Partial<WorkerOptions> = {},
 ): Worker {
+  if (backend === 'memory') {
+    memRegisterWorker(queueName, processor as any, opts.concurrency ?? 1)
+    return undefined as unknown as Worker
+  }
   if (workerMap.has(queueName)) return workerMap.get(queueName)!
   const worker = new Worker(queueName, processor as any, {
     connection: redis as any,
@@ -199,6 +271,7 @@ export function registerWorker(
 }
 
 export async function queueStats(): Promise<Record<string, Record<string, number>>> {
+  if (backend === 'memory') return memQueueStats()
   const out: Record<string, Record<string, number>> = {}
   for (const name of Object.values(QUEUE_NAMES)) {
     try {
@@ -222,6 +295,7 @@ export async function queueStats(): Promise<Record<string, Record<string, number
 export async function closeQueues(): Promise<void> {
   await stopHeartbeat?.()
   stopHeartbeat = undefined
+  memCloseQueues()
   for (const w of workerMap.values()) await w.close().catch(() => {})
   for (const q of queueMap.values()) await q.close().catch(() => {})
   workerMap.clear()

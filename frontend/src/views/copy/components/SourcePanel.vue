@@ -20,7 +20,7 @@
           {{ c.title || '（未命名文案）' }}
         </div>
         <div class="mw-subtle mt-1">
-          {{ c.persona?.name || '未绑定人物' }}
+          {{ personaName }}
           <template v-if="c.lineLabel"> · {{ c.lineLabel }}</template>
           <template v-if="c.createdAt"> · {{ fmtTime(c.createdAt) }}</template>
         </div>
@@ -86,6 +86,15 @@ import { useCopyStore } from '@/stores/copy'
 const store = useCopyStore()
 const loading = computed(() => store.loading)
 const c = computed(() => store.copy)
+/**
+ * 人物名：`persona` 在详情接口的**顶层**（与 copy 平级），不在 copy 对象里。
+ * 早期这里写成 `c.persona?.name`，取到的永远是 undefined，
+ * 于是所有文案（包括从爆款选题送入、明确绑定了人物的）都显示「未绑定人物」。
+ */
+const personaName = computed(() => {
+  const p = store.detail?.persona ?? (c.value as any)?.persona
+  return p?.name || '未绑定人物'
+})
 const summary = computed(() => store.detail?.sourceSummary ?? null)
 const article = computed(() => store.detail?.article ?? null)
 const topic = computed(() => store.detail?.topic ?? null)

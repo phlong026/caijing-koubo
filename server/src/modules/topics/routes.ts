@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { ok } from '../../app.js'
+import { getDb } from '../../db/index.js'
 import { err } from '../../errors.js'
 import { recordOperation } from '../audit/repo.js'
 import { createDraftsFromTopics, createInitialDrafts } from '../copy-contract/service.js'
@@ -79,7 +80,12 @@ export function registerTopicRoutes(app: FastifyInstance): void {
     const body = (req.body ?? {}) as { topicIds?: string[] }
     const topicIds = Array.isArray(body.topicIds) ? body.topicIds : []
     if (!topicIds.length) throw err.badRequest('请先勾选候选选题')
-    const res = await createDraftsFromTopics({ topicIds, operator: req.operator })
+    // P1-4 补全：原先此处**没有事务**。`createDraftsFromTopics` 内部会先用条件更新
+    // 把 topic 置为 sent，再逐条 INSERT copy。若中途某条 INSERT 失败（约束冲突、连接断开），
+    // 前面的 topic 已经停在 sent 却没有对应 copy —— 选题在列表里消失，文案工坊里也找不到，
+    // 属于不可自愈的数据悬空。包进事务后要么全成，要么全回滚。
+    const db = getDb()
+    const res = await db.tx(async (t) => createDraftsFromTopics({ topicIds, operator: req.operator, db: t }))
     // P1-10：初始空白稿必须在送入事务提交后创建，且只创建一次
     await createInitialDrafts(res.copyIds, req.operator)
     await recordOperation({

@@ -94,7 +94,9 @@
                   >
                     <icon-check :size="11" />
                   </span>
-                  <ThumbBox :seed="n.id" :width="86" :height="64" />
+                  <!-- 原先这里有一个 ThumbBox 占位图（固定 📊 emoji + 渐变底）。
+                       资讯源（曙光/东方财富/同花顺等）都不提供配图，占位图对识别没有任何信息量，
+                       反而挤占正文宽度，故移除；改由用户点击标题查看完整内容。 -->
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2 text-[12px] text-[var(--mw-text3)]">
                       <span :class="CAT_CLASS[n.category] || 'mw-tag mw-tag-gray'">{{ n.category }}</span>
@@ -110,7 +112,17 @@
                         >查看来源 <icon-right :size="12"
                       /></a>
                     </div>
-                    <div class="mt-1.5 text-[15px] font-semibold leading-6">{{ n.title }}</div>
+                    <!-- 标题即详情入口：@click.stop 阻止冒泡到卡片（卡片点击=勾选） -->
+                    <div
+                      class="news-title mt-1.5 text-[15px] font-semibold leading-6"
+                      role="button"
+                      tabindex="0"
+                      :title="`查看完整内容：${n.title}`"
+                      @click.stop="openNewsDetail(n)"
+                      @keydown.enter.stop="openNewsDetail(n)"
+                    >
+                      {{ n.title }}
+                    </div>
                     <div v-if="n.summary" class="mt-1 text-[13px] text-[var(--mw-text3)] leading-5 line-clamp-2">
                       {{ n.summary }}
                     </div>
@@ -226,7 +238,8 @@
                       @change="() => topics.toggleCheck(c.id)"
                       @click.prevent
                     />
-                    <ThumbBox :seed="c.id" :width="52" :height="52" />
+                    <!-- 与资讯卡一致：候选选题也没有配图，ThumbBox 占位（渐变底 + 📊）
+                         只占宽度不提供任何识别信息，移除后标题/钩子/人物选择能用满整行。 -->
                     <div class="flex-1 min-w-0">
                       <div class="text-[14px] font-medium leading-5">{{ c.title }}</div>
                       <div v-if="c.direction" class="mt-2 flex items-start gap-2 text-[12px]">
@@ -237,7 +250,7 @@
                       <div class="mt-1.5 flex items-center gap-2 text-[12px]">
                         <span class="text-[var(--mw-text3)] whitespace-nowrap">分配给</span>
                         <a-select
-                          :model-value="topics.assignment[c.id] || []"
+                          :model-value="currentPersonas(c)"
                           size="mini"
                           :style="{ width: '180px' }"
                           placeholder="选择人物"
@@ -249,7 +262,7 @@
                           <a-option v-for="p in personas.enabled" :key="p.id" :value="p.id">{{ p.name }}</a-option>
                         </a-select>
                       </div>
-                      <div v-if="c.status === 'candidate'" class="mt-1 text-[12px] text-[var(--mw-text3)]">
+                      <div v-if="!currentPersonas(c).length" class="mt-1 text-[12px] text-[var(--mw-text3)]">
                         未分配人物，不能直接送入
                       </div>
                     </div>
@@ -680,6 +693,45 @@
         </a-form-item>
       </a-form>
     </a-modal>
+    <!-- ============ 抽屉：资讯详情（点击标题打开） ============ -->
+    <a-drawer
+      v-model:visible="newsDetail.visible"
+      :width="560"
+      :footer="false"
+      unmount-on-close
+      title="资讯详情"
+    >
+      <a-spin :loading="newsDetail.loading" class="w-full">
+        <template v-if="newsDetail.item">
+          <div class="flex items-center gap-2 text-[12px] text-[var(--mw-text3)]">
+            <span :class="CAT_CLASS[newsDetail.item.category] || 'mw-tag mw-tag-gray'">
+              {{ newsDetail.item.category }}
+            </span>
+            <span>{{ newsDetail.item.source }}</span>
+            <span v-if="newsDetail.item.publishedAt">· {{ fmtFullTime(newsDetail.item.publishedAt) }}</span>
+          </div>
+
+          <h2 class="mt-3 text-[19px] font-semibold leading-8 text-[#131f38]">{{ newsDetail.item.title }}</h2>
+
+          <div
+            v-if="newsDetail.item.summary"
+            class="mt-4 text-[14px] leading-[1.9] text-[#3c4a63] whitespace-pre-wrap"
+          >
+            {{ newsDetail.item.summary }}
+          </div>
+          <a-empty v-else description="该资讯未提供正文内容" class="mt-6" />
+
+          <div class="mt-6 pt-4 border-t border-[#eef2f8] flex items-center gap-3">
+            <a-button v-if="newsDetail.item.contentUrl" type="primary" @click="openOrigin(newsDetail.item.contentUrl)">
+              <template #icon><icon-launch /></template>打开原文
+            </a-button>
+            <span v-else class="mw-subtle text-[12px]">该来源未提供原文链接</span>
+            <span class="flex-1"></span>
+            <span class="mw-subtle text-[12px]">采集于 {{ fmtFullTime(newsDetail.item.fetchedAt) }}</span>
+          </div>
+        </template>
+      </a-spin>
+    </a-drawer>
   </div>
 </template>
 
@@ -690,6 +742,7 @@ import { Message, Modal } from '@arco-design/web-vue'
 import PageHead from '@/components/PageHead.vue'
 import ThumbBox from '@/components/ThumbBox.vue'
 import { ApiError } from '@/api/client'
+import { getNewsDetail, type NewsItem } from '@/api/news'
 import type { Account, AccountPreview, BenchVideo, ExtractStatus, VideoScript } from '@/api/benchmark'
 import type { TopicTemplate } from '@/api/topics'
 import { CAT_CLASS, useNewsStore } from '@/stores/news'
@@ -753,6 +806,16 @@ async function onGenerate() {
   }
 }
 
+/**
+ * 当前生效的人物：本地临时选择优先，回落选题自身的 personaIds。
+ *
+ * 下拉、卡片提示、送入前校验三处必须用同一个口径，否则会出现
+ * 「下拉已选好人物、卡片却提示未分配」这种自相矛盾的界面。
+ */
+function currentPersonas(c: { id: string; personaIds?: string[] }): string[] {
+  return topics.assignment[c.id] ?? c.personaIds ?? []
+}
+
 function onAssignChange(topicId: string, v: unknown) {
   onAssign(topicId, Array.isArray(v) ? (v as string[]) : [])
 }
@@ -768,7 +831,7 @@ function onAssign(topicId: string, personaIds: string[]) {
 async function onSendToCopy() {
   const ids = topics.checkedIds
   if (!ids.length) return Message.warning('请先勾选候选选题')
-  const unassigned = topics.checkedItems.filter((t) => !(topics.assignment[t.id] ?? t.personaIds).length)
+  const unassigned = topics.checkedItems.filter((t) => !currentPersonas(t).length)
   if (unassigned.length) return Message.warning(`有 ${unassigned.length} 条候选尚未分配人物`)
   try {
     const created = await topics.send(ids)
@@ -783,6 +846,39 @@ async function onSendToCopy() {
 
 function reloadCandidates() {
   void topics.load()
+}
+
+/* ── 资讯详情（点击标题打开）─────────────── */
+/**
+ * 详情抽屉状态。
+ *
+ * 交互设计：点击标题先用**列表已有数据**立即渲染，再异步拉详情接口刷新。
+ * 资讯列表返回的字段（title/summary/contentUrl/publishedAt）已足够展示，
+ * 若点击后先转圈等接口，用户会感到明显延迟；而详情接口的价值在于拿到
+ * 后台采集可能更新过的完整记录，所以放在后台补正。
+ */
+const newsDetail = reactive({
+  visible: false,
+  loading: false,
+  item: null as NewsItem | null,
+})
+
+async function openNewsDetail(n: NewsItem): Promise<void> {
+  newsDetail.item = n
+  newsDetail.visible = true
+  newsDetail.loading = true
+  try {
+    newsDetail.item = await getNewsDetail(n.id)
+  } catch {
+    // 详情拉取失败不打断阅读：列表数据已经能看，保持当前内容即可
+  } finally {
+    newsDetail.loading = false
+  }
+}
+
+function openOrigin(url: string | null): void {
+  if (!url) return
+  window.open(url, '_blank', 'noopener,noreferrer')
 }
 
 /* ── 提示词模板 ─────────────────────────── */
@@ -1057,6 +1153,14 @@ function fmtTime(iso: string | null | undefined): string {
   if (Number.isNaN(d.getTime())) return '—'
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+/** 详情抽屉用完整时间：资讯详情需要看清年月日，不能只有「10-17 21:20」 */
+function fmtFullTime(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 function fmtDuration(sec: number): string {
   const s = Math.max(0, Math.round(sec))

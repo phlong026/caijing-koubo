@@ -33,6 +33,13 @@ function map(r: Record<string, any>): NewsItemOut {
   }
 }
 
+/** FR-N3 单条资讯详情（点标题打开弹层用） */
+export async function getNewsById(id: string): Promise<NewsItemOut | null> {
+  const db = getDb()
+  const r = await db.get<Record<string, any>>('SELECT * FROM `news_item` WHERE `id` = ?', [id])
+  return r ? map(r) : null
+}
+
 /** FR-N2 去重：UNIQUE(source, external_id) 优先 + url_hash 兜底，重复采集零增量 */
 export async function insertNews(dto: NewsDTO, category: Category): Promise<boolean> {
   const db = getDb()
