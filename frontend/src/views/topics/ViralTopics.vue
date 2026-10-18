@@ -234,20 +234,23 @@
 
             <a-spin :loading="topics.loading" class="w-full">
               <div class="mt-3 flex flex-col gap-3 max-h-[calc(100vh-420px)] min-h-[200px] overflow-y-auto pr-1">
-                <label
+                <div
                   v-for="c in topics.items"
                   :key="c.id"
                   class="p-3.5 rounded-[10px] border cursor-pointer transition-colors"
                   :class="topics.checkedIds.includes(c.id)
                     ? 'border-[color:var(--mw-primary-mid)] bg-[color:var(--mw-primary-faint)]'
                     : 'border-[var(--mw-border)] hover:border-[color:var(--mw-primary-soft)]'"
+                  @click="topics.toggleCheck(c.id)"
                 >
                   <div class="flex gap-3">
                     <a-checkbox
                       :model-value="topics.checkedIds.includes(c.id)"
                       @change="() => topics.toggleCheck(c.id)"
-                      @click.prevent
-                    />
+                      @click.stop
+                    >
+                      <span class="sr-only">勾选选题：{{ c.title }}</span>
+                    </a-checkbox>
                     <!-- 与资讯卡一致：候选选题也没有配图，ThumbBox 占位（渐变底 + 📊）
                          只占宽度不提供任何识别信息，移除后标题/钩子/人物选择能用满整行。 -->
                     <div class="flex-1 min-w-0">
@@ -286,7 +289,7 @@
                       </a-button>
                     </a-popconfirm>
                   </div>
-                </label>
+                </div>
 
                 <a-empty v-if="!topics.loading && !topics.items.length" description="还没有候选选题" />
               </div>

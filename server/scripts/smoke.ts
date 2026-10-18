@@ -118,7 +118,9 @@ async function main(): Promise<void> {
   /* 场景 0：健康检查 */
   console.log('[0] 健康检查')
   const health: any = await fetch(`${BASE}/health`).then((r) => r.json())
-  check('/health 返回 200 且 db/redis 在线', health?.data?.status === 'ok', health?.data)
+  check('/health 数据库可用，队列正常或明确标记内存降级',
+    health?.data?.db?.up === true && (health.data.status === 'ok' ||
+      (health.data.status === 'degraded' && health.data.queue?.backend === 'memory')), health?.data)
 
   /* 场景 1：资讯采集与去重（T1） */
   console.log('\n[1] 资讯采集 / 去重 / 检索（FR-N1~N3）')
@@ -235,10 +237,13 @@ async function main(): Promise<void> {
 
   const topics = await req('GET', `/topics?batchId=${gen.data.batchId}&pageSize=50`)
   check('候选字段完整（title/direction/hook/rationale）', topics.data.items.every((t: any) => t.title && t.direction && t.hook && t.rationale))
-  check('候选初始状态为 candidate', topics.data.items.every((t: any) => t.status === 'candidate'))
+  check('生成时绑定目标人物，初始状态为 assigned', topics.data.items.every((t: any) =>
+    t.status === 'assigned' && t.personaIds.length > 0 && t.personaIds.every((id: string) => personaIds.includes(id))))
   const t0 = topics.data.items[0]
   const t1 = topics.data.items[1]
 
+  // Generation already assigns its target persona; explicitly clear it to test the guard.
+  await req('PATCH', `/topics/${t0.id}`, { personaIds: [] })
   const sendBeforeAssign = await req('POST', '/topics/send', { topicIds: [t0.id] })
   check('未分配人物的候选直接送入被拒绝（FR-C1①）', sendBeforeAssign.status === 409, sendBeforeAssign.raw?.error)
 
@@ -277,7 +282,7 @@ async function main(): Promise<void> {
   }
   check('回填最近一页视频入库', videos.data?.items?.length > 0, videos.data?.total)
 
-  const alertsAfterBackfill = await req('GET', '/benchmark/alerts?pageSize=50')
+  const alertsAfterBackfill = await req('GET', `/benchmark/alerts?accountId=${accountId}&pageSize=50`)
   check('回填期不产生任何告警（FR-B1）', alertsAfterBackfill.data?.total === 0, alertsAfterBackfill.data?.total)
 
   const dupAdd = await req('POST', '/benchmark/accounts', { url: demoUrl, intervalHours: 2 })

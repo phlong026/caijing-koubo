@@ -180,7 +180,7 @@ async function main(): Promise<void> {
   }
 
   console.log('\n=== 4. 归档 ===')
-  const others = topicList.filter((t) => t.id !== t0.id && t.status === 'candidate')
+  const others = topicList.filter((t) => t.id !== t0.id && ['candidate', 'assigned'].includes(t.status))
   if (others.length) {
     // 归档走 PATCH /topics/:id { status:'archived' }
     const arc = await req('PATCH', `/topics/${others[0].id}`, { status: 'archived' })
