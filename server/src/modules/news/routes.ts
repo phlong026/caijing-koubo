@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { ok } from '../../app.js'
-import { listNews, newsCategories } from './repo.js'
+import { getNewsById, listNews, newsCategories } from './repo.js'
 import { runFetchExclusive, runFetchQueued } from './service.js'
 import { nextFetchAt } from './jobs.js'
 import { recordOperation } from '../audit/repo.js'
@@ -25,6 +25,21 @@ export function registerNewsRoutes(app: FastifyInstance): void {
 
   /** FR-N3 分类计数 + 来源清单 */
   app.get('/news/categories', async () => ok(await newsCategories()))
+
+  /**
+   * FR-N3 单条资讯详情 —— 前端点击标题打开详情的入口。
+   *
+   * 路由冲突说明：本路由与 `/news/categories`、`/news/rules` 同为 `/news/*` 前缀。
+   * Fastify 底层 find-my-way 的 radix tree 会让**静态段优先于参数段**，
+   * 因此 categories / rules 不会被 `:id` 吃掉，注册顺序无关（已实测三者并存正常）。
+   * 这里仍紧跟在 categories 之后，是为了让相关路由在手读时聚在一起。
+   */
+  app.get('/news/:id', async (req) => {
+    const { id } = req.params as { id: string }
+    const item = await getNewsById(id)
+    if (!item) throw err.notFound('资讯不存在或已被清理')
+    return ok(item)
+  })
 
   /** FR-N3 手动刷新：立即采集并返回本次增量（超时转异步，P2-8） */
   app.post('/news/refresh', async (req, reply) => {

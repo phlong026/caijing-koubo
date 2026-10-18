@@ -81,6 +81,19 @@ async function main(): Promise<void> {
   check('存在可选资讯', newsItems.length > 0, { count: newsItems.length })
   if (!newsItems.length || !tpl) return
 
+  console.log('\n=== 0.1 资讯详情（点标题打开）===')
+  const detail = await req('GET', `/news/${newsItems[0].id}`)
+  check('资讯详情接口可用', detail.status === 200 && detail.data?.id === newsItems[0].id, detail.raw?.error)
+  check('详情含完整标题与摘要', !!detail.data?.title && !!detail.data?.summary, {
+    hasTitle: !!detail.data?.title,
+    summaryLen: detail.data?.summary?.length ?? 0,
+  })
+  const ghostNews = await req('GET', '/news/news_not_exist_at_all')
+  check('不存在的资讯返回 404', ghostNews.status === 404 && ghostNews.raw?.error?.code === 'not_found', ghostNews.raw)
+  // 路由优先级：/news/categories 是静态段，不能被 /news/:id 吃掉
+  const cats = await req('GET', '/news/categories')
+  check('categories 不被 :id 路由抢占', cats.status === 200 && typeof cats.data?.all === 'number', cats.raw?.error)
+
   console.log('\n=== 1. 选题生成（异步队列）===')
   const gen = await req('POST', '/topics/generate', {
     newsIds: newsItems.slice(0, 2).map((n) => n.id),

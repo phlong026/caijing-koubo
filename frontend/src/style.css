@@ -103,6 +103,29 @@ body {
   color: var(--mw-primary-light);
 }
 
+/**
+ * 资讯标题：同时是「打开详情」的入口。
+ * 卡片本身点击=勾选，标题点击=看详情，两种意图必须靠视觉区分——
+ * 所以标题默认保持正文字色（不抢眼），仅 hover 时变主色 + 下划线，
+ * 让「可点」这件事在鼠标靠近时才显现，避免整页蓝色链接化。
+ */
+.news-title {
+  cursor: pointer;
+  color: #131f38;
+  transition: color 0.16s var(--mw-ease);
+}
+.news-title:hover {
+  color: var(--mw-primary);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.news-title:focus-visible {
+  outline: 2px solid var(--mw-primary-mid);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
 /* 页面头部：更大的字重对比 + 微字距 */
 .mw-page-title {
   font-size: 25px;

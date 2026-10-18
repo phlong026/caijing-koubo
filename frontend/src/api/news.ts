@@ -51,6 +51,11 @@ export function getNews(query: NewsQuery) {
   return apiGet<PageResult<NewsItem>>('/news', { ...query })
 }
 
+/** 单条资讯详情（点击标题打开详情用） */
+export function getNewsDetail(id: string) {
+  return apiGet<NewsItem>(`/news/${encodeURIComponent(id)}`)
+}
+
 export function getNewsCategories() {
   return apiGet<NewsCategories>('/news/categories')
 }
