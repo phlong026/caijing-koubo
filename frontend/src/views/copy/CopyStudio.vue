@@ -14,10 +14,11 @@
           <template #icon><icon-file /></template>
           草稿记录
         </a-button>
+        <a-button :disabled="!copy" @click="versionVisible = true">历史版本</a-button>
         <!-- P1-21：效果图页头为「草稿记录 / 保存草稿 / 提交审核」，补回「保存草稿」（FR-E3 manual_save） -->
         <a-button
-          :disabled="!copy || !store.editor || !store.isDirty || !store.canEdit"
-          :loading="store.editor?.saving"
+          :disabled="!copy || !store.editor || !store.canEdit || savingDraft || store.editor.saving"
+          :loading="savingDraft || store.editor?.saving"
           @click="onSaveDraft"
         >
           <template #icon><icon-save /></template>
@@ -380,3 +381,4 @@ async function onPreviewPrompt(): Promise<void> {
   margin: 0;
 }
 </style>
+

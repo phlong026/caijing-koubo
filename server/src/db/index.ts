@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import fs from 'node:fs'
 import path from 'node:path'
 import mysql from 'mysql2/promise'
@@ -204,21 +205,6 @@ async function createMysql(): Promise<Db> {
 
 /* ── SQLite（仅本地开发验证用，内置 node:sqlite 免安装） ─────────────── */
 
-/**
- * P1-19：SQLite 单连接上的事务串行锁。
- * SQLite 只有一个连接，事务内的 await 期间不允许别的请求写进来，
- * 否则那些语句会随本事务一起提交/回滚。这里的 Promise 链把 tx() 串行化。
- */
-let sqliteTxChain: Promise<unknown> = Promise.resolve()
-const sqliteTxLock = {
-  run<T>(fn: () => Promise<T>): Promise<T> {
-    const next = sqliteTxChain.then(fn, fn)
-    // 无论成功失败都放开下一个，避免一次异常让整条链永久卡死
-    sqliteTxChain = next.catch(() => undefined)
-    return next
-  },
-}
-
 async function createSqlite(file: string): Promise<Db> {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const { DatabaseSync } = (await import('node:sqlite')) as unknown as {
@@ -227,6 +213,17 @@ async function createSqlite(file: string): Promise<Db> {
   const database = new DatabaseSync(file)
   database.exec('PRAGMA journal_mode = WAL')
   database.exec('PRAGMA foreign_keys = ON')
+
+  // Ownership belongs to this async call chain, never to a connection-global flag.
+  const context = new AsyncLocalStorage<{ active: boolean }>()
+  let chain: Promise<unknown> = Promise.resolve()
+  const locked = <T>(fn: () => T | Promise<T>): Promise<T> => {
+    const next = chain.then(fn, fn)
+    chain = next.catch(() => undefined)
+    return next
+  }
+  const access = <T>(fn: () => T | Promise<T>): Promise<T> =>
+    context.getStore()?.active ? Promise.resolve().then(fn) : locked(fn)
 
   const raw = (sql: string, params?: unknown[]) => {
     const stmt = database.prepare(sql)
@@ -238,53 +235,46 @@ async function createSqlite(file: string): Promise<Db> {
   const db: Db = {
     kind: 'sqlite',
     async all<T>(sql: string, params?: unknown[]) {
-      return raw(sql, params) as T[]
+      return access(() => raw(sql, params) as T[])
     },
     async get<T>(sql: string, params?: unknown[]) {
-      const rows = raw(sql, params) as T[]
+      const rows = await access(() => raw(sql, params) as T[])
       return rows?.[0] ?? null
     },
     async run(sql: string, params?: unknown[]) {
-      const res = raw(sql, params) as { changes: number | bigint; lastInsertRowid: number | bigint }
+      const res = await access(() => raw(sql, params)) as { changes: number | bigint; lastInsertRowid: number | bigint }
       return { affectedRows: Number(res.changes ?? 0), insertId: Number(res.lastInsertRowid ?? 0) }
     },
     async exec(sql) {
-      database.exec(sql)
+      await access(() => database.exec(sql))
     },
     async tx(fn) {
-      const inTx = (database as any).__inTx === true
-      if (inTx) return fn(db) // sqlite 单连接，嵌套事务直接透传
-      // P1-19：SQLite 是单连接，BEGIN IMMEDIATE 之后 fn 里有 await，期间其它 HTTP 请求的
-      // 语句会落进这个事务并随它一起回滚。这里用进程内互斥把事务**串行化**：
-      // 拿到锁之后其它请求的 tx() 会排队（而不是看到 __inTx=true 直接透传进来），
-      // 从而避免「别人的写操作混进我的事务」。
-      return sqliteTxLock.run(async () => {
+      if (context.getStore()?.active) return fn(db)
+      return locked(async () => {
         database.exec('BEGIN IMMEDIATE')
-        ;(database as any).__inTx = true
+        const owner = { active: true }
         try {
-          const r = await fn(db)
+          const result = await context.run(owner, () => fn(db))
           database.exec('COMMIT')
-          return r
+          return result
         } catch (e) {
-          try {
-            database.exec('ROLLBACK')
-          } catch {}
+          try { database.exec('ROLLBACK') } catch {}
           throw e
         } finally {
-          ;(database as any).__inTx = false
+          owner.active = false
         }
       })
     },
     async tableExists(name) {
-      const rows = raw("SELECT name FROM sqlite_master WHERE type='table' AND name = ?", [name]) as Row[]
+      const rows = await access(() => raw("SELECT name FROM sqlite_master WHERE type='table' AND name = ?", [name]) as Row[])
       return rows.length > 0
     },
     async indexExists(name) {
-      const rows = raw("SELECT name FROM sqlite_master WHERE type='index' AND name = ?", [name]) as Row[]
+      const rows = await access(() => raw("SELECT name FROM sqlite_master WHERE type='index' AND name = ?", [name]) as Row[])
       return rows.length > 0
     },
     async close() {
-      database.close()
+      await access(() => database.close())
     },
   }
   return db
@@ -398,3 +388,4 @@ export async function insertIgnore(db: Db, table: string, row: Record<string, un
 export function placeholders(n: number): string {
   return Array.from({ length: n }, () => '?').join(', ')
 }
+

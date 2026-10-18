@@ -33,7 +33,10 @@ export interface CreateDraftsResult {
  *  - topic 状态 → sent。
  */
 export async function createDraftsFromTopics(args: CreateDraftsArgs): Promise<CreateDraftsResult> {
-  const db = args.db ?? getDb()
+  if (!args.db) {
+    return getDb().tx((db) => createDraftsFromTopics({ ...args, db }))
+  }
+  const db = args.db
   const topics = await getTopicsByIds(args.topicIds, db)
   if (!topics.length) throw err.notFound('未找到任何选题')
 
@@ -186,3 +189,4 @@ export async function countCopiesByTopic(topicIds: string[]): Promise<Record<str
   for (const r of rows) out[r.topic_id] = Number(r.c)
   return out
 }
+

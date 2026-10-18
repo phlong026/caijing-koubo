@@ -4,7 +4,6 @@ import { getNewsByIds } from '../news/repo.js'
 import { getPersonasByIds, type Persona } from '../personas/repo.js'
 import {
   addBatchCost,
-  bumpBatchProduced,
   createBatch,
   createTopic,
   finishBatch,
@@ -167,9 +166,9 @@ export async function runGeneration(batchId: string): Promise<void> {
   const batch = await getBatch(batchId)
   if (!batch) throw err.notFound('批次不存在')
   // P1-5：BullMQ 的 stalled 重跑 / attempts 重试会从头再跑一遍，已经成功的子任务会重复产出。
-  // 批次已是终态时直接返回，避免重复累加 produced 与重复写入候选。
-  if (batch.status !== 'running') {
-    logger.info({ batchId, status: batch.status }, 'topic.batch_skip_not_running')
+  // 已完成批次直接返回；失败批次允许队列重试，按落库记录补齐。
+  if (batch.status === 'done') {
+    logger.info({ batchId, status: batch.status }, 'topic.batch_skip_done')
     return
   }
   const newsList = await getNewsByIds(batch.newsIds)
@@ -183,23 +182,23 @@ export async function runGeneration(batchId: string): Promise<void> {
     return
   }
 
-  // P1-5：已产出过的 (news_id, persona_id) 组合，重跑时跳过——已写入的候选不重复生成
-  const donePairs = new Set(
-    (
-      await getDb().all<{ source_id: string; persona_ids: string }>(
-        'SELECT `source_id`, `persona_ids` FROM `topic` WHERE `batch_id` = ?',
-        [batchId],
-      )
-    ).map((r) => pairKey(r.source_id, r.persona_ids)),
+  const db = getDb()
+  // Rows are the durable checkpoint, including writes made before a worker crash.
+  const existing = await db.all<{ source_id: string; persona_ids: string; title: string }>(
+    'SELECT `source_id`, `persona_ids`, `title` FROM `topic` WHERE `batch_id` = ?', [batchId],
   )
+  const pairRows = (rows: typeof existing, newsId: string, personaId: string) =>
+    rows.filter((r) => pairKey(r.source_id, r.persona_ids) === pairKey(newsId, JSON.stringify([personaId])))
+  await db.run("UPDATE `topic_generation_batch` SET `status` = 'running', `finished_at` = NULL WHERE `id` = ?", [batchId])
 
   const errors: string[] = []
-  let produced = 0
   let cost = 0
 
   for (const news of newsList) {
     for (const persona of personaList) {
-      if (donePairs.has(pairKey(news.id, JSON.stringify([persona.id])))) {
+      const previous = pairRows(existing, news.id, persona.id)
+      const remaining = Math.max(0, batch.countPer - previous.length)
+      if (!remaining) {
         logger.info({ batchId, newsId: news.id, personaId: persona.id }, 'topic.subtask_skipped_done')
         continue
       }
@@ -211,7 +210,8 @@ export async function runGeneration(batchId: string): Promise<void> {
           personaBlock(persona),
           complianceBlock(persona),
           buildNewsBlock([news]),
-          `【输出要求】请生成 ${batch.countPer} 条互不重复的选题，JSON 结构：\n{"topics":[{"title":"","direction":"","hook":"","rationale":""}]}`,
+          `已存在选题（不要重复）：${previous.map((r) => r.title).join("；")}`,
+          `【输出要求】请生成 ${remaining} 条互不重复的选题，JSON 结构：\n{"topics":[{"title":"","direction":"","hook":"","rationale":""}]}`,
         ].join('\n\n')
         const messages: ChatMessage[] = [
           {
@@ -238,26 +238,34 @@ export async function runGeneration(batchId: string): Promise<void> {
         cost += llm.cost
         const parsed = parseLlmTopics(llm.content)
 
-        let n = 0
-        for (const t of parsed.slice(0, batch.countPer)) {
-          await createTopic({
-            source: 'news',
-            sourceId: news.id,
-            title: t.title,
-            direction: t.direction,
-            hook: t.hook,
-            rationale: t.rationale,
-            personaIds: [persona.id],
-            status: 'candidate',
-            batchId,
-            createdBy: batch.createdBy,
-          })
-          n++
-        }
-        produced += n
-        await bumpBatchProduced(batchId, n)
-        // 子任务成功后记入已产出集合，本批内不再重复生成
-        donePairs.add(pairKey(news.id, JSON.stringify([persona.id])))
+        // Lock the batch on MySQL; SQLite serializes this transaction locally.
+        // Recount under the lock so overlapping stalled workers cannot overfill a pair.
+        await db.tx(async (tx) => {
+          await tx.get('SELECT `id` FROM `topic_generation_batch` WHERE `id` = ?' +
+            (tx.kind === 'mysql' ? ' FOR UPDATE' : ''), [batchId])
+          const rows = await tx.all<{ source_id: string; persona_ids: string; title: string }>(
+            'SELECT `source_id`, `persona_ids`, `title` FROM `topic` WHERE `batch_id` = ?', [batchId],
+          )
+          const current = pairRows(rows, news.id, persona.id)
+          const titles = new Set(current.map((r) => r.title.trim()))
+          let needed = Math.max(0, batch.countPer - current.length)
+          for (const t of parsed) {
+            if (!needed) break
+            if (titles.has(t.title.trim())) continue
+            await createTopic({
+              source: 'news', sourceId: news.id, title: t.title,
+              direction: t.direction, hook: t.hook, rationale: t.rationale,
+              personaIds: [persona.id], status: 'candidate', batchId,
+              createdBy: batch.createdBy,
+            }, tx)
+            titles.add(t.title.trim())
+            needed--
+          }
+          await tx.run(
+            'UPDATE `topic_generation_batch` SET `produced` = (SELECT COUNT(*) FROM `topic` WHERE `batch_id` = ?) WHERE `id` = ?',
+            [batchId, batchId],
+          )
+        })
       } catch (e) {
         const msg = (e as Error).message
         errors.push(`[${news.id} × ${persona.id}] ${msg}`)
@@ -267,8 +275,18 @@ export async function runGeneration(batchId: string): Promise<void> {
   }
 
   if (cost) await addBatchCost(batchId, cost)
-  await finishBatch(batchId, produced > 0 ? 'done' : 'failed', errors.length ? errors.join(' | ') : null)
+  const finalRows = await db.all<{ source_id: string; persona_ids: string; title: string }>(
+    'SELECT `source_id`, `persona_ids`, `title` FROM `topic` WHERE `batch_id` = ?', [batchId],
+  )
+  const produced = finalRows.length
+  await db.run('UPDATE `topic_generation_batch` SET `produced` = ? WHERE `id` = ?', [produced, batchId])
+  const complete = newsList.length === batch.newsIds.length && personaList.length === batch.personaIds.length && newsList.every((n) => personaList.every((p) =>
+    pairRows(finalRows, n.id, p.id).length >= batch.countPer))
+  const message = errors.join(' | ') || (complete ? null : '选题生成数量不足，可重试补齐')
+  await finishBatch(batchId, complete ? 'done' : 'failed', message)
   logger.info({ batchId, produced, errors: errors.length }, 'topic.batch_finished')
+  // Let BullMQ retry incomplete pairs; persisted successful rows remain available.
+  if (!complete) throw new Error(message ?? '选题生成未完成')
 }
 
 /** 子任务幂等键：news_id + persona_ids（与 topic 表存储形式一致） */
@@ -282,3 +300,4 @@ function pairKey(newsId: string, personaIdsJson: string): string {
   }
   return `${newsId}::${ids.join(',')}`
 }
+
