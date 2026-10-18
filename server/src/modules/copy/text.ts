@@ -362,7 +362,7 @@ function claimsToWords(raw: string): string[] {
   // 3) 规则句去前缀后的核心短语
   const core = src
     .replace(/\{|\}/g, '')
-    .replace(/^(不得|严禁|禁止|避免|勿|不要)/, '')
+    .replace(/^(不得|不要|严禁|禁止|避免|勿|不)/, '')
     .replace(/^(使用|给出|出现|包含|含有|采用|做|进行)/, '')
     .replace(/[（(][^）)]*[）)]/g, '')
     .replace(/[「『"“《][^」』"”》]*[」』"”》]/g, '')
@@ -433,3 +433,4 @@ export function scanCompliance(
 export function hardHitCount(hits: ComplianceHit[]): number {
   return hits.filter((h) => h.level === 'hard').length
 }
+

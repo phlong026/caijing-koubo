@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import { startHeartbeat } from './heartbeat.js'
 import { Redis } from 'ioredis'
 import { Queue, QueueEvents, Worker, type Job, type JobsOptions, type WorkerOptions } from 'bullmq'
 import { config } from '../config.js'
@@ -26,6 +28,9 @@ export const QUEUE_NAMES = {
 } as const
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES]
+
+const instanceId = `${process.pid}-${randomUUID()}`
+let stopHeartbeat: (() => Promise<void>) | undefined
 
 const queueMap = new Map<string, Queue>()
 const workerMap = new Map<string, Worker>()
@@ -215,6 +220,8 @@ export async function queueStats(): Promise<Record<string, Record<string, number
 }
 
 export async function closeQueues(): Promise<void> {
+  await stopHeartbeat?.()
+  stopHeartbeat = undefined
   for (const w of workerMap.values()) await w.close().catch(() => {})
   for (const q of queueMap.values()) await q.close().catch(() => {})
   workerMap.clear()
@@ -236,7 +243,12 @@ export async function warnIfQueuePrefixShared(): Promise<void> {
     config.db.driver === 'mysql'
       ? `mysql:${config.db.host}:${config.db.port}/${config.db.database}`
       : `sqlite:${config.db.sqlitePath}`
-  const key = `${config.queuePrefix}:instance:${process.pid}`
+  const key = `${config.queuePrefix}:instance:${instanceId}`
+  if (!stopHeartbeat) {
+    stopHeartbeat = startHeartbeat(redis, key, dbTag, (e) => {
+      logger.debug({ err: String(e) }, 'queue.instance_heartbeat_failed')
+    })
+  }
   try {
     // 列出同前缀下的其他实例心跳
     const keys = await redis.keys(`${config.queuePrefix}:instance:*`)
@@ -253,14 +265,8 @@ export async function warnIfQueuePrefixShared(): Promise<void> {
           'job 可能被错误实例消费导致状态长期 pending。请为每个实例设置不同的 QUEUE_PREFIX（或 REDIS_DB）。',
       )
     }
-    // 登记心跳（带 TTL，30 分钟后自动过期；异常退出留下的陈旧条目会自行消失）
-    await redis.set(key, dbTag, 'EX', 1800)
-    const clear = () => void redis.del(key).catch(() => {})
-    // P2-11：shutdown 走 process.exit(0)，beforeExit 不会触发，必须显式监听 SIGINT/SIGTERM
-    process.once('SIGINT', clear)
-    process.once('SIGTERM', clear)
-    process.once('beforeExit', clear)
   } catch (e) {
     logger.debug({ err: (e as Error).message }, 'queue.instance_check_skipped')
   }
 }
+
