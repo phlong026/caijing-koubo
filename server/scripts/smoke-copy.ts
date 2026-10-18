@@ -458,6 +458,63 @@ if (!genOnly) {
   }
 }
 
+/* ──────────────────── 6b. 并发建稿与人物校验回归 ──────────────────── */
+
+if (!genOnly) {
+  console.log('\n[6b] 批内并发建稿 / 人物校验')
+
+  // 批内并发生成多份：稿号取号与插入必须在同一临界区，否则撞 UNIQUE(copy_id, draft_no)
+  const multi = await createManual(kosId, uniq('并发建稿'), '用于验证批内并发生成多份稿时稿号不冲突。')
+  if (multi) {
+    const g = await req(
+      'POST',
+      `/copy/${multi.copyId}/generate`,
+      { templateId: 'ctpl_education', styleId: 'csty_kos_edu', durationTier: 'short', count: 3 },
+      { 'Idempotency-Key': `smoke-multi-${stamp}` },
+    )
+    const done = g.data?.generationId ? await waitGen(g.data.generationId) : null
+    check('一次生成 3 份全部成功', done?.status === 'done' && done?.succeeded === 3, {
+      status: done?.status,
+      succeeded: done?.succeeded,
+      errors: done?.errors ?? done?.error,
+    })
+    const drafts: any[] = (await req('GET', `/copy/${multi.copyId}`)).data?.drafts ?? []
+    const nos = drafts.map((d) => d.draftNo)
+    check('稿号互不重复', new Set(nos).size === nos.length && nos.length === 4, nos)
+
+    // 审核桩接口守卫：非法关卡名被拒；已裁决的审核单不再接受进度回写
+    const aiDraft = done?.drafts?.[0]
+    const cur = aiDraft ? await req('GET', `/copy/${multi.copyId}/drafts/${aiDraft.id}`) : null
+    const sub = aiDraft
+      ? await req('POST', `/copy/${multi.copyId}/submit`, { draftId: aiDraft.id, rev: cur?.data?.draft?.rev ?? cur?.data?.rev })
+      : null
+    const subId = sub?.data?.submissionId
+    if (subId) {
+      let st = ''
+      for (let i = 0; i < 40 && st !== 'pending_manual'; i++) {
+        await sleep(250)
+        st = (await req('GET', `/review/submissions/${subId}`)).data?.status
+      }
+      const bogus = await req('POST', `/review/submissions/${subId}/progress`, { gate: 'approved', result: 'pass' })
+      check('进度回写拒绝非关卡状态', bogus.status === 400, { status: bogus.status, code: bogus.error?.code })
+      const dec = await req('POST', `/review/submissions/${subId}/decision`, { result: 'approved' })
+      const late = await req('POST', `/review/submissions/${subId}/progress`, { gate: 'gate2', result: 'pass' })
+      check('已裁决的审核单不再接受进度回写', !!dec.ok && late.status === 409, { decision: dec.status, late: late.status })
+    } else {
+      check('提交审核成功', false, sub?.error)
+    }
+  }
+
+  // 分配人物：不存在的人物 id 被拒绝，不写入悬空 persona_id
+  const cand = (await req('GET', '/topics?status=candidate&pageSize=1')).data?.items?.[0]
+  if (cand) {
+    const bad = await req('PATCH', `/topics/${cand.id}`, { personaIds: ['ps_not_exist'] })
+    check('分配不存在的人物返回 400', bad.status === 400, { status: bad.status, code: bad.error?.code })
+  } else {
+    console.log('  ⏭  库内没有 candidate 选题（先跑一次 npm run smoke），跳过分配校验')
+  }
+}
+
 /* ──────────────────── 7. AC-G5 防注入用例集 ──────────────────── */
 
 console.log('\n[7] AC-G5 防注入用例集')

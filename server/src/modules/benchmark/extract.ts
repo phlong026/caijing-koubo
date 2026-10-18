@@ -6,6 +6,7 @@ import { err } from '../../errors.js'
 import { logger } from '../../log.js'
 import { QUEUE_NAMES, dedupOpts, enqueue, registerWorker } from '../../queue/index.js'
 import { fetchVideoDetail } from '../../integrations/tikhub/client.js'
+import type { TikVideoDetail } from '../../integrations/tikhub/types.js'
 import { submitTask, waitForResult, type AsrSentence } from '../../integrations/dashscope/asr.js'
 import { putObjectFromFile, signedUrl } from '../../integrations/aliyun-oss/client.js'
 import { checkFfmpeg, cleanup, downloadToTemp, extractAudio } from '../../media/pipeline.js'
@@ -105,9 +106,18 @@ export async function getScriptByVideo(videoInternalId: string): Promise<{
  * - failed 条件更新为 pending 后入队（重试）
  * - uncertain 须界面确认（confirm=1）后才改回 pending 入队
  */
+/**
+ * 调用方刚取到的视频详情（P2-6）：直接提取时 parse-link 已调过一次 TikHub 详情，
+ * 随任务带上，提取时在有效期内直接复用，省掉一次重复计费的详情调用。
+ */
+export type PrefetchedDetail = Pick<TikVideoDetail, 'playUrl' | 'duration'> & { fetchedAt: number }
+
+/** 播放地址有时效，超过这个时间的预取详情不再复用，回到「提取时现取」（T6 验收 2） */
+const PREFETCH_TTL_MS = 10 * 60 * 1000
+
 export async function requestExtract(
   videoInternalId: string,
-  opts: { confirm?: boolean } = {},
+  opts: { confirm?: boolean; prefetched?: PrefetchedDetail } = {},
 ): Promise<{ status: string; cacheId: string; message?: string }> {
   const db = getDb()
   const video = await getVideoById(videoInternalId)
@@ -125,7 +135,7 @@ export async function requestExtract(
         existing.id,
       ])
       if (!res.affectedRows) return { status: 'failed', cacheId: existing.id }
-      await enqueueExtract(existing.id)
+      await enqueueExtract(existing.id, opts.prefetched)
       return { status: 'pending', cacheId: existing.id }
     }
     if (existing.status === 'uncertain') {
@@ -141,7 +151,7 @@ export async function requestExtract(
         [toDb(utcNow()), existing.id],
       )
       if (!res.affectedRows) return { status: existing.status, cacheId: existing.id }
-      await enqueueExtract(existing.id)
+      await enqueueExtract(existing.id, opts.prefetched)
       return { status: 'pending', cacheId: existing.id }
     }
   }
@@ -151,18 +161,18 @@ export async function requestExtract(
     'INSERT INTO `script_extract_cache` (`id`, `platform`, `video_id`, `status`, `attempts`, `created_at`, `updated_at`) VALUES (?, ?, ?, \'pending\', 0, ?, ?)',
     [id, video.platform, video.videoId, toDb(utcNow()), toDb(utcNow())],
   )
-  await enqueueExtract(id)
+  await enqueueExtract(id, opts.prefetched)
   return { status: 'pending', cacheId: id }
 }
 
-export async function enqueueExtract(cacheId: string): Promise<void> {
+export async function enqueueExtract(cacheId: string, prefetched?: PrefetchedDetail): Promise<void> {
   // P0-2：不能用固定 jobId。runExtract 内部吞掉异常并写 failed，BullMQ 视为「已完成」，
   // 固定 jobId 会被已完成任务永久占位，用户点「重试」后任务永远停在「排队中」。
   // deduplication 只在任务未结束时去重，任务落地即释放。
   await enqueue(
     QUEUE_NAMES.scriptExtract,
     'extract',
-    { cacheId },
+    prefetched ? { cacheId, prefetched } : { cacheId },
     { ...dedupOpts(`extract-${cacheId}`), attempts: 2, backoff: { type: 'exponential', delay: 5000 } },
   )
 }
@@ -171,8 +181,9 @@ export async function registerExtractWorker(): Promise<void> {
   registerWorker(
     QUEUE_NAMES.scriptExtract,
     async (job) => {
-      const { cacheId } = job.data as { cacheId: string }
-      await runExtract(cacheId)
+      const { cacheId, prefetched } = job.data as { cacheId: string; prefetched?: PrefetchedDetail }
+      // 预取详情只给首次执行用；BullMQ 重试时地址可能已失效，回到现取
+      await runExtract(cacheId, job.attemptsMade === 0 ? prefetched : undefined)
       return { cacheId }
     },
     { concurrency: 2 },
@@ -200,7 +211,7 @@ function setStatus(db: Db, id: string, status: string, extra: Record<string, unk
 }
 
 /** FR-B6 链路：取新鲜地址 → 时长校验 → 下载 → ffmpeg 抽音轨 → OSS → 签名 URL → 百炼 → 轮询 → 落库 → 清理 */
-export async function runExtract(cacheId: string): Promise<void> {
+export async function runExtract(cacheId: string, prefetched?: PrefetchedDetail): Promise<void> {
   const db = getDb()
   const cache = await getCacheById(cacheId)
   if (!cache) throw new Error('提取任务不存在')
@@ -221,7 +232,9 @@ export async function runExtract(cacheId: string): Promise<void> {
 
     // P1-3②：submitting 必须紧挨着 submitTask 之前才置；此前（下载/ffmpeg/OSS）
     // 失败都属于可安全重试的 failed，不应被误判为 uncertain 而要求人工确认。
-    const detail = await fetchVideoDetail(cache.videoId)
+    const reuse = !!prefetched?.playUrl && Date.now() - prefetched.fetchedAt < PREFETCH_TTL_MS
+    const detail = reuse ? prefetched! : await fetchVideoDetail(cache.videoId)
+    if (reuse) logger.info({ cacheId }, 'extract.reuse_prefetched_detail')
     if (!detail.playUrl) {
       await setStatus(db, cacheId, 'failed', { error: '未取到播放地址' })
       return

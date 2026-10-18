@@ -43,8 +43,9 @@ import {
   saveDraftVersion,
   switchCurrentDraft,
 } from './service.js'
-import { acceptGeneration, acceptVariant, applyVariant } from './generation.js'
+import { acceptGeneration, acceptVariant, applyVariant, assembleForCopy, validateDuration } from './generation.js'
 import {
+  assertReviewStubEnabled,
   getApprovedCopy,
   getSubmissionProgress,
   onReviewProgress,
@@ -57,7 +58,6 @@ import { getVersion, listVersions, getSubmission, getGeneration, listVariantsByG
 import { parseArticleBuffer, parsePastedText, saveArticle, validateFileMeta, writeTempFile } from './article.js'
 import { getArticle } from './repo.js'
 import { scanCompliance } from './text.js'
-import { assemblePrompt } from './prompt.js'
 import { getPersonaById } from './persona-bridge.js'
 import { toDb, utcNow } from '../../lib/time.js'
 import { newId } from '../../lib/util.js'
@@ -967,7 +967,12 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
 
   /** 审核桩裁决（审核模块就绪后下线） */
   app.post('/review/submissions/:id/decision', async (req) => {
+    // 桩关闭（生产默认）时拒绝；开启时也只允许裁决桩审核单，真实审核单由审核模块回写
+    assertReviewStubEnabled()
     const { id } = req.params as { id: string }
+    const stubSub = await getSubmission(id)
+    if (!stubSub) throw err.notFound('审核单不存在')
+    if (!stubSub.isStub) throw err.forbidden('该审核单由真实审核模块处理，不能用审核桩裁决')
     const body = (req.body ?? {}) as {
       result?: string
       reason?: string
@@ -989,7 +994,9 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
     )
   })
 
+  /** 关卡推进联调接口（桩专用）；真实审核模块走服务调用 onReviewProgress */
   app.post('/review/submissions/:id/progress', async (req) => {
+    assertReviewStubEnabled()
     const { id } = req.params as { id: string }
     const body = (req.body ?? {}) as { gate?: string; result?: string }
     if (!body.gate) throw err.badRequest('gate 必填')
@@ -1025,29 +1032,14 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
     const style = body.styleId ? await getStyle(body.styleId) : null
     const persona = copy.personaId ? await getPersonaById(copy.personaId, true) : null
     if (!template || !style || !persona) throw err.badRequest('模板 / 风格 / 人物不完整')
-    const ip = persona.ipProfile as unknown as Record<string, unknown>
-    const a = assemblePrompt({
-      mode: copy.source as never,
-      persona: {
-        name: persona.name,
-        line: persona.line,
-        role: String(ip.role ?? ''),
-        serviceScope: String(ip.serviceScope ?? ''),
-        targetAudience: String(ip.targetAudience ?? ''),
-        expressionStyle: String(ip.expressionStyle ?? ''),
-        forbiddenClaims: (ip.forbiddenClaims as string[]) ?? [],
-        audienceNeeds: ip.audienceNeeds as string | undefined,
-        factualBackground: ip.factualBackground as string | undefined,
-        sampleScript: ip.sampleScript as string | undefined,
-      },
-      template: { name: template.name, prompt: template.prompt, structureHint: template.structureHint },
-      style: { name: style.name, prompt: style.prompt },
-      durationTier: body.durationTier ?? 'medium',
-      durationSeconds: body.durationSeconds ?? null,
-      instructions: body.instructions ?? null,
-      source: { mode: copy.source as never, sourceText: copy.sourceText ?? '' },
+    // 与真实生成同一套组装（含资讯 / 对标 / 文章大纲等完整来源块），预览即实际发给模型的提示词
+    const durationTier = body.durationTier ?? 'medium'
+    const a = await assembleForCopy(copy, persona, template, style, {
+      durationTier,
+      durationSeconds: validateDuration(durationTier, body.durationSeconds),
+      instructions: body.instructions ? String(body.instructions).trim().slice(0, config.copy.maxInstructions) : null,
     })
-    return ok({ system: a.system, user: a.user, promptHash: a.promptHash, wordRange: a.wordRange })
+    return ok({ system: a.system, user: a.user, prompt: a.promptText, promptHash: a.promptHash, wordRange: a.wordRange })
   })
 
   void withReply

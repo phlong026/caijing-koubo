@@ -222,8 +222,18 @@
             </div>
             <div class="mw-subtle mt-0.5">勾选后分配人物，再送入文案工坊。</div>
 
+            <!-- P2-21：状态筛选 + 本批筛选 -->
+            <div class="mt-3 flex items-center gap-2 flex-wrap">
+              <a-radio-group :model-value="topics.filter" type="button" size="mini" @change="(v) => topics.setFilter(v as CandidateFilter)">
+                <a-radio value="pending">全部待送</a-radio>
+                <a-radio value="candidate">待分配</a-radio>
+                <a-radio value="assigned">已分配</a-radio>
+              </a-radio-group>
+              <a-tag v-if="topics.batchFilter" size="small" closable @close="topics.clearBatchFilter()">仅本批</a-tag>
+            </div>
+
             <a-spin :loading="topics.loading" class="w-full">
-              <div class="mt-3 flex flex-col gap-3">
+              <div class="mt-3 flex flex-col gap-3 max-h-[calc(100vh-420px)] min-h-[200px] overflow-y-auto pr-1">
                 <label
                   v-for="c in topics.items"
                   :key="c.id"
@@ -265,13 +275,32 @@
                       <div v-if="!currentPersonas(c).length" class="mt-1 text-[12px] text-[var(--mw-text3)]">
                         未分配人物，不能直接送入
                       </div>
+                      <div v-else-if="c.status === 'candidate'" class="mt-1 text-[12px] text-[var(--mw-text3)]">
+                        已预填生成时的目标人物，送入时按此分配
+                      </div>
                     </div>
+                    <!-- FR-N5：归档（不需要的候选移出候选栏） -->
+                    <a-popconfirm content="归档后不再出现在候选栏，确认归档？" @ok="() => onArchive(c.id)">
+                      <a-button size="mini" type="text" title="归档" @click.stop.prevent>
+                        <template #icon><icon-delete /></template>
+                      </a-button>
+                    </a-popconfirm>
                   </div>
                 </label>
 
                 <a-empty v-if="!topics.loading && !topics.items.length" description="还没有候选选题" />
               </div>
             </a-spin>
+            <div v-if="topics.total > topics.pageSize" class="mt-3 flex justify-center">
+              <a-pagination
+                :current="topics.page"
+                :page-size="topics.pageSize"
+                :total="topics.total"
+                size="mini"
+                simple
+                @change="(p: number) => topics.setPage(p)"
+              />
+            </div>
 
             <div class="mt-4 pt-3 border-t border-[var(--mw-border)] flex items-center gap-3">
               <div class="text-[13px]">
@@ -746,7 +775,7 @@ import { getNewsDetail, type NewsItem } from '@/api/news'
 import type { Account, AccountPreview, BenchVideo, ExtractStatus, VideoScript } from '@/api/benchmark'
 import type { TopicTemplate } from '@/api/topics'
 import { CAT_CLASS, useNewsStore } from '@/stores/news'
-import { useTopicStore } from '@/stores/topics'
+import { useTopicStore, type CandidateFilter } from '@/stores/topics'
 import { usePersonaStore } from '@/stores/personas'
 import { EXTRACTING, EXTRACT_LABEL, EXTRACT_TAG, useBenchmarkStore } from '@/stores/benchmark'
 
@@ -881,6 +910,15 @@ function openOrigin(url: string | null): void {
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 
+async function onArchive(id: string) {
+  try {
+    await topics.archive(id)
+    Message.success('已归档')
+  } catch (e) {
+    Message.error(errOf(e))
+  }
+}
+
 /* ── 提示词模板 ─────────────────────────── */
 const tplModal = reactive({
   visible: false,
@@ -922,7 +960,7 @@ async function onSaveTemplate() {
 const accModal = reactive({
   visible: false,
   url: '',
-  intervalHours: 2,
+  intervalHours: 24,
   previewing: false,
   submitting: false,
   previewed: null as AccountPreview | null,
@@ -945,7 +983,7 @@ function openAddAccount() {
 function resetAccModal() {
   accModal.visible = false
   accModal.url = ''
-  accModal.intervalHours = 2
+  accModal.intervalHours = 24
   accModal.previewed = null
 }
 
@@ -976,8 +1014,9 @@ async function onAddAccount() {
   }
 }
 
+/** 以后端 abnormalAt（连续 3 个周期失败才置）为准；偶发一次失败只显示原因，不标异常 */
 function isAbnormal(a: Account) {
-  return a.monitorStatus === 'on' && (a.consecutiveFailures > 0 || !!a.lastError)
+  return a.monitorStatus === 'on' && !!a.abnormalAt
 }
 
 const quotaTip = computed(() => {
@@ -1186,6 +1225,10 @@ onMounted(() => {
   void news.load()
   void topics.load()
   void topics.loadTemplates()
+  // P2-22：刷新页面前有未结束的生成批次时继续轮询，结束后展示该批结果
+  void topics.resumeBatch().then((b) => {
+    if (b?.status === 'done') Message.success(`上次的生成批次已完成，共 ${b.produced} 条候选`)
+  })
   void bench.loadAccounts()
   void bench.loadQuota()
   void bench.loadVideos()

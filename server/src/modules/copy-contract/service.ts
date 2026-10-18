@@ -2,8 +2,9 @@ import { getDb, type Db } from '../../db/index.js'
 import { newId, jdec } from '../../lib/util.js'
 import { toDb, utcNow } from '../../lib/time.js'
 import { err } from '../../errors.js'
-import { assertPersonasUsable, getTopicsByIds, markSent, type TopicRow } from '../topics/repo.js'
+import { getTopicsByIds, markSent, type TopicRow } from '../topics/repo.js'
 import { logger } from '../../log.js'
+import { assertPersonasUsable } from '../personas/repo.js'
 
 export interface CreateDraftsArgs {
   topicIds: string[]

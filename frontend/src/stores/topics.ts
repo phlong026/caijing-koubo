@@ -16,11 +16,41 @@ import {
   type TopicQuery,
 } from '@/api/topics'
 
+/** 候选栏筛选：pending = 尚未送入（待分配 + 已分配） */
+export type CandidateFilter = 'pending' | 'candidate' | 'assigned'
+const FILTER_STATUS: Record<CandidateFilter, string> = {
+  pending: 'candidate,assigned',
+  candidate: 'candidate',
+  assigned: 'assigned',
+}
+
+/** 进行中的生成批次存 sessionStorage，刷新页面后可继续轮询（P2-22） */
+const BATCH_KEY = 'mw_topic_batch'
+function rememberBatch(id: string | null): void {
+  try {
+    if (id) sessionStorage.setItem(BATCH_KEY, id)
+    else sessionStorage.removeItem(BATCH_KEY)
+  } catch {
+    /* 隐私模式等不可用时忽略，仅失去刷新后续查能力 */
+  }
+}
+function recalledBatch(): string | null {
+  try {
+    return sessionStorage.getItem(BATCH_KEY)
+  } catch {
+    return null
+  }
+}
+
 export const useTopicStore = defineStore('topics', () => {
   const items = ref<Topic[]>([])
   const total = ref(0)
   const page = ref(1)
-  const pageSize = ref(50)
+  const pageSize = ref(20)
+  /** 候选栏筛选（P2-21） */
+  const filter = ref<CandidateFilter>('pending')
+  /** 只看某一批次（生成完成后自动指向该批，可取消） */
+  const batchFilter = ref<string | null>(null)
   const loading = ref(false)
   const error = ref<string | null>(null)
 
@@ -42,14 +72,21 @@ export const useTopicStore = defineStore('topics', () => {
   const assignedChecked = computed(() => checkedItems.value.filter((t) => (assignment.value[t.id] ?? t.personaIds).length > 0))
   const expectedCount = computed(() => batch.value?.expected ?? 0)
 
+  /**
+   * 候选列表。默认显示「尚未送入」的全部候选（待分配 + 已分配）：
+   * 之前只查 status=candidate，分配人物后一刷新候选就从列表消失，再也送不进文案工坊。
+   */
   async function load(query: TopicQuery = {}): Promise<void> {
     loading.value = true
     error.value = null
     try {
-      // 「候选」= 已生成但尚未送入文案工坊，含 candidate（未分配）与 assigned（已分配）两种状态。
-      // 早期实现只查 status:'candidate'，而生成时就已经把人物写进 personaIds 并置为 assigned，
-      // 结果候选栏恒为 0 条（选完人物后条目立刻从列表消失），用户以为选题没生成。
-      const res = await getTopics({ status: 'candidate,assigned', page: page.value, pageSize: pageSize.value, ...query })
+      const res = await getTopics({
+        status: FILTER_STATUS[filter.value],
+        batchId: batchFilter.value ?? undefined,
+        page: page.value,
+        pageSize: pageSize.value,
+        ...query,
+      })
       items.value = res.items
       total.value = res.total
       page.value = res.page
@@ -102,16 +139,46 @@ export const useTopicStore = defineStore('topics', () => {
     try {
       const { batchId: id } = await generateTopics(payload)
       batchId.value = id
+      rememberBatch(id)
       const final = await pollBatch(id)
-      checkedIds.value = []
-      await load({ batchId: id })
+      await showBatch(id)
       return final
     } finally {
       generating.value = false
     }
   }
 
-  function pollBatch(id: string, maxTimes = 80, intervalMs = 1500): Promise<TopicBatch> {
+  /** 生成结束后：清空勾选，筛到该批次第 1 页 */
+  async function showBatch(id: string): Promise<void> {
+    rememberBatch(null)
+    checkedIds.value = []
+    batchFilter.value = id
+    page.value = 1
+    await load()
+  }
+
+  /** 页面刷新后续查上次未结束的批次（P2-22）；返回结束后的批次，无可续查时返回 null */
+  async function resumeBatch(): Promise<TopicBatch | null> {
+    const id = batchId.value ?? recalledBatch()
+    if (!id || generating.value) return null
+    generating.value = true
+    try {
+      batchId.value = id
+      const b = await getTopicBatch(id)
+      batch.value = b
+      const final = b.status === 'running' ? await pollBatch(id) : b
+      await showBatch(id)
+      return final
+    } catch {
+      rememberBatch(null)
+      return null
+    } finally {
+      generating.value = false
+    }
+  }
+
+  /** 真实模型串行跑「资讯 × 人物」子任务可能要好几分钟，轮询窗口放宽到 10 分钟 */
+  function pollBatch(id: string, maxTimes = 400, intervalMs = 1500): Promise<TopicBatch> {
     return new Promise((resolve, reject) => {
       let n = 0
       const tick = async () => {
@@ -153,15 +220,43 @@ export const useTopicStore = defineStore('topics', () => {
 
   /** FR-C3：送入文案工坊。返回创建数与 copyIds，供页面直接跳到对应文案 */
   async function send(topicIds: string[]): Promise<{ created: number; copyIds: string[] }> {
+    // 生成的候选自带「生成时的目标人物」，界面上「分配给」已预填，但状态仍是 candidate，
+    // 后端会拒绝直接送入（FR-C1①）。用户看到的分配即确认的分配：送入前先按界面所示提交分配。
+    for (const id of topicIds) {
+      const t = items.value.find((x) => x.id === id)
+      const pids = assignment.value[id] ?? []
+      if (t?.status === 'candidate' && pids.length) await assign(id, pids)
+    }
     const res = await sendTopics(topicIds)
     await load()
     clearChecked()
     return res
   }
 
+  /** FR-N5：归档候选（不再出现在候选栏） */
   async function archive(id: string): Promise<void> {
     await patchTopic(id, { status: 'archived' })
+    checkedIds.value = checkedIds.value.filter((x) => x !== id)
+    // 当前页删空了就退一页
+    if (items.value.length === 1 && page.value > 1) page.value -= 1
     await load()
+  }
+
+  function setFilter(f: CandidateFilter): void {
+    filter.value = f
+    page.value = 1
+    void load()
+  }
+
+  function clearBatchFilter(): void {
+    batchFilter.value = null
+    page.value = 1
+    void load()
+  }
+
+  function setPage(p: number): void {
+    page.value = p
+    void load()
   }
 
   return {
@@ -169,6 +264,8 @@ export const useTopicStore = defineStore('topics', () => {
     total,
     page,
     pageSize,
+    filter,
+    batchFilter,
     loading,
     error,
     batchId,
@@ -192,5 +289,9 @@ export const useTopicStore = defineStore('topics', () => {
     clearChecked,
     send,
     archive,
+    setFilter,
+    clearBatchFilter,
+    setPage,
+    resumeBatch,
   }
 })

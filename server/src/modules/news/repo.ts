@@ -1,5 +1,5 @@
 import { getDb, insertIgnore } from '../../db/index.js'
-import { newId, parsePaging, pageResult, type PageResult } from '../../lib/util.js'
+import { likeContains, newId, parsePaging, pageResult, type PageResult } from '../../lib/util.js'
 import { toDb, utcNow, fromDb } from '../../lib/time.js'
 import { CATEGORIES, type Category } from './classify.js'
 import type { NewsDTO } from './providers.js'
@@ -75,8 +75,8 @@ export async function listNews(q: Record<string, unknown>): Promise<PageResult<N
     params.push(String(q.source))
   }
   if (q.keyword) {
-    const kw = `%${String(q.keyword)}%`
-    where.push('(`title` LIKE ? OR `summary` LIKE ?)')
+    const kw = likeContains(String(q.keyword))
+    where.push("(`title` LIKE ? ESCAPE '!' OR `summary` LIKE ? ESCAPE '!')")
     params.push(kw, kw)
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''

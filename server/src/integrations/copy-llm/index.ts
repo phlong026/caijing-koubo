@@ -484,6 +484,12 @@ function mockCopyChat(user: string): string {
     },
   ]
 
+  // article 模式要求每段带非递减的 sourceRefs（AC-G3），mock 也按大纲节点数给出，保证无密钥时回归可跑
+  if (/每段必须带 sourceRefs/.test(user)) {
+    const maxRef = Number(/节点序号\*\*（0 ~ (\d+)）/.exec(user)?.[1] ?? 0)
+    sections.forEach((s, i) => Object.assign(s, { sourceRefs: [Math.min(i, maxRef)] }))
+  }
+
   return JSON.stringify({ title: `${short}：把规则和边界先看清楚`.slice(0, 30), sections })
 }
 

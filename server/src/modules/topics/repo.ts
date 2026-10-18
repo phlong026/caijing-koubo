@@ -2,6 +2,7 @@ import { getDb, upsert } from '../../db/index.js'
 import { jdec, jenc, newId, parsePaging, pageResult, type PageResult } from '../../lib/util.js'
 import { fromDb, toDb, utcNow } from '../../lib/time.js'
 import { err } from '../../errors.js'
+import { assertPersonasUsable } from '../personas/repo.js'
 
 export type TopicSource = 'news' | 'benchmark' | 'manual' | 'article' | 'feedback'
 export type TopicStatus = 'candidate' | 'assigned' | 'sent' | 'archived'
@@ -93,20 +94,15 @@ export async function listTopics(q: Record<string, unknown>): Promise<PageResult
   const where: string[] = []
   const params: unknown[] = []
   if (q.status) {
-    // 支持 `status=candidate,assigned` 这种多状态查询。
-    // 前端候选栏的语义是「已生成、尚未送入」，天然跨 candidate 与 assigned 两态，
-    // 只支持单值会逼前端发两次请求再合并（分页也会错乱）。
-    const states = String(q.status)
+    // 支持逗号分隔多状态（如 candidate,assigned = 尚未送入的候选），只接受已知状态值
+    const known: TopicStatus[] = ['candidate', 'assigned', 'sent', 'archived']
+    const list = String(q.status)
       .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
-    if (states.length === 1) {
-      where.push('t.`status` = ?')
-      params.push(states[0])
-    } else if (states.length > 1) {
-      where.push(`t.\`status\` IN (${states.map(() => '?').join(', ')})`)
-      params.push(...states)
-    }
+      .map((x) => x.trim())
+      .filter((x): x is TopicStatus => (known as string[]).includes(x))
+    if (!list.length) throw err.badRequest('status 取值无效', { allowed: known })
+    where.push(`t.\`status\` IN (${list.map(() => '?').join(', ')})`)
+    params.push(...list)
   }
   if (q.source) {
     where.push('t.`source` = ?')
@@ -175,52 +171,26 @@ export async function setTopicStatus(id: string, next: TopicStatus, db = getDb()
   const t = await getTopic(id, db)
   if (!t) throw err.notFound('选题不存在')
   assertTransition(t.status, next, t.source)
-  await db.run('UPDATE `topic` SET `status` = ? WHERE `id` = ?', [next, id])
+  // 条件更新：读到的状态在写入前被并发送入 / 归档改掉时，不覆盖对方的结果
+  const r = await db.run('UPDATE `topic` SET `status` = ? WHERE `id` = ? AND `status` = ?', [next, id, t.status])
+  if (!r.affectedRows) throw err.invalidState('选题状态已变化，请刷新后重试', { topicId: id })
   const fresh = await getTopic(id, db)
   return fresh!
 }
 
 /** 分配人物：sent 后不可再改分配（FR-C1） */
-/**
- * 校验人物存在且启用（P1-4 补全 / 评审 P2-2）。
- *
- * 原始实现只检查 `personaIds.length`，不查 `persona` 表，于是：
- *   - `assignPersonas(['ps_does_not_exist'])` 返回 200；
- *   - 随后 `/topics/send` 会照此为不存在的人物建出一条 copy，
- *     `copy.persona_id` 成为悬空外键，文案工坊打开时人物档案为空。
- * 实测（本机 dev 库）可稳定复现，故在「分配」与「送入」两个入口统一拦截。
- */
-export async function assertPersonasUsable(personaIds: string[], db = getDb()): Promise<void> {
-  if (!personaIds.length) return
-  const uniq = [...new Set(personaIds)]
-  const ph = uniq.map(() => '?').join(', ')
-  const rows = await db.all<{ id: string; enabled: number | boolean }>(
-    `SELECT \`id\`, \`enabled\` FROM \`persona\` WHERE \`id\` IN (${ph})`,
-    uniq,
-  )
-  const found = new Map(rows.map((r) => [r.id, !!Number(r.enabled)]))
-  const missing = uniq.filter((id) => !found.has(id))
-  if (missing.length) {
-    throw err.badRequest(`人物不存在：${missing.join('、')}`, { personaIds: missing })
-  }
-  const disabled = uniq.filter((id) => found.get(id) === false)
-  if (disabled.length) {
-    throw err.badRequest(`人物已停用，请先启用后再使用：${disabled.join('、')}`, { personaIds: disabled })
-  }
-}
-
 export async function assignPersonas(id: string, personaIds: string[], db = getDb()): Promise<TopicRow> {
   const t = await getTopic(id, db)
   if (!t) throw err.notFound('选题不存在')
   if (t.status === 'sent') throw err.invalidState('选题已送入文案工坊，不可再改分配')
   if (t.status === 'archived') throw err.invalidState('已归档选题不可再改分配')
-  // 分配时即校验，避免把无效人物写进 topic.persona_ids 后才在送入阶段失败
   await assertPersonasUsable(personaIds, db)
-  await db.run('UPDATE `topic` SET `persona_ids` = ?, `status` = ? WHERE `id` = ?', [
-    jenc(personaIds),
-    personaIds.length ? 'assigned' : 'candidate',
-    id,
-  ])
+  // 条件更新：与「送入 / 归档」并发时，只有仍处于 candidate/assigned 才写入
+  const r = await db.run(
+    "UPDATE `topic` SET `persona_ids` = ?, `status` = ? WHERE `id` = ? AND `status` IN ('candidate', 'assigned')",
+    [jenc(personaIds), personaIds.length ? 'assigned' : 'candidate', id],
+  )
+  if (!r.affectedRows) throw err.invalidState('选题已送入或归档，不可再改分配', { topicId: id })
   return (await getTopic(id, db))!
 }
 

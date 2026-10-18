@@ -1,4 +1,4 @@
-import { getDb, isDuplicateKey, type Db } from '../../db/index.js'
+import { getDb, isDuplicateKey } from '../../db/index.js'
 import { config } from '../../config.js'
 import { err } from '../../errors.js'
 import { logger } from '../../log.js'
@@ -36,7 +36,7 @@ import {
   type Section,
 } from './constants.js'
 import { getPersonaById } from './persona-bridge.js'
-import { insertVersion, listComplianceWords } from './repo.js'
+import { insertVersion, listComplianceWords, storedPrompt } from './repo.js'
 
 /**
  * 文案引擎（W2 / FR-G1~G7）。
@@ -141,26 +141,10 @@ export async function acceptGeneration(args: GenerateArgs): Promise<GenerateAcce
 
   // 4) 组装提示词与快照
   const ip = persona.ipProfile
-  const assembled = assemblePrompt({
-    mode: copy.source as GenerationMode,
-    persona: {
-      name: persona.name,
-      line: persona.line,
-      role: ip.role,
-      serviceScope: ip.serviceScope,
-      targetAudience: ip.targetAudience,
-      expressionStyle: ip.expressionStyle,
-      forbiddenClaims: ip.forbiddenClaims,
-      audienceNeeds: (ip as unknown as Record<string, string | undefined>).audienceNeeds,
-      factualBackground: (ip as unknown as Record<string, string | undefined>).factualBackground,
-      sampleScript: (ip as unknown as Record<string, string | undefined>).sampleScript,
-    },
-    template: { name: template.name, prompt: template.prompt, structureHint: template.structureHint },
-    style: { name: style.name, prompt: style.prompt },
+  const assembled = await assembleForCopy(copy, persona, template, style, {
     durationTier: args.durationTier,
     durationSeconds,
     instructions,
-    source: await buildSourceBlock(copy),
   })
 
   const personaSnapshot = {
@@ -191,6 +175,7 @@ export async function acceptGeneration(args: GenerateArgs): Promise<GenerateAcce
         target_section: null,
         persona_snapshot: personaSnapshot,
         prompt_text: assembled.promptText,
+        prompt_system: assembled.system,
         prompt_hash: assembled.promptHash,
         model: currentModelLabel(),
         status: 'pending',
@@ -252,6 +237,45 @@ export async function acceptGeneration(args: GenerateArgs): Promise<GenerateAcce
   })
 
   return { generationId, status: 'pending' }
+}
+
+type PersonaRow = NonNullable<Awaited<ReturnType<typeof getPersonaById>>>
+type TemplateRow = NonNullable<Awaited<ReturnType<typeof getTemplate>>>
+type StyleRow = NonNullable<Awaited<ReturnType<typeof getStyle>>>
+
+/**
+ * 某条文案的整稿提示词组装（受理生成、老记录重拼、「查看提示词」预览共用）。
+ * 三处必须同源：预览若只拼 copy.sourceText，看到的就不是实际发给模型的提示词。
+ */
+export async function assembleForCopy(
+  copy: CopyRow,
+  persona: PersonaRow,
+  template: TemplateRow,
+  style: StyleRow,
+  opts: { durationTier: string; durationSeconds: number | null; instructions: string | null },
+): Promise<ReturnType<typeof assemblePrompt>> {
+  const ip = persona.ipProfile
+  return assemblePrompt({
+    mode: copy.source as GenerationMode,
+    persona: {
+      name: persona.name,
+      line: persona.line,
+      role: ip.role,
+      serviceScope: ip.serviceScope,
+      targetAudience: ip.targetAudience,
+      expressionStyle: ip.expressionStyle,
+      forbiddenClaims: ip.forbiddenClaims,
+      audienceNeeds: ip.audienceNeeds,
+      factualBackground: ip.factualBackground,
+      sampleScript: ip.sampleScript,
+    },
+    template: { name: template.name, prompt: template.prompt, structureHint: template.structureHint },
+    style: { name: style.name, prompt: style.prompt },
+    durationTier: opts.durationTier,
+    durationSeconds: opts.durationSeconds,
+    instructions: opts.instructions,
+    source: await buildSourceBlock(copy),
+  })
 }
 
 /** 按来源组装来源块（FR-G3 四种模式） */
@@ -332,10 +356,13 @@ export async function runGeneration(generationId: string): Promise<void> {
     return
   }
 
+  // P2-15：优先用受理时落库的提示词快照，保证「记录的提示词 = 实际发给模型的提示词」；
+  // 老记录没有 prompt_system 时才按当前人物 / 模板 / 风格重拼（并回写快照）
   const persona = copy.personaId ? await getPersonaById(copy.personaId, true) : null
-  const style = gen.styleId ? await getStyle(gen.styleId, db) : null
-  const template = gen.templateId ? await getTemplate(gen.templateId, db) : null
-  if (!persona || !style || !template) {
+  const stored = storedPrompt(gen)
+  const style = !stored && gen.styleId ? await getStyle(gen.styleId, db) : null
+  const template = !stored && gen.templateId ? await getTemplate(gen.templateId, db) : null
+  if (!persona || (!stored && (!style || !template))) {
     await updateGeneration(
       generationId,
       { status: 'failed', error: '人物、模板或风格已失效，请重新生成', finished_at: toDb(utcNow()) },
@@ -344,27 +371,14 @@ export async function runGeneration(generationId: string): Promise<void> {
     return
   }
 
-  const assembled = assemblePrompt({
-    mode: copy.source as GenerationMode,
-    persona: {
-      name: persona.name,
-      line: persona.line,
-      role: persona.ipProfile.role,
-      serviceScope: persona.ipProfile.serviceScope,
-      targetAudience: persona.ipProfile.targetAudience,
-      expressionStyle: persona.ipProfile.expressionStyle,
-      forbiddenClaims: persona.ipProfile.forbiddenClaims,
-      audienceNeeds: (persona.ipProfile as unknown as Record<string, string | undefined>).audienceNeeds,
-      factualBackground: (persona.ipProfile as unknown as Record<string, string | undefined>).factualBackground,
-      sampleScript: (persona.ipProfile as unknown as Record<string, string | undefined>).sampleScript,
-    },
-    template: { name: template.name, prompt: template.prompt, structureHint: template.structureHint },
-    style: { name: style.name, prompt: style.prompt },
-    durationTier: gen.durationTier,
-    durationSeconds: gen.durationSeconds,
-    instructions: gen.instructions,
-    source: await buildSourceBlock(copy),
-  })
+  const assembled = stored
+    ? null
+    : await assembleForCopy(copy, persona, template!, style!, {
+        durationTier: gen.durationTier,
+        durationSeconds: gen.durationSeconds,
+        instructions: gen.instructions,
+      })
+  const prompt = stored ?? { system: assembled!.system, user: assembled!.user }
 
   const words = await listComplianceWords({ enabledOnly: true }, db)
   const range = wordRangeOf(gen.durationTier, gen.durationSeconds)
@@ -380,16 +394,22 @@ export async function runGeneration(generationId: string): Promise<void> {
    * 单份生成的完整处理（LLM → 解析 → 校验 → 落稿 + 落版本）。
    * 抽成函数是为了支持批内并发：真实模型单份耗时约 40–60 秒，串行跑 3 份会超过 2 分钟，
    * 前端轮询早已超时（本地 mock 瞬时返回，掩盖了这个问题）。
-   * 落稿在函数内部串行化（draftNo 需要 MAX+1，并发会撞号）。
+   * 稿号由 insertDraft 按 copy 串行分配，并发落稿不会撞号。
    */
   const runOne = async (i: number): Promise<{ ok: boolean; draftId?: string; cost: number }> => {
     try {
-      const r = await callLlmWithRetry(assembled.system, assembled.user, generationId)
-      const parsed = parseDraftJson(r.content)
+      // FR-G4：非法输出（非 JSON / 段落为空 / 超过 8 段）自动重试 1 次，仍失败才记该份失败
+      let cost = 0
+      let parsed: ReturnType<typeof parseDraftJson> = null
+      for (let attempt = 0; attempt <= 1 && !parsed; attempt++) {
+        const r = await callLlmWithRetry(prompt.system, prompt.user, generationId)
+        cost += r.cost
+        parsed = parseDraftJson(r.content)
+      }
       if (!parsed || !parsed.sections.length) {
         failed += 1
-        failures.push(`第 ${i} 份：模型返回内容不是合法 JSON 或段落为空`)
-        return { ok: false, cost: r.cost }
+        failures.push(`第 ${i} 份：模型返回内容不是合法 JSON，或段落为空 / 超过 8 段`)
+        return { ok: false, cost }
       }
 
       // 字数偏离只提示不失败（FR-G4 / FR-E5）
@@ -414,13 +434,10 @@ export async function runGeneration(generationId: string): Promise<void> {
 
       // P1-14①：标题也纳入扫描
       const hits = scanCompliance(parsed.sections, words, persona.ipProfile.forbiddenClaims, parsed.title)
-      // draftNo 必须串行取号：并发下两个线程会读到同一个 MAX，撞 UNIQUE(copy_id, draft_no)
-      const draftNo = await withDraftNoLock(async () => (await maxDraftNo(copy.id, db)) + 1)
-      const draftId = await insertDraft(
+      // 稿号由 insertDraft 在同一临界区内取号并插入（批内并发不会撞 UNIQUE(copy_id, draft_no)）
+      const { id: draftId } = await insertDraft(
         {
           copyId: copy.id,
-          draftNo,
-          name: `稿 ${draftNo}`,
           title: parsed.title || copy.title,
           sections: parsed.sections,
           plainText: toPlainText(parsed.title, parsed.sections),
@@ -454,7 +471,7 @@ export async function runGeneration(generationId: string): Promise<void> {
       ])
       draftIds.push(draftId)
       succeeded += 1
-      return { ok: true, draftId, cost: r.cost }
+      return { ok: true, draftId, cost }
     } catch (e) {
       failed += 1
       failures.push(`第 ${i} 份：${(e as Error).message}`)
@@ -492,8 +509,10 @@ export async function runGeneration(generationId: string): Promise<void> {
       cost: totalCost,
       error: failures.length ? failures.join('；').slice(0, 2000) : null,
       finished_at: toDb(utcNow()),
-      prompt_hash: assembled.promptHash,
-      prompt_text: assembled.promptText,
+      // 只有老记录（无快照、刚重拼）才回写；有快照时保持受理时的原文
+      ...(assembled
+        ? { prompt_hash: assembled.promptHash, prompt_text: assembled.promptText, prompt_system: assembled.system }
+        : {}),
     },
     db,
   )
@@ -510,27 +529,6 @@ export async function runGeneration(generationId: string): Promise<void> {
     logger.info({ generationId, warnings }, 'copy.generate.warnings')
   }
   logger.info({ generationId, succeeded, failed, cost: totalCost, status }, 'copy.generate.finished')
-}
-
-/**
- * 单进程内串行化 draftNo 取号。
- * 批内并发后，「SELECT MAX(draft_no) + 1 → INSERT」之间存在竞态，两个任务会拿到同一个号并撞
- * UNIQUE(copy_id, draft_no)。这里用一个 Promise 链把取号到插入的临界区串起来；
- * 多进程部署时仍需 DB 层唯一约束兜底（已有），这里只解决单实例内的常见冲突。
- */
-let draftNoChain: Promise<unknown> = Promise.resolve()
-function withDraftNoLock<T>(fn: () => Promise<T>): Promise<T> {
-  const next = draftNoChain.then(fn, fn)
-  // 让链条不因单次失败而断掉
-  draftNoChain = next.catch(() => undefined)
-  return next
-}
-
-async function maxDraftNo(copyId: string, db: Db): Promise<number> {
-  const r = await db.get<{ n: number | null }>('SELECT MAX(`draft_no`) AS n FROM `copy_draft` WHERE `copy_id` = ?', [
-    copyId,
-  ])
-  return Number(r?.n ?? 0)
 }
 
 /** 调 LLM；非法 JSON 重试 1 次（FR-G4） */
@@ -627,6 +625,7 @@ export async function acceptVariant(args: VariantArgs): Promise<{ generationId: 
       target_section_text: (target.label ?? '').slice(0, 60),
       persona_snapshot: { id: persona.id, name: persona.name, line: persona.line, ipProfile: persona.ipProfile },
       prompt_text: assembled.promptText,
+      prompt_system: assembled.system,
       prompt_hash: assembled.promptHash,
       model: currentModelLabel(),
       status: 'pending',
@@ -661,7 +660,6 @@ export async function runVariant(generationId: string): Promise<void> {
     return
   }
 
-  // 重新组装提示词（不依赖落库的 prompt_text 解析，保证一致）
   const sections = JSON.parse(String(draft.sections ?? '[]')) as Section[]
   const idx = gen.targetSection ?? 0
   const target = sections[idx]
@@ -676,14 +674,18 @@ export async function runVariant(generationId: string): Promise<void> {
     .map((s) => s.trim())
     .filter(Boolean)
 
+  const textAtAccept =
+    /--- 原始段落开始 ---\n([\s\S]*?)\n--- 原始段落结束 ---/.exec(gen.promptText ?? '')?.[1] ?? target.text
+
   let created = 0
   let cost = 0
   try {
-    const res = await callLlmWithRetry(
-      gen.promptText?.split('\n\n【本次任务】')[0] ?? '',
-      gen.promptText?.split('【本次任务】')[1] ?? '',
-      generationId,
-    )
+    // P2-16：用受理时落库的 system / user 快照。老记录没有 prompt_system 时按旧方式拆分兜底
+    const prompt = storedPrompt(gen) ?? {
+      system: gen.promptText?.split('\n\n【本次任务】')[0] ?? '',
+      user: gen.promptText?.split('【本次任务】')[1] ?? '',
+    }
+    const res = await callLlmWithRetry(prompt.system, prompt.user, generationId)
     cost += res.cost
     const variants = parseVariantJson(res.content) ?? []
     for (const v of variants) {
@@ -693,7 +695,9 @@ export async function runVariant(generationId: string): Promise<void> {
           draftId: gen.draftId,
           generationId,
           sectionIndex: idx,
-          sectionTextAtGen: target.text,
+          // AC-V3 的比对基准是「受理时」的段落原文（即提示词里给模型看的那段），
+          // 而不是执行时的文本，否则排队期间用户改了这段也比对不出来
+          sectionTextAtGen: textAtAccept,
           kind: v.kind,
           text: v.text,
         },
@@ -765,15 +769,12 @@ export async function applyVariant(
     if (Number(current?.c ?? 0) >= config.copy.maxDrafts) {
       throw err.draftLimit(`该文案稿数已达上限 ${config.copy.maxDrafts}`, { max: config.copy.maxDrafts })
     }
-    const nextNo = (await maxDraftNo(copy.id, db)) + 1
     const newSections = sections.map((s) => ({ ...s }))
     newSections[idx] = { ...newSections[idx]!, text: v.text }
     const wc = countSectionsWords(draftRow.title ?? null, newSections)
-    const newDraftId = await insertDraft(
+    const { id: newDraftId } = await insertDraft(
       {
         copyId: copy.id,
-        draftNo: nextNo,
-        name: `稿 ${nextNo}`,
         title: draftRow.title ?? null,
         sections: newSections,
         plainText: toPlainText(draftRow.title ?? null, newSections),

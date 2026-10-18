@@ -15,31 +15,20 @@
     <div class="px-5 pt-4 pb-3 border-b border-[#f0f3f8]">
       <div class="flex items-center justify-between gap-3">
         <div class="flex items-center gap-2 min-w-0">
-          <a-dropdown trigger="click" :disabled="!store.drafts.length">
-            <button type="button" class="draft-picker">
-              <icon-file class="text-[#8b98ad]" />
-              <span class="truncate">{{ currentDraftLabel }}</span>
-              <icon-down class="text-[#9aa6ba] shrink-0" />
+          <!-- 稿 tab（效果图「稿 1 / 稿 2 / 稿 3」），稿多时横向滚动 -->
+          <div class="draft-tabs">
+            <button
+              v-for="d in store.drafts"
+              :key="d.id"
+              type="button"
+              class="draft-tab"
+              :class="{ active: d.id === editor?.draftId }"
+              :title="`${d.origin === 'ai' ? 'AI 生成' : '手写'} · ${d.wordCount} 字`"
+              @click="onSwitchDraft(d.id)"
+            >
+              <span v-if="d.origin === 'ai'" class="ai-mark">AI</span>{{ d.name }}
             </button>
-            <template #content>
-              <a-doption
-                v-for="d in store.drafts"
-                :key="d.id"
-                :value="d.id"
-                @click="onSwitchDraft(d.id)"
-              >
-                <div class="flex items-center justify-between gap-6 w-full">
-                  <span class="flex items-center gap-2">
-                    <a-tag :color="d.origin === 'ai' ? 'arcoblue' : 'gray'" size="small">
-                      {{ d.origin === 'ai' ? 'AI' : '手写' }}
-                    </a-tag>
-                    {{ d.name }}
-                  </span>
-                  <span class="mw-subtle tabular-nums">{{ d.wordCount }}字</span>
-                </div>
-              </a-doption>
-            </template>
-          </a-dropdown>
+          </div>
 
           <a-tooltip content="新建空白稿">
             <a-button size="mini" shape="circle" :disabled="!store.canEdit" @click="onNewDraft">
@@ -61,6 +50,13 @@
         </div>
       </div>
 
+      <!-- 当前稿信息行（效果图「当前稿：小林科普 · 草稿 v2 · 已保存」） -->
+      <div v-if="editor && currentDraft" class="mt-2 text-[12px] text-[#6b7688]">
+        当前稿：{{ store.copy?.persona?.name ?? '未绑定人物' }} · {{ currentDraft.name }} ·
+        {{ currentDraft.latestVersionNo ? `v${currentDraft.latestVersionNo}` : '未存版本' }} ·
+        <span :class="store.saveState === 'error' ? 'text-[#c2410c]' : ''">{{ saveStateLabel }}</span>
+      </div>
+
       <!-- 冲突提示 -->
       <div v-if="editor?.conflict" class="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-[#fdf4e3]">
         <icon-exclamation-circle-fill style="color: #a26a08" />
@@ -78,8 +74,22 @@
     </div>
 
     <template v-else>
+      <!-- 精简工具栏（W4）：撤销 / 重做；段落的增删移动在各段右上角 -->
+      <div v-if="!readonly" class="px-5 pt-3 flex items-center gap-1">
+        <a-tooltip content="撤销">
+          <a-button size="mini" type="text" :disabled="!store.canUndo" @click="store.undo()">
+            <template #icon><icon-undo /></template>
+          </a-button>
+        </a-tooltip>
+        <a-tooltip content="重做">
+          <a-button size="mini" type="text" :disabled="!store.canRedo" @click="store.redo()">
+            <template #icon><icon-redo /></template>
+          </a-button>
+        </a-tooltip>
+      </div>
+
       <!-- 标题 -->
-      <div class="px-5 pt-4">
+      <div class="px-5 pt-2">
         <a-input
           v-model="editor.title"
           :max-length="store.options?.limits.maxTitle ?? 60"
@@ -113,6 +123,21 @@
             <a-tooltip content="生成这一段的其他写法">
               <a-button size="mini" type="text" :disabled="readonly" @click="emit('variant', i)">
                 <template #icon><icon-swap /></template>
+              </a-button>
+            </a-tooltip>
+            <a-tooltip content="上移">
+              <a-button size="mini" type="text" :disabled="readonly || i === 0" @click="store.moveSection(i, -1)">
+                <template #icon><icon-arrow-up /></template>
+              </a-button>
+            </a-tooltip>
+            <a-tooltip content="下移">
+              <a-button
+                size="mini"
+                type="text"
+                :disabled="readonly || i === editor.sections.length - 1"
+                @click="store.moveSection(i, 1)"
+              >
+                <template #icon><icon-arrow-down /></template>
               </a-button>
             </a-tooltip>
             <a-tooltip content="删除本段">
@@ -182,10 +207,11 @@ const store = useCopyStore()
 const editor = computed(() => store.editor)
 const readonly = computed(() => !store.canEdit || store.locked)
 
-const currentDraftLabel = computed(() => {
-  const d = store.drafts.find((x) => x.id === editor.value?.draftId)
-  if (!d) return '选择稿件'
-  return `${d.name} · 第 ${d.draftNo} 份`
+const currentDraft = computed(() => store.drafts.find((x) => x.id === editor.value?.draftId) ?? null)
+
+const saveStateLabel = computed(() => {
+  const st = store.saveState
+  return st === 'saving' ? '保存中' : st === 'dirty' ? '有未保存改动' : st === 'error' ? '保存失败' : '已保存'
 })
 
 const riskHint = computed(() => {
@@ -353,7 +379,7 @@ function onAddSection(): void {
 function onRemoveSection(index: number): void {
   Modal.confirm({
     title: '删除该段落？',
-    content: '删除后可通过「历史版本」恢复。',
+    content: '删除后可用「撤销」或「历史版本」恢复。',
     okText: '删除',
     cancelText: '取消',
     onOk: () => store.removeSection(index),
@@ -457,11 +483,18 @@ async function onDuplicate(): Promise<void> {
     transform: none;
   }
 }
-.draft-picker {
+.draft-tabs {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.draft-tab {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  max-width: 260px;
+  gap: 4px;
   padding: 3px 10px;
   border-radius: 7px;
   border: 1px solid #e6ecf5;
@@ -469,11 +502,26 @@ async function onDuplicate(): Promise<void> {
   font-size: 13px;
   color: #3c4a63;
   cursor: pointer;
+  white-space: nowrap;
   transition: all 0.16s ease;
 }
-.draft-picker:hover {
+.draft-tab:hover {
   border-color: #ccd9ef;
   background: #fff;
+}
+.draft-tab.active {
+  border-color: var(--mw-primary-mid, #4f7cf7);
+  background: var(--mw-primary-faint, #eef3ff);
+  color: #1d4ed8;
+  font-weight: 500;
+}
+.ai-mark {
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: #e8efff;
+  color: #3b63d8;
 }
 
 .title-input :deep(.arco-input) {

@@ -53,9 +53,13 @@
     <div v-if="copy" class="flex items-center mb-6 px-1">
       <div class="mw-step" :class="stepClass(1)"><span class="mw-step-index">1</span>写文案</div>
       <div class="mw-step-line" :class="{ done: stepDone(1) }"></div>
-      <div class="mw-step" :class="stepClass(2)"><span class="mw-step-index">2</span>自动预检</div>
+      <div class="mw-step" :class="stepClass(2)">
+        <span class="mw-step-index">2</span>自动预检<template v-if="stepState.rejected && stepState.current === 2"> · 已退回</template>
+      </div>
       <div class="mw-step-line" :class="{ done: stepDone(2) }"></div>
-      <div class="mw-step" :class="stepClass(3)"><span class="mw-step-index">3</span>人工复核</div>
+      <div class="mw-step" :class="stepClass(3)">
+        <span class="mw-step-index">3</span>人工复核<template v-if="stepState.rejected && stepState.current === 3"> · 已退回</template>
+      </div>
       <div class="mw-step-line" :class="{ done: stepDone(3) }"></div>
       <div class="mw-step" :class="stepClass(4)"><span class="mw-step-index">4</span>视频创作</div>
     </div>
@@ -119,7 +123,10 @@
             <span class="mw-subtle">字数区间 {{ promptData.wordRange.min }}–{{ promptData.wordRange.max }} 字</span>
             <span class="mw-subtle">哈希 {{ promptData.promptHash.slice(0, 12) }}</span>
           </div>
-          <pre class="prompt-box">{{ promptData.prompt }}</pre>
+          <div class="mw-subtle mb-1">系统规则（合规与防注入，代码内置不可编辑）</div>
+          <pre class="prompt-box mb-3">{{ promptData.system }}</pre>
+          <div class="mw-subtle mb-1">本次任务（人物 · 模板 · 风格 · 时长 · 来源材料）</div>
+          <pre class="prompt-box">{{ promptData.user }}</pre>
         </div>
       </a-spin>
     </a-modal>
@@ -307,20 +314,30 @@ function reload(): void {
 
 /* ── 步骤条 ── */
 
+/**
+ * 步骤条按审核关卡映射（P2-24）：
+ *  - 已提交 / 第 1~3 关 → 第 2 步「自动预检」；待人工复核 → 第 3 步；
+ *  - 退回时按退回关卡落在第 2 步（gate1~3）或第 3 步（人工），并标红「已退回」。
+ * copy.reviewGate 在审核中是当前关卡，退回后是退回关卡（onReviewResult 写入）。
+ */
+const AUTO_GATES = ['submitted', 'gate1', 'gate2', 'gate3']
+const stepState = computed<{ current: number; rejected: boolean }>(() => {
+  const c = copy.value
+  if (!c) return { current: 1, rejected: false }
+  const gate = c.reviewGate ?? ''
+  if (c.status === 'approved') return { current: 4, rejected: false }
+  if (c.status === 'in_review') return { current: AUTO_GATES.includes(gate) ? 2 : 3, rejected: false }
+  if (c.status === 'rejected') return { current: AUTO_GATES.includes(gate) ? 2 : 3, rejected: true }
+  return { current: 1, rejected: false }
+})
+
 function stepClass(n: number): Record<string, boolean> {
-  const s = copy.value?.status
-  if (s === 'approved') return { active: n === 4, done: n < 4 }
-  if (s === 'in_review') return { active: n === 3, done: n < 3 }
-  if (s === 'rejected') return { active: n === 2, done: n < 2 }
-  return n === 1 ? { active: true } : {}
+  const { current, rejected } = stepState.value
+  return { active: n === current && !rejected, rejected: n === current && rejected, done: n < current }
 }
 
 function stepDone(n: number): boolean {
-  const s = copy.value?.status
-  if (s === 'approved') return n < 4
-  if (s === 'in_review') return n < 3
-  if (s === 'rejected') return n < 2
-  return false
+  return n < stepState.value.current
 }
 
 /* ── 变体 ── */
@@ -340,7 +357,7 @@ function onSubmitted(_submissionId: string): void {
 
 const promptVisible = ref(false)
 const promptLoading = ref(false)
-const promptData = ref<{ prompt: string; promptHash: string; wordRange: { min: number; max: number } } | null>(null)
+const promptData = ref<{ system: string; user: string; promptHash: string; wordRange: { min: number; max: number } } | null>(null)
 
 async function onPreviewPrompt(): Promise<void> {
   if (!copy.value) return

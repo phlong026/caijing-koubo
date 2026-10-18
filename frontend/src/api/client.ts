@@ -43,29 +43,45 @@ function isEnvelope(value: unknown): value is ApiEnvelope<unknown> {
   return typeof value === 'object' && value !== null && 'ok' in value
 }
 
+/** 操作人（D14）；隐私模式等读不到 localStorage 时回落默认值 */
+function readOperator(): string {
+  try {
+    return localStorage.getItem('mw_operator') || 'ops'
+  } catch {
+    return 'ops'
+  }
+}
+
 export async function request<T>(path: string, init: RequestInit = {}, query?: Record<string, QueryValue>): Promise<T> {
   const headers = new Headers(init.headers)
   // 无 body 时不能声明 application/json，否则服务端会报 "Body cannot be empty"
   // FormData 也不能设，需由浏览器自动补 multipart 的 boundary
   if (init.body !== undefined && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
-  headers.set('X-Operator', localStorage.getItem('mw_operator') || 'ops')
+  headers.set('X-Operator', readOperator())
 
-  let payload: unknown
   let response: Response
+  let text: string
   try {
     response = await fetch(buildUrl(path, query), { ...init, headers })
-    const text = await response.text()
-    payload = text ? JSON.parse(text) : undefined
+    text = await response.text()
   } catch (cause) {
-    if (cause instanceof ApiError) throw cause
     throw new ApiError('network_error', cause instanceof Error ? cause.message : '网络请求失败')
+  }
+
+  // 解析失败不是网络问题：网关 502/504 常返回 HTML 页面，要按状态码给出可读错误
+  let payload: unknown
+  try {
+    payload = text ? JSON.parse(text) : undefined
+  } catch {
+    payload = undefined
   }
 
   if (!response.ok) {
     if (isEnvelope(payload) && !payload.ok) {
       throw new ApiError(payload.error.code, payload.error.message, response.status)
     }
-    throw new ApiError(`http_${response.status}`, `请求失败（${response.status}）`, response.status)
+    const hint = response.status >= 500 ? '服务暂时不可用，请稍后重试' : '请求失败'
+    throw new ApiError(`http_${response.status}`, `${hint}（${response.status}）`, response.status)
   }
 
   if (!isEnvelope(payload)) throw new ApiError('invalid_response', '服务端返回格式不正确', response.status)

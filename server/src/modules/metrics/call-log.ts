@@ -70,8 +70,17 @@ export async function summarizeCalls(q: Record<string, unknown>): Promise<CallSu
     params.push(String(q.from).slice(0, 19).replace('T', ' '))
   }
   if (q.to) {
-    where.push('`created_at` <= ?')
-    params.push(String(q.to).slice(0, 19).replace('T', ' '))
+    const to = String(q.to)
+    if (/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      // 只给日期时按「含当天」处理：< 次日 00:00，否则当天的记录全部被排除
+      const next = new Date(`${to}T00:00:00Z`)
+      next.setUTCDate(next.getUTCDate() + 1)
+      where.push('`created_at` < ?')
+      params.push(next.toISOString().slice(0, 10) + ' 00:00:00')
+    } else {
+      where.push('`created_at` <= ?')
+      params.push(to.slice(0, 19).replace('T', ' '))
+    }
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
   const row =

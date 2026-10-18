@@ -13,7 +13,6 @@ import {
   insertVersion,
   latestVersionOfDraft,
   listDrafts,
-  nextDraftNo,
   requireCopy,
   touchCopy,
   updateCopy,
@@ -33,6 +32,8 @@ import {
 } from './text.js'
 import {
   DERIVED_STATUS_LABELS,
+  LINE_LABELS,
+  SOURCE_LABELS,
   SUBMISSION_STATUS_LABELS,
   wordRangeOf,
   type Section,
@@ -242,7 +243,16 @@ export interface CopyDetailDraft {
 }
 
 export interface CopyDetail {
-  copy: CopyRow & { derivedStatus: string; derivedStatusLabel: string; draftCount: number }
+  copy: CopyRow & {
+    derivedStatus: string
+    derivedStatusLabel: string
+    draftCount: number
+    /** 与列表接口同构（前端 Copy 类型）：页头、来源卡、按人物加载选项都读这几个字段 */
+    sourceLabel: string
+    persona: { id: string; name: string; line: string } | null
+    line: string | null
+    lineLabel: string | null
+  }
   drafts: CopyDetailDraft[]
   currentDraft: CopyDetailDraft | null
   review: {
@@ -315,12 +325,17 @@ export async function getCopyDetail(copyId: string): Promise<CopyDetail> {
   const versions = await listVersions(copyId, undefined, db)
 
   const derived = derivedStatusOf(copy, drafts.length)
+  const line = copy.line ?? persona?.line ?? null
   return {
     copy: {
       ...copy,
       derivedStatus: derived,
       derivedStatusLabel: DERIVED_STATUS_LABELS[derived as keyof typeof DERIVED_STATUS_LABELS] ?? derived,
       draftCount: drafts.length,
+      sourceLabel: SOURCE_LABELS[copy.source] ?? copy.source,
+      persona: persona ? { id: persona.id, name: persona.name, line: persona.line } : null,
+      line,
+      lineLabel: line ? LINE_LABELS[line] ?? line : null,
     },
     // 注意：这里必须带 sections，前端编辑器直接以它初始化本地草稿态
     drafts: drafts.map((d) => ({
@@ -366,7 +381,8 @@ export async function getCopyDetail(copyId: string): Promise<CopyDetail> {
           riskHint: submission.appendedRiskText ?? null,
           rejectReason: submission.reason ?? copy.rejectReason ?? null,
           rejectedGate: submission.rejectedGate ?? null,
-          submittedBy: copy.createdBy ?? '',
+          // 提交人取提交时锁定版本的 created_by（submit 写入的就是操作人），而不是文案创建人
+          submittedBy: versions.find((v) => v.id === submission.copyVersionId)?.createdBy ?? '',
           submittedAt: submission.createdAt ?? '',
           decidedAt: submission.decidedBy ? submission.updatedAt : null,
         }
@@ -431,7 +447,6 @@ export async function createDraft(
     })
   }
 
-  const draftNo = await nextDraftNo(copyId, db)
   let title: string | null = copy.title ?? null
   // 空白稿预置一个开场段：避免新建后编辑器整片空白、无从下手（FR-E4「新建空白稿」）
   let sections: Section[] = [{ label: '开场', text: '' }]
@@ -446,11 +461,9 @@ export async function createDraft(
   }
 
   const words = countSectionsWords(title, sections)
-  const id = await insertDraft(
+  const { id } = await insertDraft(
     {
       copyId,
-      draftNo,
-      name: `稿 ${draftNo}`,
       title,
       sections,
       plainText: toPlainText(title, sections),

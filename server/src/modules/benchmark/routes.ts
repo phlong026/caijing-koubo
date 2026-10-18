@@ -199,7 +199,10 @@ export function registerBenchmarkRoutes(app: FastifyInstance): void {
       allowAlert: false, // adhoc 视频不产生告警
     })
 
-    const extract = await requestExtract(video.id)
+    // P2-6：刚取到的详情随任务带上，提取时不再重复调 TikHub 详情
+    const extract = await requestExtract(video.id, {
+      prefetched: { playUrl: detail.playUrl, duration: detail.duration, fetchedAt: Date.now() },
+    })
     await recordOperation({
       operator: req.operator,
       action: 'link.parse',

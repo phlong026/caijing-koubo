@@ -25,7 +25,6 @@
     "test:review": "node --import tsx scripts/test-review-regressions.ts"
   },
   "dependencies": {
-    "@esbuild/win32-x64": "^0.28.2",
     "@fastify/cors": "^10.0.1",
     "@fastify/multipart": "^10.1.4",
     "ali-oss": "^6.21.0",

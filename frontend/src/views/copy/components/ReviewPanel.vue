@@ -7,11 +7,12 @@
 
     <!-- 三关进度 -->
     <div v-if="review" class="space-y-1.5 mb-3">
-      <div v-for="g in review.gates" :key="g.gate" class="gate-row">
+      <div v-for="(g, gi) in review.gates" :key="gi" class="gate-row">
         <span class="gate-dot" :class="gateClass(g)" />
-        <span class="text-[13px] text-[#3c4a63] w-[68px] shrink-0">{{ g.label }}</span>
-        <span class="text-[12px] flex-1" :class="g.status === 'failed' ? 'text-[#c03e35]' : 'text-[#6b7688]'">
-          {{ g.conclusion || '等待中' }}
+        <span class="text-[13px] text-[#3c4a63] w-[180px] shrink-0 truncate" :title="gateName(g.gate)">{{ gateName(g.gate) }}</span>
+        <span class="text-[12px] flex-1" :class="g.result === 'fail' ? 'text-[#c03e35]' : 'text-[#6b7688]'">
+          {{ g.reason || (g.result === 'pass' ? '通过' : '未通过') }}
+          <template v-if="g.riskPoints?.length">（风险点：{{ g.riskPoints.join('；') }}）</template>
         </span>
         <span v-if="g.at" class="mw-subtle tabular-nums shrink-0">{{ fmtTime(g.at) }}</span>
       </div>
@@ -93,10 +94,7 @@ const statusColor = computed(() => {
 })
 
 function gateClass(g: GateResult): string {
-  if (g.status === 'passed') return 'ok'
-  if (g.status === 'failed') return 'fail'
-  if (g.status === 'running' || g.status === 'done') return 'done'
-  return 'idle'
+  return g.result === 'fail' ? 'fail' : 'ok'
 }
 
 function gateName(gate: string): string {

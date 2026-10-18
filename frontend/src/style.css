@@ -262,6 +262,25 @@ body {
   background: linear-gradient(90deg, #e6eaef, #eef1f5);
   margin: 0 12px;
 }
+.mw-step.done {
+  color: var(--mw-text2);
+}
+.mw-step.done .mw-step-index {
+  background: var(--mw-primary-faint);
+  color: var(--mw-primary);
+}
+.mw-step-line.done {
+  background: linear-gradient(90deg, var(--mw-primary-soft), var(--mw-primary-faint));
+}
+/* 退回时停在对应步并标红 */
+.mw-step.rejected {
+  color: #c2410c;
+  font-weight: 600;
+}
+.mw-step.rejected .mw-step-index {
+  background: #c2410c;
+  color: #fff;
+}
 
 /* ============================================================
    表单行

@@ -46,8 +46,8 @@ export interface TopicTemplate {
 }
 
 export interface TopicQuery {
-  /** 单个状态，或用逗号分隔的多个状态（如 `candidate,assigned` 表示「未送入的候选」） */
-  status?: TopicStatus | `${TopicStatus},${TopicStatus}`
+  /** 单个状态，或逗号分隔多个（如 `candidate,assigned`） */
+  status?: TopicStatus | string
   source?: TopicSource
   batchId?: string
   page?: number
