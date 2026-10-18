@@ -1,5 +1,5 @@
 <template>
-  <div class="mw-card p-5">
+  <div class="copy-settings">
     <div class="flex items-center justify-between mb-3">
       <div class="mw-card-title">创作设置</div>
       <a-link v-if="!readonly" @click="emit('preview')">
@@ -9,28 +9,18 @@
     </div>
 
     <a-spin :loading="store.optionsLoading" class="w-full">
-      <!-- 模板 -->
       <div class="mw-form-row items-start">
-        <span class="mw-form-label pt-1">内容模板</span>
-        <div class="flex-1 flex flex-wrap gap-2">
-          <button
-            v-for="t in templates"
-            :key="t.id"
-            type="button"
-            class="tpl-chip"
-            :class="{ active: model.templateId === t.id }"
-            :disabled="readonly"
-            @click="model.templateId = t.id"
-          >
-            <span class="font-medium">{{ t.name }}</span>
-            <span class="block text-[11px] opacity-70 mt-0.5">{{ t.description }}</span>
-          </button>
+        <label class="mw-form-label pt-1" for="copy-template">内容模板</label>
+        <div class="flex-1 min-w-0">
+          <a-select id="copy-template" v-model="model.templateId" :disabled="readonly" placeholder="选择内容模板" class="w-full">
+            <a-option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</a-option>
+          </a-select>
+          <p v-if="currentTemplate" class="mw-subtle mt-2 leading-relaxed">{{ currentTemplate.description }}</p>
+          <details v-if="currentTemplate?.structureHint" class="copy-structure">
+            <summary>查看文案结构</summary>
+            <p>{{ currentTemplate.structureHint }}</p>
+          </details>
         </div>
-      </div>
-
-      <!-- 模板提示 -->
-      <div v-if="currentTemplate" class="ml-[88px] mb-2 text-[12px] text-[#6b7688] leading-[1.7]">
-        <div><span class="text-[#9aa6ba]">结构：</span>{{ currentTemplate.structureHint }}</div>
       </div>
 
       <!-- 风格 -->
@@ -48,11 +38,11 @@
       </div>
 
       <!-- 时长 -->
-      <div class="mw-form-row items-start">
+      <div class="mw-form-row duration-setting">
         <span class="mw-form-label pt-1">目标时长</span>
         <div class="flex-1">
           <a-radio-group v-model="model.durationTier" type="button" :disabled="readonly" size="small">
-            <a-radio v-for="d in durationTiers" :key="d.key" :value="d.key">{{ d.name }}</a-radio>
+            <a-radio v-for="d in durationTiers" :key="d.key" :value="d.key" :aria-label="d.name">{{ d.name.includes('（') ? d.name.split('（')[1].replace('）', '').replace(/\s/g, '') : d.name }}</a-radio>
           </a-radio-group>
 
           <!-- 自定义秒数 -->
@@ -106,8 +96,8 @@
 
       <!-- 操作 -->
       <div class="mt-4 flex items-center gap-2">
-        <a-button type="primary" long :loading="store.generating" :disabled="!canGenerate" @click="onGenerate">
-          <template #icon><icon-robot /></template>
+        <a-button type="outline" long :loading="store.generating" :disabled="!canGenerate" @click="onGenerate">
+          <template #icon><icon-edit /></template>
           生成文案
         </a-button>
         <a-tooltip content="草稿已达上限，请先删除不需要的稿">
@@ -416,7 +406,7 @@ async function onGenerate(): Promise<void> {
   transition: background 0.25s ease, border-color 0.25s ease;
 }
 .gen-running {
-  background: linear-gradient(180deg, #f5f9ff 0%, #f8fafd 100%);
+  background: var(--mw-primary-faint);
   border-color: #dbe8ff;
 }
 .gen-done {
@@ -437,14 +427,14 @@ async function onGenerate(): Promise<void> {
 .gen-fill {
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #6a9bff 0%, #2f6bff 100%);
+  background: var(--mw-primary);
   transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
   /* 运行中给一条流动高光，明确「还在动」 */
   background-size: 200% 100%;
   animation: gen-flow 1.6s linear infinite;
 }
 .gen-done .gen-fill {
-  background: linear-gradient(90deg, #34b98a 0%, #12805c 100%);
+  background: #12805c;
   animation: none;
 }
 @keyframes gen-flow {

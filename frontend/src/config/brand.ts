@@ -26,7 +26,7 @@ export const brandPresets: Record<string, BrandConfig> = {
     appTagline: '内容生产与运营',
     logoText: '矩',
     logoGradient: ['#2e63e7', '#16339e'],
-    themePrimary: '#1d4ed8',
+    themePrimary: '#344f61',
   },
   /** 示例：基金客户白标（演示用） */
   fund: {

@@ -1,14 +1,14 @@
 <template>
-  <div class="p-7 pb-10 max-w-[1440px] mx-auto">
+  <div class="mw-page workbench-page">
     <PageHead title="工作台">
-      <template #sub>2026年10月12日 · 星期一 · 三条生产线并行运转中</template>
+      <template #sub>{{ todayText }} · 三条生产线并行运转中</template>
       <template #actions>
         <span class="mw-alert-banner"><icon-info-circle :size="14" />演示环境 · 平台回采与发布授权能力待验证</span>
       </template>
     </PageHead>
 
     <!-- 今日概览 -->
-    <div class="grid grid-cols-4 gap-5 mb-5">
+    <div class="workbench-metrics">
       <div v-for="m in metrics" :key="m.name" class="mw-card p-5 cursor-pointer transition-shadow hover:shadow-sm" @click="$router.push(m.to)">
         <div class="flex items-center justify-between">
           <span class="mw-subtle">{{ m.name }}</span>
@@ -62,7 +62,7 @@
         <div class="text-[15px] font-semibold mb-3">快捷入口</div>
         <div class="grid grid-cols-2 gap-3">
           <div v-for="q in quicks" :key="q.label" class="p-4 rounded-[10px] border border-[var(--mw-border)] cursor-pointer hover:border-[color:var(--mw-primary-soft)] hover:bg-[color:var(--mw-primary-faint)] transition-colors" @click="$router.push(q.to)">
-            <span class="text-[20px]">{{ q.icon }}</span>
+            <component :is="q.icon" :size="20" class="text-primary-c" />
             <div class="text-[13.5px] font-medium mt-2">{{ q.label }}</div>
             <div class="mw-subtle mt-0.5">{{ q.desc }}</div>
           </div>
@@ -76,6 +76,9 @@
 <script setup lang="ts">
 import PageHead from '@/components/PageHead.vue'
 import ThumbBox from '@/components/ThumbBox.vue'
+import { IconFire, IconFile, IconPlayCircle, IconBarChart } from '@arco-design/web-vue/es/icon'
+
+const todayText = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
 
 const metrics = [
   { name: '今日新增任务', value: '6', tag: '全部阶段', cls: 'mw-tag-blue', hint: '经理 IP 3 · 员工 KOS 3', to: '/tasks' },
@@ -118,9 +121,9 @@ const todos = [
   { title: '基金定投入门（发布）', desc: '成片复审通过 · 待安排 · 定时 10月13日 10:00', action: '去发布', cls: 'mw-tag-green', to: '/publish' },
 ]
 const quicks = [
-  { icon: '🔥', label: '爆款选题', desc: '热点资讯 / 对标账号 → 候选选题', to: '/topics' },
-  { icon: '📝', label: '文案工坊', desc: '多稿创作 · 送审三关审核链', to: '/copy' },
-  { icon: '🎬', label: '视频创作', desc: '数字人口播 / 素材混剪', to: '/video/create' },
-  { icon: '📊', label: '数据看板', desc: 'T+1 / T+7 回采与选题反馈', to: '/analytics' },
+  { icon: IconFire, label: '爆款选题', desc: '热点资讯 / 对标账号 → 候选选题', to: '/topics' },
+  { icon: IconFile, label: '文案工坊', desc: '多稿创作 · 送审三关审核链', to: '/copy' },
+  { icon: IconPlayCircle, label: '视频创作', desc: '数字人口播 / 素材混剪', to: '/video/create' },
+  { icon: IconBarChart, label: '数据看板', desc: 'T+1 / T+7 回采与选题反馈', to: '/analytics' },
 ]
 </script>

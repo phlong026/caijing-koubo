@@ -1,5 +1,5 @@
 <template>
-  <div class="mw-card">
+  <div class="mw-card copy-editor">
     <!-- 生成完成后自动切稿的提示：内容被静默替换最容易让人以为丢了东西 -->
     <div v-if="store.switchedNotice" class="switch-notice">
       <icon-swap class="text-[#1d4ed8]" />
@@ -44,7 +44,7 @@
 
         <div class="flex items-center gap-2 shrink-0">
           <span v-if="saveHint" class="mw-subtle">{{ saveHint }}</span>
-          <a-button size="small" :disabled="!store.isDirty || !store.canEdit" :loading="editor?.saving" @click="onSave">
+          <a-button v-if="store.saveState === 'error'" size="small" :disabled="!store.isDirty || !store.canEdit" :loading="editor?.saving" @click="onSave">
             保存
           </a-button>
         </div>
@@ -52,7 +52,7 @@
 
       <!-- 当前稿信息行（效果图「当前稿：小林科普 · 草稿 v2 · 已保存」） -->
       <div v-if="editor && currentDraft" class="mt-2 text-[12px] text-[#6b7688]">
-        当前稿：{{ store.copy?.persona?.name ?? '未绑定人物' }} · {{ currentDraft.name }} ·
+        当前稿：{{ store.detail?.persona?.name ?? store.copy?.persona?.name ?? '未绑定人物' }} · {{ currentDraft.name }} ·
         {{ currentDraft.latestVersionNo ? `v${currentDraft.latestVersionNo}` : '未存版本' }} ·
         <span :class="store.saveState === 'error' ? 'text-[#c2410c]' : ''">{{ saveStateLabel }}</span>
       </div>
@@ -184,10 +184,10 @@
       </div>
 
       <!-- 底部统计 -->
-      <div class="px-5 py-3 border-t border-[#f0f3f8] flex items-center gap-4 text-[12px] text-[#6b7688]">
+      <div class="copy-editor-status">
         <span>正文 <b class="text-[#131f38] tabular-nums">{{ totalWords }}</b> 字</span>
         <span>预计 <b class="text-[#131f38] tabular-nums">{{ estSeconds }}</b> 秒</span>
-        <span class="mw-subtle">口径：汉字计 1、连续英文数字计 1、标点与空白不计、风险块不计</span>
+        <a-tooltip content="汉字计1字，连续英文或数字计1字，标点、空白与风险提示不计入。"><span class="mw-subtle cursor-help">字数规则 <icon-info-circle :size="12" /></span></a-tooltip>
         <span class="flex-1" />
         <span v-if="wordOffsetHint" :class="wordOffsetHint.cls">{{ wordOffsetHint.text }}</span>
       </div>

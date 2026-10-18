@@ -1,9 +1,10 @@
 <template>
-  <div class="mw-card p-5">
-    <div class="flex items-center justify-between mb-3">
+  <details open class="copy-source">
+    <summary class="copy-source-heading">
       <div class="mw-card-title">来源材料</div>
-      <a-tag v-if="c" :color="sourceColor" size="small">{{ c.sourceLabel }}</a-tag>
-    </div>
+      <span v-if="c" class="mw-tag mw-tag-gray">{{ c.sourceLabel }}</span>
+      <icon-down :size="13" class="copy-source-chevron" />
+    </summary>
 
     <!-- 加载 -->
     <a-skeleton v-if="loading" :animation="true">
@@ -27,9 +28,9 @@
       </div>
 
       <!-- 来源摘要 -->
-      <div v-if="summary" class="rounded-lg bg-[#f8fafd] border border-[#eef2f8] p-3 mb-3">
+      <div v-if="summary" class="copy-source-summary">
         <div class="mw-subtle mb-1">{{ summary.label }}</div>
-        <div class="text-[13px] leading-[1.75] text-[#3c4a63] whitespace-pre-wrap max-h-[220px] overflow-auto">
+        <div class="text-[13px] leading-[1.75] text-[#3c4a63] whitespace-pre-wrap max-h-[144px] overflow-auto">
           {{ summary.text }}
         </div>
       </div>
@@ -76,7 +77,7 @@
         已审核通过。再次编辑将回到「修订中」，并保留原通过版本。
       </div>
     </template>
-  </div>
+  </details>
 </template>
 
 <script setup lang="ts">

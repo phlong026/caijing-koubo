@@ -1,5 +1,5 @@
 <template>
-  <div class="p-7 pb-10 max-w-[1440px] mx-auto">
+  <div class="copy-page mw-page">
     <PageHead title="文案工坊">
       <template #sub>
         <span v-if="copy">
@@ -50,7 +50,7 @@
     </PageHead>
 
     <!-- 步骤条 -->
-    <div v-if="copy" class="flex items-center mb-6 px-1">
+    <div v-if="copy" class="copy-workflow">
       <div class="mw-step" :class="stepClass(1)"><span class="mw-step-index">1</span>写文案</div>
       <div class="mw-step-line" :class="{ done: stepDone(1) }"></div>
       <div class="mw-step" :class="stepClass(2)">
@@ -65,7 +65,7 @@
     </div>
 
     <!-- 加载 -->
-    <div v-if="store.loading" class="grid grid-cols-[46fr_54fr] gap-5">
+    <div v-if="store.loading" class="copy-layout">
       <div class="mw-card p-5"><a-skeleton :animation="true"><a-skeleton-line :rows="8" /></a-skeleton></div>
       <div class="mw-card p-5"><a-skeleton :animation="true"><a-skeleton-line :rows="12" /></a-skeleton></div>
     </div>
@@ -93,12 +93,12 @@
     </div>
 
     <!-- 主体 -->
-    <div v-else class="grid grid-cols-[46fr_54fr] gap-5 items-start">
-      <div class="flex flex-col gap-5">
+    <div v-else class="copy-layout">
+      <div class="copy-context">
         <SourcePanel />
         <SettingsPanel @preview="onPreviewPrompt" />
       </div>
-      <div class="flex flex-col gap-5">
+      <div class="copy-document">
         <ReviewPanel v-if="showReview" />
         <DraftEditor @variant="onVariant" />
       </div>

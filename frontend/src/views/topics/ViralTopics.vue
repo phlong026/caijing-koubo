@@ -1,337 +1,122 @@
 <template>
-  <div class="p-7 pb-10 max-w-[1440px] mx-auto">
-    <PageHead title="爆款选题">
-      <template #sub>
-        <div>
-          <div>先选资料，再人工生成与分配选题；对标账号按设定周期自动检查并识别爆款。</div>
-          <div class="mt-0.5">
-            {{ todayText }} ·
-            <span v-if="tab === 'news'">
-              资讯库 {{ news.total }} 条<template v-if="news.lastRefresh">
-                · 上次采集新增 {{ news.lastRefresh.inserted }} 条</template
-              >
-            </span>
-            <span v-else>
-              监控账号 {{ bench.accounts.length }} 个<template v-if="bench.quota">
-                · 预计 {{ bench.quota.dailyCalls }} 次/天 · ¥{{ bench.quota.estimatedCost.toFixed(2) }}/天</template
-              >
-            </span>
-          </div>
-        </div>
-      </template>
-      <template #actions>
-        <template v-if="tab === 'bench'">
-          <a-button @click="openAddAccount">
-            <template #icon><icon-plus /></template>添加账号链接
-          </a-button>
-          <a-button type="outline" @click="openExtractLink">
-            视频直接提取改写<icon-right class="ml-1" />
-          </a-button>
+  <div class="topics-page">
+    <header class="topics-toolbar">
+      <h1>爆款选题</h1>
+      <div class="topics-modes" role="group" aria-label="选题资料类型">
+        <button type="button" :aria-pressed="tab === 'news'" :class="{ active: tab === 'news' }" @click="tab = 'news'">热点资讯</button>
+        <button type="button" :aria-pressed="tab === 'bench'" :class="{ active: tab === 'bench' }" @click="tab = 'bench'">对标账号视频</button>
+      </div>
+      <div class="topics-toolbar-actions">
+        <template v-if="tab === 'news'">
+          <a-input-search v-model="news.keyword" placeholder="搜索资讯关键词" allow-clear aria-label="搜索资讯关键词" @search="(v: string) => news.setKeyword(v)" @press-enter="news.setKeyword(news.keyword)" @clear="news.setKeyword('')" />
+          <a-button :loading="news.refreshing" @click="onRefreshNews"><template #icon><icon-refresh /></template>采集资讯</a-button>
         </template>
-        <a-button v-else @click="onRefreshNews" :loading="news.refreshing">
-          <template #icon><icon-refresh /></template>采集最新资讯
-        </a-button>
-      </template>
-    </PageHead>
+        <template v-else>
+          <a-button @click="openAddAccount"><template #icon><icon-plus /></template>添加账号链接</a-button>
+          <a-button type="outline" @click="openExtractLink">视频直接提取改写<icon-right class="ml-1" /></a-button>
+        </template>
+      </div>
+    </header>
 
-    <a-tabs v-model:active-key="tab" type="line" class="mw-tabs">
-      <!-- ============ 热点资讯 ============ -->
-      <a-tab-pane key="news" title="热点资讯">
-        <div class="flex gap-5 items-start mt-1">
-          <!-- 左列 -->
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2 flex-wrap">
-              <button
-                v-for="c in news.chips"
-                :key="c.key"
-                class="px-3.5 h-8 rounded-full text-[13px] border transition-colors"
-                :class="news.category === c.key
-                  ? 'bg-[var(--mw-primary-bg)] border-[color:var(--mw-primary-soft)] text-[color:var(--mw-primary)] font-medium'
-                  : 'bg-white border-[var(--mw-border)] text-[var(--mw-text2)] hover:border-[color:var(--mw-primary-soft)]'"
-                @click="news.setCategory(c.key)"
-              >
-                {{ c.label }} <span class="text-[var(--mw-text3)]">{{ c.count }}</span>
-              </button>
-              <div class="flex-1"></div>
-              <a-select
-                :model-value="news.source"
-                :style="{ width: '150px' }"
-                placeholder="全部来源"
-                allow-clear
-                @change="onSourceChange"
-              >
-                <a-option v-for="s in news.categories.sources" :key="s" :value="s">{{ s }}</a-option>
-              </a-select>
-              <a-input-search
-                :style="{ width: '200px' }"
-                placeholder="搜索资讯关键词"
-                allow-clear
-                search-button
-                @search="(v: string) => news.setKeyword(v)"
-              />
-            </div>
-
-            <a-spin :loading="news.loading" class="w-full">
-              <div class="mt-4 flex flex-col gap-3">
-                <div
-                  v-for="n in news.items"
-                  :key="n.id"
-                  class="mw-card p-4 flex gap-4 cursor-pointer transition-shadow hover:shadow-sm"
-                  :class="news.isSelected(n.id)
-                    ? 'border-[color:var(--mw-primary-mid)] ring-1 ring-[color:var(--mw-primary-soft)]'
-                    : ''"
-                  @click="toggleNews(n.id)"
-                >
-                  <!-- 不能用 <a-checkbox>：它渲染成 <label>，嵌在卡片 <label> 里会触发 HTML
-                       「label 不可嵌套」规则，导致点方框无效。这里用纯展示的勾选图标 +
-                       外层 div 统一接管点击，避免双重触发。 -->
-                  <span
-                    class="mt-1 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-[3px] border transition-colors"
-                    :class="news.isSelected(n.id)
-                      ? 'border-[color:var(--mw-primary)] bg-[color:var(--mw-primary)] text-white'
-                      : 'border-[color:var(--mw-border)] bg-white text-transparent'"
-                    aria-hidden="true"
-                  >
-                    <icon-check :size="11" />
-                  </span>
-                  <!-- 原先这里有一个 ThumbBox 占位图（固定 📊 emoji + 渐变底）。
-                       资讯源（曙光/东方财富/同花顺等）都不提供配图，占位图对识别没有任何信息量，
-                       反而挤占正文宽度，故移除；改由用户点击标题查看完整内容。 -->
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 text-[12px] text-[var(--mw-text3)]">
-                      <span :class="CAT_CLASS[n.category] || 'mw-tag mw-tag-gray'">{{ n.category }}</span>
-                      <span>{{ n.source }} · {{ fmtTime(n.publishedAt) }}</span>
-                      <span class="flex-1"></span>
-                      <a
-                        v-if="n.contentUrl"
-                        class="mw-link whitespace-nowrap"
-                        :href="n.contentUrl"
-                        target="_blank"
-                        rel="noreferrer"
-                        @click.stop
-                        >查看来源 <icon-right :size="12"
-                      /></a>
-                    </div>
-                    <!-- 标题即详情入口：@click.stop 阻止冒泡到卡片（卡片点击=勾选） -->
-                    <div
-                      class="news-title mt-1.5 text-[15px] font-semibold leading-6"
-                      role="button"
-                      tabindex="0"
-                      :title="`查看完整内容：${n.title}`"
-                      @click.stop="openNewsDetail(n)"
-                      @keydown.enter.stop="openNewsDetail(n)"
-                    >
-                      {{ n.title }}
-                    </div>
-                    <div v-if="n.summary" class="mt-1 text-[13px] text-[var(--mw-text3)] leading-5 line-clamp-2">
-                      {{ n.summary }}
-                    </div>
-                  </div>
-                </div>
-
-                <a-empty v-if="!news.loading && !news.items.length" description="暂无资讯，点击右上角采集最新资讯" />
-              </div>
-            </a-spin>
-
-            <div v-if="news.total > news.pageSize" class="mt-4 flex justify-center">
-              <a-pagination
-                :total="news.total"
-                :current="news.page"
-                :page-size="news.pageSize"
-                show-total
-                @change="(p: number) => news.setPage(p)"
-              />
-            </div>
-
-            <!-- 已选资料 / 生成设置 -->
-            <div class="mw-card p-5 mt-4">
-              <div class="flex items-center justify-between">
-                <div class="text-[15px] font-semibold">
-                  已选 {{ news.selectedIds.length }} 条资料
-                  <span class="mw-subtle font-normal">（每次 1~10 条，共 {{ news.total }} 条可选）</span>
-                </div>
-                <a-button v-if="news.selectedIds.length" size="mini" type="text" @click="news.clearSelect()"
-                  >清空</a-button
-                >
-              </div>
-
-              <div class="mt-3 flex flex-col gap-1">
-                <div class="mw-form-row">
-                  <div class="mw-form-label">目标角色 / 人物</div>
-                  <a-select
-                    v-model="targetPersonas"
-                    :style="{ width: '360px' }"
-                    placeholder="选择人物（可多选）"
-                    multiple
-                    :max-tag-count="3"
-                  >
-                    <a-option v-for="p in personas.enabled" :key="p.id" :value="p.id">
-                      {{ p.name }}
-                      <span class="mw-subtle ml-1">{{ p.ipProfile.role }}</span>
-                    </a-option>
-                  </a-select>
-                  <span class="mw-subtle">已选 {{ targetPersonas.length }} 人</span>
-                </div>
-                <div class="mw-form-row">
-                  <div class="mw-form-label">生成数量</div>
-                  <a-input-number v-model="genCount" :min="1" :max="10" :style="{ width: '120px' }" mode="button" />
-                  <div class="mw-subtle leading-4 whitespace-nowrap">
-                    本批合计<br /><b class="text-[13px] text-[var(--mw-text)]">{{ batchExpected }} 条选题</b>
-                  </div>
-                </div>
-                <div class="mw-form-row">
-                  <div class="mw-form-label">选题方法</div>
-                  <a-select v-model="templateId" :style="{ width: '220px' }" placeholder="默认提示词" allow-clear>
-                    <a-option v-for="t in topics.templates" :key="t.id" :value="t.id">{{ t.name }}</a-option>
-                  </a-select>
-                  <a-button type="text" class="!text-[color:var(--mw-primary)]" @click="openTemplate()">
-                    <template #icon><icon-plus /></template>新增
-                  </a-button>
-                  <a-button
-                    type="text"
-                    class="!text-[color:var(--mw-primary)]"
-                    :disabled="!templateId"
-                    @click="openTemplate(currentTemplate)"
-                  >
-                    <template #icon><icon-edit /></template>编辑
-                  </a-button>
-                </div>
-              </div>
-
-              <div class="mt-4 flex flex-col items-center gap-2">
-                <a-button type="primary" long size="large" :loading="topics.generating" @click="onGenerate">
-                  <template #icon><icon-thunderbolt /></template>人工生成候选选题
-                </a-button>
-                <div class="mw-subtle flex items-center gap-1">
-                  <icon-info-circle :size="13" />仅点击后生成；候选需人工筛选并分配人物后才会送入文案工坊。
-                </div>
-              </div>
-            </div>
+    <section v-show="tab === 'news'" class="topics-news-layout" aria-label="热点资讯工作区">
+      <div class="topics-source-column">
+        <div class="topics-filters">
+          <div class="topics-categories" role="group" aria-label="资讯分类">
+            <button v-for="c in news.chips" :key="c.key" type="button" :aria-pressed="news.category === c.key" :class="{ active: news.category === c.key }" @click="news.setCategory(c.key)">
+              {{ c.label }} <span>{{ c.count }}</span>
+            </button>
           </div>
-
-          <!-- 右列：候选选题 -->
-          <div class="w-[380px] flex-shrink-0 mw-card p-5">
-            <div class="flex items-center justify-between">
-              <div class="text-[16px] font-semibold">
-                候选选题
-                <span class="mw-subtle font-normal">{{ topics.total }} 条<template v-if="topics.batch"> · 本批 {{ topics.batch.produced }}/{{ topics.batch.expected }}</template></span>
-              </div>
-              <a-button size="mini" type="text" :loading="topics.loading" @click="reloadCandidates">
-                <template #icon><icon-refresh /></template>
-              </a-button>
-            </div>
-            <div class="mw-subtle mt-0.5">勾选后分配人物，再送入文案工坊。</div>
-
-            <!-- P2-21：状态筛选 + 本批筛选 -->
-            <div class="mt-3 flex items-center gap-2 flex-wrap">
-              <a-radio-group :model-value="topics.filter" type="button" size="mini" @change="(v) => topics.setFilter(v as CandidateFilter)">
-                <a-radio value="pending">全部待送</a-radio>
-                <a-radio value="candidate">待分配</a-radio>
-                <a-radio value="assigned">已分配</a-radio>
-              </a-radio-group>
-              <a-tag v-if="topics.batchFilter" size="small" closable @close="topics.clearBatchFilter()">仅本批</a-tag>
-            </div>
-
-            <a-spin :loading="topics.loading" class="w-full">
-              <div class="mt-3 flex flex-col gap-3 max-h-[calc(100vh-420px)] min-h-[200px] overflow-y-auto pr-1">
-                <div
-                  v-for="c in topics.items"
-                  :key="c.id"
-                  class="p-3.5 rounded-[10px] border cursor-pointer transition-colors"
-                  :class="topics.checkedIds.includes(c.id)
-                    ? 'border-[color:var(--mw-primary-mid)] bg-[color:var(--mw-primary-faint)]'
-                    : 'border-[var(--mw-border)] hover:border-[color:var(--mw-primary-soft)]'"
-                  @click="topics.toggleCheck(c.id)"
-                >
-                  <div class="flex gap-3">
-                    <a-checkbox
-                      :model-value="topics.checkedIds.includes(c.id)"
-                      @change="() => topics.toggleCheck(c.id)"
-                      @click.stop
-                    >
-                      <span class="sr-only">勾选选题：{{ c.title }}</span>
-                    </a-checkbox>
-                    <!-- 与资讯卡一致：候选选题也没有配图，ThumbBox 占位（渐变底 + 📊）
-                         只占宽度不提供任何识别信息，移除后标题/钩子/人物选择能用满整行。 -->
-                    <div class="flex-1 min-w-0">
-                      <div class="text-[14px] font-medium leading-5">{{ c.title }}</div>
-                      <div v-if="c.direction" class="mt-2 flex items-start gap-2 text-[12px]">
-                        <span class="text-[var(--mw-text3)] whitespace-nowrap">方向</span>
-                        <span class="mw-tag mw-tag-gray">{{ c.direction }}</span>
-                      </div>
-                      <div v-if="c.hook" class="mt-1 text-[12px] text-[var(--mw-text3)] leading-4">钩子：{{ c.hook }}</div>
-                      <div class="mt-1.5 flex items-center gap-2 text-[12px]">
-                        <span class="text-[var(--mw-text3)] whitespace-nowrap">分配给</span>
-                        <a-select
-                          :model-value="currentPersonas(c)"
-                          size="mini"
-                          :style="{ width: '180px' }"
-                          placeholder="选择人物"
-                          multiple
-                          :max-tag-count="1"
-                          @click.stop
-                          @change="(v) => onAssignChange(c.id, v)"
-                        >
-                          <a-option v-for="p in personas.enabled" :key="p.id" :value="p.id">{{ p.name }}</a-option>
-                        </a-select>
-                      </div>
-                      <div v-if="!currentPersonas(c).length" class="mt-1 text-[12px] text-[var(--mw-text3)]">
-                        未分配人物，不能直接送入
-                      </div>
-                      <div v-else-if="c.status === 'candidate'" class="mt-1 text-[12px] text-[var(--mw-text3)]">
-                        已预填生成时的目标人物，送入时按此分配
-                      </div>
-                    </div>
-                    <!-- FR-N5：归档（不需要的候选移出候选栏） -->
-                    <a-popconfirm content="归档后不再出现在候选栏，确认归档？" @ok="() => onArchive(c.id)">
-                      <a-button size="mini" type="text" title="归档" @click.stop.prevent>
-                        <template #icon><icon-delete /></template>
-                      </a-button>
-                    </a-popconfirm>
+          <a-select :model-value="news.source" placeholder="全部来源" aria-label="资讯来源" allow-clear @change="onSourceChange">
+            <a-option v-for="s in news.categories.sources" :key="s" :value="s">{{ s }}</a-option>
+          </a-select>
+        </div>
+        <div class="topics-news-scroll">
+          <a-spin :loading="news.loading" class="w-full">
+            <div class="topics-news-list">
+              <article v-for="n in news.items" :key="n.id" class="topics-news-row" :class="{ selected: news.isSelected(n.id) }" @click="toggleNews(n.id)">
+                <a-checkbox :model-value="news.isSelected(n.id)" @change="toggleNews(n.id)" @click.stop><span class="sr-only">选择资讯：{{ n.title }}</span></a-checkbox>
+                <div class="flex-1 min-w-0">
+                  <div class="topics-news-meta">
+                    <span class="mw-tag mw-tag-gray">{{ n.category }}</span><span>{{ n.source }} · {{ fmtTime(n.publishedAt) }}</span>
+                    <a v-if="n.contentUrl" :href="n.contentUrl" target="_blank" rel="noreferrer" :aria-label="`查看来源：${n.title}`" title="查看来源" @click.stop><icon-export :size="15" /></a>
                   </div>
+                  <button type="button" class="news-title" @click.stop="openNewsDetail(n)">{{ n.title }}</button>
+                  <p v-if="n.summary" class="topics-news-summary">{{ n.summary }}</p>
                 </div>
-
-                <a-empty v-if="!topics.loading && !topics.items.length" description="还没有候选选题" />
-              </div>
-            </a-spin>
-            <div v-if="topics.total > topics.pageSize" class="mt-3 flex justify-center">
-              <a-pagination
-                :current="topics.page"
-                :page-size="topics.pageSize"
-                :total="topics.total"
-                size="mini"
-                simple
-                @change="(p: number) => topics.setPage(p)"
-              />
+              </article>
             </div>
-
-            <div class="mt-4 pt-3 border-t border-[var(--mw-border)] flex items-center gap-3">
-              <div class="text-[13px]">
-                <b>{{ topics.checkedIds.length }}</b> 条 · 已分配 <b>{{ topics.assignedChecked.length }}</b> 条
-              </div>
-              <div class="flex-1"></div>
-              <a-button type="primary" :disabled="!topics.checkedIds.length" @click="onSendToCopy">
-                送入文案工坊<icon-right class="ml-1" />
-              </a-button>
-            </div>
-            <div class="mw-subtle mt-2 flex items-center gap-1">
-              <icon-info-circle :size="13" />进入文案工坊后继续编辑与送审。
-            </div>
+            <a-empty v-if="!news.loading && !news.items.length" description="暂无资讯，点击右上角采集资讯" />
+          </a-spin>
+          <div v-if="news.total > news.pageSize" class="topics-pagination">
+            <a-pagination :total="news.total" :current="news.page" :page-size="news.pageSize" size="small" show-total @change="(p: number) => news.setPage(p)" />
           </div>
         </div>
-      </a-tab-pane>
+        <div class="topics-generation-dock">
+          <div class="flex items-center gap-3 mb-3">
+            <strong>已选 {{ news.selectedIds.length }} 条资料</strong>
+            <button v-if="news.selectedIds.length" type="button" class="mw-link" @click="news.clearSelect()">清空</button>
+            <span class="mw-subtle ml-auto">每次最多 10 条</span>
+          </div>
+          <div class="topics-generation-controls">
+            <label>人物
+              <a-select v-model="targetPersonas" placeholder="选择人物" aria-label="目标角色或人物" multiple :max-tag-count="1">
+                <a-option v-for="p in personas.enabled" :key="p.id" :value="p.id">{{ p.name }} · {{ p.ipProfile.role }}</a-option>
+              </a-select>
+            </label>
+            <label>生成数量<a-input-number v-model="genCount" :min="1" :max="10" mode="button" aria-label="生成数量" /></label>
+            <div>
+              <div class="flex items-center justify-between"><span>选题方法</span><a-dropdown trigger="click"><a-button type="text" size="mini" aria-label="管理选题方法"><icon-more /></a-button><template #content><a-doption @click="openTemplate()">新增方法</a-doption><a-doption :disabled="!templateId" @click="openTemplate(currentTemplate)">编辑当前方法</a-doption></template></a-dropdown></div>
+              <a-select v-model="templateId" placeholder="默认提示词" aria-label="选题方法" allow-clear><a-option v-for="t in topics.templates" :key="t.id" :value="t.id">{{ t.name }}</a-option></a-select>
+            </div>
+            <a-button type="outline" :loading="topics.generating" @click="onGenerate"><template #icon><icon-file /></template>生成候选选题</a-button>
+          </div>
+          <p class="topics-dock-note">本批合计 {{ batchExpected }} 条选题 · 仅点击后生成<template v-if="news.lastRefresh"> · 上次采集新增 {{ news.lastRefresh.inserted }} 条</template></p>
+        </div>
+      </div>
+
+      <aside class="topics-candidate-column" aria-label="候选选题">
+        <div class="topics-candidate-toolbar">
+          <h2>候选选题 <span>{{ topics.total }}</span></h2>
+          <a-select :model-value="topics.filter" aria-label="候选选题状态" @change="(v) => topics.setFilter(v as CandidateFilter)"><a-option value="pending">全部待送</a-option><a-option value="candidate">待分配</a-option><a-option value="assigned">已分配</a-option></a-select>
+          <a-button type="text" :loading="topics.loading" aria-label="刷新候选选题" @click="reloadCandidates"><template #icon><icon-refresh /></template></a-button>
+        </div>
+        <div v-if="topics.batchFilter || topics.batch" class="topics-batch-state">
+          <a-tag v-if="topics.batchFilter" size="small" closable @close="topics.clearBatchFilter()">仅本批</a-tag>
+          <span v-if="topics.batch" class="mw-subtle">本批 {{ topics.batch.produced }}/{{ topics.batch.expected }}</span>
+        </div>
+        <div class="topics-candidate-scroll">
+          <a-spin :loading="topics.loading" class="w-full">
+            <article v-for="c in topics.items" :key="c.id" class="topics-candidate-row" :class="{ selected: topics.checkedIds.includes(c.id) }" @click="topics.toggleCheck(c.id)">
+              <a-checkbox :model-value="topics.checkedIds.includes(c.id)" @change="() => topics.toggleCheck(c.id)" @click.stop><span class="sr-only">勾选选题：{{ c.title }}</span></a-checkbox>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-start gap-2"><h3>{{ c.title }}</h3><a-button type="text" size="mini" :aria-label="`归档选题：${c.title}`" title="归档" @click.stop="onArchive(c.id)"><template #icon><icon-archive /></template></a-button></div>
+                <div v-if="c.direction" class="topics-direction"><span>方向</span><span class="mw-tag mw-tag-gray">{{ c.direction }}</span></div>
+                <p v-if="c.hook" class="topics-hook">钩子：{{ c.hook }}</p>
+                <div class="topics-persona"><span>分配给</span><a-select :model-value="currentPersonas(c)" placeholder="选择人物" :aria-label="`为${c.title}分配人物`" multiple :max-tag-count="1" @click.stop @change="(v) => onAssignChange(c.id, v)"><a-option v-for="p in personas.enabled" :key="p.id" :value="p.id">{{ p.name }}</a-option></a-select></div>
+                <p v-if="!currentPersonas(c).length" class="topics-assignment-note">分配人物后可送入文案工坊</p>
+                <p v-else-if="c.status === 'candidate'" class="topics-assignment-note">已预填目标人物，送入时按此分配</p>
+              </div>
+            </article>
+            <a-empty v-if="!topics.loading && !topics.items.length" description="还没有候选选题" />
+          </a-spin>
+          <div v-if="topics.total > topics.pageSize" class="topics-pagination"><a-pagination :current="topics.page" :page-size="topics.pageSize" :total="topics.total" size="mini" simple @change="(p: number) => topics.setPage(p)" /></div>
+        </div>
+        <div class="topics-send-dock">
+          <div><strong>已选 {{ topics.checkedIds.length }} 条</strong> · 已分配 {{ topics.assignedChecked.length }} 条</div>
+          <a-button type="primary" long :disabled="!topics.checkedIds.length" @click="onSendToCopy">送入文案工坊<template v-if="topics.checkedIds.length">（{{ topics.checkedIds.length }}）</template><icon-right class="ml-2" /></a-button>
+          <p class="topics-dock-note">人工确认并分配后，进入文案工坊编辑与送审。</p>
+        </div>
+      </aside>
+    </section>
 
       <!-- ============ 对标账号视频 ============ -->
-      <a-tab-pane key="bench" title="对标账号视频">
+      <section v-show="tab === 'bench'" class="topics-bench">
         <div class="mt-1 flex flex-col gap-4">
           <!-- 账号管理条 -->
           <div class="mw-card p-5">
             <div class="flex items-center gap-3 flex-wrap">
               <span class="text-[15px] font-semibold">对标账号</span>
               <span class="mw-tag mw-tag-gray">{{ bench.accounts.length }} 个</span>
-              <a-button size="small" type="primary" @click="openAddAccount">
-                <template #icon><icon-plus /></template>添加账号链接
-              </a-button>
               <div class="flex-1"></div>
               <a-tooltip v-if="bench.quota" :content="quotaTip">
                 <span class="mw-subtle cursor-help">
@@ -564,8 +349,7 @@
             <template v-else>非本人视频的播放量接口通常返回 0，爆款判定以「赞+评+转」互动合计为准。</template>
           </div>
         </div>
-      </a-tab-pane>
-    </a-tabs>
+      </section>
 
     <!-- ============ 弹窗：添加账号 ============ -->
     <a-modal v-model:visible="accModal.visible" title="添加对标账号" :mask-closable="false" @cancel="resetAccModal">
@@ -771,7 +555,6 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Message, Modal } from '@arco-design/web-vue'
-import PageHead from '@/components/PageHead.vue'
 import ThumbBox from '@/components/ThumbBox.vue'
 import { ApiError } from '@/api/client'
 import { getNewsDetail, type NewsItem } from '@/api/news'

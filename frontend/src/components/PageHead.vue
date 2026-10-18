@@ -1,12 +1,12 @@
 <template>
-  <div class="flex items-start justify-between mb-5">
+  <div class="mw-page-head">
     <div>
       <h1 class="mw-page-title">{{ title }}</h1>
       <div v-if="$slots.sub || subtitle" class="mw-page-sub">
         <slot name="sub">{{ subtitle }}</slot>
       </div>
     </div>
-    <div class="flex items-center gap-3 pt-1.5">
+    <div class="mw-page-actions">
       <slot name="actions" />
     </div>
   </div>
