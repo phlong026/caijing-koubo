@@ -147,8 +147,18 @@ async function main(): Promise<void> {
       .catch((e) => logger.error({ err: (e as Error).message }, 'boot.fetch_failed'))
   }
 
+  let shuttingDown = false
   const shutdown = async (signal: string) => {
+    if (shuttingDown) return
+    shuttingDown = true
     logger.info({ signal }, 'server.shutdown')
+    // P2-10：worker.close() 会等进行中的任务结束（提取轮询最长 15 分钟），停机必须有上限。
+    // 被打断的任务由既有续跑逻辑接住：提取按 running + task_id 续轮询、审核桩续推、克隆由 poll_sweep 续上
+    const forceMs = Math.max(1000, Number(process.env.SHUTDOWN_TIMEOUT_MS ?? 10_000) || 10_000)
+    setTimeout(() => {
+      logger.warn({ forceMs }, 'server.shutdown_forced：优雅停机超时，强制退出')
+      process.exit(1)
+    }, forceMs).unref()
     try {
       await app.close()
     } catch {}
