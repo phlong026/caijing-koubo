@@ -81,10 +81,13 @@ export function registerCopyLlmRoutes(app: FastifyInstance): void {
       baseUrlHost: r ? safeHost(r.baseUrl) : null,
       mock: !r,
       mockFallback: config.mockFallback,
+      complianceApproved: config.copyLlm.complianceApproved,
       hint: r
         ? r.dedicated
           ? '使用文案二创专用模型（COPY_LLM_*）'
-          : '未配置 COPY_LLM_*，已回退百炼 DASHSCOPE_*'
+          : config.copyLlm.baseUrl && config.copyLlm.apiKey && !config.copyLlm.complianceApproved
+            ? '已配置 COPY_LLM_* 但未获合规批准（COPY_LLM_COMPLIANCE_APPROVED），已回退百炼 DASHSCOPE_*'
+            : '未配置 COPY_LLM_*，已回退百炼 DASHSCOPE_*'
         : '未配置任何模型，当前走 mock 兜底输出',
     })
   })

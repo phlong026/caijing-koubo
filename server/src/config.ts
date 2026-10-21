@@ -213,6 +213,12 @@ export const config = {
     unitPrice: num('COPY_LLM_UNIT_PRICE', 0),
     inputPricePer1k: num('COPY_LLM_INPUT_PRICE_PER_1K', 0),
     outputPricePer1k: num('COPY_LLM_OUTPUT_PRICE_PER_1K', 0),
+    /**
+     * P0-4 合规闸门：COPY_LLM_* 指向第三方中转（如 ccg-cli.online）时，文案与人物档案会发往该服务。
+     * 生产环境必须显式设为 true（表示已获产品与合规书面批准）才启用，否则自动回退百炼；
+     * 开发环境不受影响。
+     */
+    complianceApproved: bool('COPY_LLM_COMPLIANCE_APPROVED', str('NODE_ENV', 'development') !== 'production'),
   },
 
   /**
@@ -295,9 +301,9 @@ export function hasTikHub(): boolean {
 export function hasDashScope(): boolean {
   return !!config.dashscope.apiKey
 }
-/** 文案二创是否已配置专用模型（三项齐备才算） */
+/** 文案二创是否启用专用模型：BASE_URL 与 API_KEY 齐备，且（生产环境）已通过合规批准 */
 export function hasCopyLlm(): boolean {
-  return !!(config.copyLlm.baseUrl && config.copyLlm.apiKey)
+  return !!(config.copyLlm.baseUrl && config.copyLlm.apiKey && config.copyLlm.complianceApproved)
 }
 export function hasOss(): boolean {
   return !!(config.oss.bucket && config.oss.accessKeyId && config.oss.accessKeySecret)

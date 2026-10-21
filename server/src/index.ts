@@ -79,6 +79,12 @@ async function main(): Promise<void> {
     },
     'env.check',
   )
+  if (config.copyLlm.baseUrl && config.copyLlm.apiKey && !config.copyLlm.complianceApproved) {
+    logger.warn(
+      'copy_llm.not_approved：已配置 COPY_LLM_*（第三方模型中转），但未设置 COPY_LLM_COMPLIANCE_APPROVED=true，' +
+        '文案生成已回退百炼。获得产品与合规书面批准后再开启。',
+    )
+  }
   if (config.copy.reviewStubEnabled && config.env === 'production') {
     logger.warn(
       'review.stub_enabled_in_production：生产环境开启了审核桩（REVIEW_STUB_ENABLED=true），' +
