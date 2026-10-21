@@ -1,4 +1,3 @@
-import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { getDb } from '../../../db/index.js'
 import { memEnqueue } from '../../../queue/memory.js'
@@ -8,7 +7,7 @@ import { logger } from '../../../log.js'
 import { err } from '../../../errors.js'
 import { toDb, utcNow } from '../../../lib/time.js'
 import { recordOperation } from '../../audit/repo.js'
-import { getObjectStream, isOssEnabled, putObjectFromFile } from '../../../integrations/aliyun-oss/client.js'
+import { downloadObjectToFile, isOssEnabled, putObjectFromFile } from '../../../integrations/aliyun-oss/client.js'
 import {
   HiflySubmissionUncertain,
   HiflyVendorError,
@@ -121,20 +120,7 @@ function pollDelayOf(attempts: number): number {
 async function fetchToLocal(storageKey: string, destName: string): Promise<string> {
   await ensureTempDir()
   const dest = path.join(paths.tempDir, destName)
-  if (isOssEnabled()) {
-    const res = await getObjectStream(storageKey)
-    if (!res) throw new Error(`存储对象不存在或读取失败：${storageKey}`)
-    const chunks: Buffer[] = []
-    await new Promise<void>((resolve, reject) => {
-      ;(res.stream as NodeJS.ReadableStream).on('data', (c: Buffer) => chunks.push(c))
-      ;(res.stream as NodeJS.ReadableStream).on('end', () => resolve())
-      ;(res.stream as NodeJS.ReadableStream).on('error', reject)
-    })
-    await fsp.writeFile(dest, Buffer.concat(chunks))
-  } else {
-    const local = path.join(paths.dataDir, 'oss', storageKey)
-    await fsp.copyFile(local, dest)
-  }
+  await downloadObjectToFile(storageKey, dest)
   return dest
 }
 

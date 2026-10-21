@@ -1,10 +1,8 @@
-import crypto from 'node:crypto'
-import fsp from 'node:fs/promises'
 import { getDb, type Db } from '../../db/index.js'
 import { jdec, newId } from '../../lib/util.js'
 import { fromDb, toDb, utcNow } from '../../lib/time.js'
 import { err } from '../../errors.js'
-import { MAGIC_HEAD_BYTES, validateUploadFile } from '../../lib/upload.js'
+import { MAGIC_HEAD_BYTES, sha256File, validateUploadFile } from '../../lib/upload.js'
 import { putObjectFromFile } from '../../integrations/aliyun-oss/client.js'
 import { recordOperation } from '../../modules/audit/repo.js'
 import { getPersonaById } from './repo.js'
@@ -117,8 +115,7 @@ export async function uploadAuthorization(input: UploadAuthorizationInput): Prom
     allowedExts: [...limits.exts],
     maxBytes: limits.maxBytes,
   })
-  const buf = await fsp.readFile(input.filePath)
-  const sha256 = crypto.createHash('sha256').update(buf).digest('hex')
+  const sha256 = await sha256File(input.filePath)
 
   const id = newId('auth')
   const fileKey = `persona/${input.personaId}/authorization/${id}${meta.ext}`

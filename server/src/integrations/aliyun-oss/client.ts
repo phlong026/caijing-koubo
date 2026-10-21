@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import { config, hasOss, paths } from '../../config.js'
 import { logger } from '../../log.js'
 
@@ -47,9 +48,24 @@ export async function putObjectFromFile(filePath: string, objectKey: string, pre
     return putLocal(filePath, key)
   }
   const client = await getClient()
-  const buffer = await fsp.readFile(filePath)
-  const res = await client.put(key, buffer)
-  return { key, url: res?.url ?? '', mock: false }
+  // P2-2：传文件路径由 SDK 流式上传；超过 100MB 走分片上传，避免整份读入内存
+  const { size } = await fsp.stat(filePath)
+  const res =
+    size > 100 * 1024 * 1024
+      ? await client.multipartUpload(key, filePath, { partSize: 10 * 1024 * 1024 })
+      : await client.put(key, filePath)
+  return { key, url: res?.url ?? res?.res?.requestUrls?.[0]?.split('?')[0] ?? '', mock: false }
+}
+
+/** 把存储对象流式写到本地文件（OSS 或本地兜底） */
+export async function downloadObjectToFile(key: string, destPath: string): Promise<void> {
+  if (!isOssEnabled()) {
+    await fsp.copyFile(path.join(paths.dataDir, 'oss', key), destPath)
+    return
+  }
+  const res = await getObjectStream(key)
+  if (!res) throw new Error(`存储对象不存在或读取失败：${key}`)
+  await pipeline(res.stream as NodeJS.ReadableStream, fs.createWriteStream(destPath))
 }
 
 /** 签名 URL：有效期覆盖转写耗时；L13 飞影自取需 24 小时有效期 */

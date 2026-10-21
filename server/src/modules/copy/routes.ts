@@ -699,18 +699,30 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
       // P0-3：@fastify/multipart 已在 app.ts 注册（limits.fileSize = articleMaxBytes）
       const file = await (req as FastifyRequest & {
         file: () => Promise<
-          | { filename: string; mimetype: string; toBuffer: () => Promise<Buffer>; file?: { truncated?: boolean } }
+          | { filename: string; mimetype: string; file: AsyncIterable<Buffer> & { truncated?: boolean; destroy?: () => void } }
           | undefined
         >
       }).file()
       if (!file) throw err.badRequest('请上传文件（字段名 file）')
-      const buf = await file.toBuffer()
-      // 超过 limits.fileSize 时 multipart 会把流截断，必须显式判失败，否则会把半个文件当完整解析
-      if (file.file?.truncated) {
-        throw err.articleTooLarge(`文件超过 ${Math.round(config.copy.articleMaxBytes / 1024 / 1024)}MB，请压缩后上传`, {
+      // P2-2：全局 multipart 上限是人物素材的 200MB，这里按文章上限边读边判，超限立即中断，
+      // 不再先 toBuffer() 把整份读进内存再判断
+      const tooLarge = () =>
+        err.articleTooLarge(`文件超过 ${Math.round(config.copy.articleMaxBytes / 1024 / 1024)}MB，请压缩后上传`, {
           max: config.copy.articleMaxBytes,
         })
+      const chunks: Buffer[] = []
+      let total = 0
+      for await (const chunk of file.file) {
+        total += chunk.length
+        if (total > config.copy.articleMaxBytes) {
+          file.file.destroy?.()
+          throw tooLarge()
+        }
+        chunks.push(chunk)
       }
+      // 超过 limits.fileSize 时 multipart 会把流截断，必须显式判失败，否则会把半个文件当完整解析
+      if (file.file.truncated) throw tooLarge()
+      const buf = Buffer.concat(chunks)
       const head = buf.subarray(0, 16)
       const ext = validateFileMeta(file.filename, buf.length, head)
       const parsed = await parseArticleBuffer(ext, buf)

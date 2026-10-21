@@ -1,9 +1,9 @@
 import { getDb, isDuplicateKey, upsert } from '../../../db/index.js'
 import crypto from 'node:crypto'
-import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { newId } from '../../../lib/util.js'
 import { fromDb, toDb, utcNow } from '../../../lib/time.js'
+import { sha256File } from '../../../lib/upload.js'
 import { err } from '../../../errors.js'
 import { logger } from '../../../log.js'
 import { recordOperation } from '../../audit/repo.js'
@@ -180,8 +180,7 @@ export async function uploadVoiceSample(input: UploadVoiceSampleInput): Promise<
   await ensureTempDir()
   const mp3 = await normalizeAudioToMp3(input.filePath, `${newId('vs')}_norm.mp3`)
   const mp3Probe = await probeMedia(mp3)
-  const buf = await fsp.readFile(mp3)
-  const sha256 = crypto.createHash('sha256').update(buf).digest('hex')
+  const sha256 = await sha256File(mp3)
 
   const id = newId('pvs')
   const sampleKey = `persona/${input.personaId}/voice_sample/${id}.mp3`

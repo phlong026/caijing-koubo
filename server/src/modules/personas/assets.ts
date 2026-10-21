@@ -1,4 +1,3 @@
-import crypto from 'node:crypto'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { getDb, isDuplicateKey, type Db } from '../../db/index.js'
@@ -8,7 +7,7 @@ import { err } from '../../errors.js'
 import { paths } from '../../config.js'
 import { logger } from '../../log.js'
 import { putObjectFromFile, getObjectStream, isOssEnabled } from '../../integrations/aliyun-oss/client.js'
-import { MAGIC_HEAD_BYTES, validateUploadFile } from '../../lib/upload.js'
+import { MAGIC_HEAD_BYTES, sha256File, validateUploadFile } from '../../lib/upload.js'
 import { enqueue, QUEUE_NAMES, dedupOpts } from '../../queue/index.js'
 import { getPersonaById } from './repo.js'
 import {
@@ -144,7 +143,7 @@ export async function uploadAsset(input: UploadAssetInput): Promise<{ asset: Per
     maxBytes: limits.maxBytes,
   })
 
-  // 结构校验（图片，R27）
+  // 结构校验（图片，R27；图片上限 10MB，可整份读入）
   if (input.kind === 'photo' || input.kind === 'background_image') {
     const buf = await fsp.readFile(input.filePath)
     const issue = checkImageStructure(meta.ext, buf)
@@ -166,9 +165,8 @@ export async function uploadAsset(input: UploadAssetInput): Promise<{ asset: Per
     })
   }
 
-  // SHA-256 去重
-  const fileBuf = await fsp.readFile(input.filePath)
-  const sha256 = crypto.createHash('sha256').update(fileBuf).digest('hex')
+  // SHA-256 去重（P2-2：流式计算，分身素材最大 200MB）
+  const sha256 = await sha256File(input.filePath)
   const existing = await db.get<Record<string, any>>(
     'SELECT * FROM `persona_asset` WHERE `persona_id` = ? AND `kind` = ? AND `sha256_key` = ? AND `deleted_at` IS NULL',
     [input.personaId, input.kind, sha256],
