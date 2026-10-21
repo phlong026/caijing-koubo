@@ -1030,7 +1030,11 @@ try {
       const t = performance.now()
       const r = await api('GET', '/personas?includeDisabled=1')
       timings.push(performance.now() - t)
-      if (i === 0) check('列表一次返回全部（≤500 不分页）', r.data.items.length >= 500, r.data.items.length)
+      if (i === 0) {
+        // includeDisabled=1 不含已归档人物：期望值 = 未归档人物数
+        const live = Number((await db().get<any>('SELECT COUNT(*) AS c FROM `persona` WHERE `archived_at` IS NULL'))?.c ?? 0)
+        check('列表一次返回全部未归档人物（≤500 不分页）', r.data.items.length === Math.min(live, 500), { items: r.data.items.length, live })
+      }
     }
     timings.sort((a, b) => a - b)
     const p95 = timings[Math.floor(timings.length * 0.95) - 1]
