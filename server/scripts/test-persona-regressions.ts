@@ -16,6 +16,7 @@ const { initDb, closeAll } = await import('../src/db/index.js')
 const { runMigrations } = await import('../src/db/migrate.js')
 const { createPersona, getPersonaById } = await import('../src/modules/personas/repo.js')
 const { getProductionProfile } = await import('../src/modules/personas/readiness.js')
+const { deriveStatus } = await import('../src/modules/personas/policy.js')
 const { toDb, utcNow } = await import('../src/lib/time.js')
 const db = await initDb()
 
@@ -89,6 +90,24 @@ try {
     const ok = await getProductionProfile(a.personaId)
     assert.equal(ok.avatar.avatarId, a.avatarId)
     assert.ok(await getPersonaById(a.personaId, true))
+  })
+
+  await test('P1-5 §3.2 状态派生：撤销 > 过期 > 待核验，有效授权优先', () => {
+    const persona = { line: 'manager' as const, enabled: true, archivedAt: null, authRequired: true }
+    const extra = { avatars: [], voices: [], hasDefaultAvatar: false, hasConfirmedDefaultVoice: false, configured: false }
+    const auth = (status: string, expiresAt = '2099-01-01 00:00:00') => ({ id: uid('a'), status, scopes: ['portrait' as const], expiresAt })
+    const statusOf = (auths: ReturnType<typeof auth>[]) => deriveStatus(persona, auths, extra).status
+    assert.equal(statusOf([auth('revoked')]), 'auth_revoked')
+    assert.equal(deriveStatus(persona, [auth('revoked')], extra).reasons[0]?.code, 'AUTH_REVOKED')
+    assert.equal(statusOf([auth('revoked'), auth('verified', '2020-01-01 00:00:00')]), 'auth_revoked')
+    assert.equal(statusOf([auth('verified', '2020-01-01 00:00:00'), auth('pending')]), 'auth_expired')
+    assert.equal(statusOf([auth('pending')]), 'auth_pending')
+    assert.equal(statusOf([auth('rejected')]), 'auth_pending')
+    assert.equal(statusOf([]), 'auth_pending')
+    assert.equal(statusOf([auth('revoked'), auth('verified')]), 'active')
+    assert.equal(deriveStatus({ ...persona, enabled: false }, [auth('verified')], extra).status, 'disabled')
+    assert.equal(deriveStatus({ ...persona, archivedAt: '2026-01-01' }, [auth('verified')], extra).status, 'archived')
+    assert.equal(deriveStatus({ ...persona, line: 'persona', authRequired: false }, [], extra).status, 'active')
   })
 
   console.log(`${passed} persona regression groups passed`)
