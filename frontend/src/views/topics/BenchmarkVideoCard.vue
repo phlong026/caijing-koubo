@@ -91,7 +91,7 @@
       </div>
       <div class="benchmark-performance">
         <span v-if="lift !== null" :class="{ 'is-highlight': video.isHot }"
-          ><icon-rise v-if="video.isHot" :size="13" />{{ lift.toFixed(1) }}× <small>判定时账号基线</small></span
+          ><icon-arrow-rise v-if="video.isHot" :size="13" />{{ lift.toFixed(1) }}× <small>判定时账号基线</small></span
         ><span v-else>基线待建立</span
         ><span :class="EXTRACT_TAG[video.extractStatus]">{{ EXTRACT_LABEL[video.extractStatus] }}</span>
       </div>
