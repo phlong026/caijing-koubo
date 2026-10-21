@@ -9,7 +9,9 @@
       </template>
       <template #actions>
         <div class="text-right">
-          <a-button type="primary"><template #icon><icon-plus /></template>新建任务</a-button>
+          <a-button type="primary"
+            ><template #icon><icon-plus /></template>新建任务</a-button
+          >
           <div class="mw-subtle mt-1">创建时选择运营主体</div>
         </div>
       </template>
@@ -17,9 +19,17 @@
 
     <div class="flex items-center gap-4 mb-4">
       <a-tabs v-model:active-key="tab" type="line" class="mw-tabs flex-1">
-        <a-tab-pane key="all"><template #title>全部任务 <span class="mw-subtle">{{ tasks.length }}</span></template></a-tab-pane>
-        <a-tab-pane key="mine"><template #title>我负责的 <span class="mw-subtle">3</span></template></a-tab-pane>
-        <a-tab-pane key="todo"><template #title>需处理 <span class="mw-subtle">2</span></template></a-tab-pane>
+        <a-tab-pane key="all"
+          ><template #title
+            >全部任务 <span class="mw-subtle">{{ tasks.length }}</span></template
+          ></a-tab-pane
+        >
+        <a-tab-pane key="mine"
+          ><template #title>我负责的 <span class="mw-subtle">3</span></template></a-tab-pane
+        >
+        <a-tab-pane key="todo"
+          ><template #title>需处理 <span class="mw-subtle">2</span></template></a-tab-pane
+        >
       </a-tabs>
     </div>
     <div class="flex items-center gap-2.5 mb-4 -mt-2">
@@ -32,7 +42,9 @@
     <div class="grid grid-cols-[1fr_380px] gap-5 items-start">
       <!-- ============ 任务列表 ============ -->
       <div class="mw-card overflow-hidden">
-        <div class="grid grid-cols-[30fr_16fr_10fr_22fr_12fr] text-[12px] mw-thead px-5 py-2.5 border-b border-[var(--mw-border)]">
+        <div
+          class="grid grid-cols-[30fr_16fr_10fr_22fr_12fr] text-[12px] mw-thead px-5 py-2.5 border-b border-[var(--mw-border)]"
+        >
           <span>内容</span><span>运营主体</span><span>负责人</span><span>阶段与状态</span><span>下一步</span>
         </div>
         <div
@@ -59,9 +71,17 @@
               <span class="mw-dot" :style="{ background: t.dot }"></span>{{ t.stage }}
             </div>
             <div class="text-[12px] mt-0.5" :style="t.statusCls || 'color:var(--mw-text3)'">{{ t.status }}</div>
-            <a-progress v-if="t.progress" :percent="t.progress / 100" size="mini" :show-text="false" class="mt-1 !w-32" />
+            <a-progress
+              v-if="t.progress"
+              :percent="t.progress / 100"
+              size="mini"
+              :show-text="false"
+              class="mt-1 !w-32"
+            />
           </div>
-          <span class="mw-link flex items-center" @click.stop="doNext(t)">{{ t.next }} <icon-right :size="12" class="ml-0.5" /></span>
+          <span class="mw-link flex items-center" @click.stop="doNext(t)"
+            >{{ t.next }} <icon-right :size="12" class="ml-0.5"
+          /></span>
         </div>
       </div>
 
@@ -79,7 +99,9 @@
             <div class="mw-subtle">任务 {{ current.no }} · {{ current.target }}</div>
           </div>
         </div>
-        <div class="mt-3 p-3 rounded-[10px] border border-[var(--mw-border)] flex items-center gap-2 cursor-pointer hover:border-[color:var(--mw-primary-soft)]">
+        <div
+          class="mt-3 p-3 rounded-[10px] border border-[var(--mw-border)] flex items-center gap-2 cursor-pointer hover:border-[color:var(--mw-primary-soft)]"
+        >
           <icon-file :size="16" class="text-[color:var(--mw-primary)]" />
           <span class="text-[13px]">关联作品</span>
           <span class="mw-tag mw-tag-gray">W-1024</span>
@@ -102,7 +124,10 @@
         <div class="flex items-center gap-1.5 flex-wrap">
           <template v-for="(c, i) in chips" :key="c.t">
             <span v-if="i > 0"><icon-right :size="12" class="text-[var(--mw-text3)]" /></span>
-            <span class="p-2 rounded-[8px] border text-center" :class="c.cur ? 'border-[#7c5cd6] bg-[#f6f2fd]' : 'border-[var(--mw-border)]'">
+            <span
+              class="p-2 rounded-[8px] border text-center"
+              :class="c.cur ? 'border-[#7c5cd6] bg-[#f6f2fd]' : 'border-[var(--mw-border)]'"
+            >
               <div class="text-[12px] font-medium" :style="c.cur ? 'color:#7c5cd6' : ''">{{ c.t }}</div>
               <div class="text-[10.5px] text-[var(--mw-text3)]">{{ c.s }}</div>
             </span>
@@ -110,14 +135,22 @@
         </div>
 
         <a-button type="primary" long class="mt-4" @click="doNext(current)">继续剪辑</a-button>
-        <div class="mw-subtle flex items-center gap-1 mt-2"><icon-info-circle :size="12" />继续剪辑沿用基础视频，不重复渲染。</div>
+        <div class="mw-subtle flex items-center gap-1 mt-2">
+          <icon-info-circle :size="12" />继续剪辑沿用基础视频，不重复渲染。
+        </div>
       </div>
     </div>
 
     <div class="mt-4 flex items-center gap-6">
-      <span class="mw-subtle flex items-center gap-1"><icon-info-circle :size="13" />保存失败仅重试下载，避免重复生成计费。</span>
-      <span class="mw-subtle flex items-center gap-1"><icon-info-circle :size="13" />状态不明先查询原任务，不直接重新提交。</span>
-      <span class="mw-subtle flex items-center gap-1"><icon-info-circle :size="13" />素材混剪已一期启用，与口播共用任务流程。</span>
+      <span class="mw-subtle flex items-center gap-1"
+        ><icon-info-circle :size="13" />保存失败仅重试下载，避免重复生成计费。</span
+      >
+      <span class="mw-subtle flex items-center gap-1"
+        ><icon-info-circle :size="13" />状态不明先查询原任务，不直接重新提交。</span
+      >
+      <span class="mw-subtle flex items-center gap-1"
+        ><icon-info-circle :size="13" />素材混剪已一期启用，与口播共用任务流程。</span
+      >
     </div>
     <div class="mw-corner-note">原型预览 · 演示数据</div>
   </div>

@@ -1,7 +1,9 @@
 <template>
   <div v-if="review || copy?.status === 'approved' || copy?.status === 'rejected'" class="mw-card p-5">
     <div class="flex items-center justify-between mb-3">
-      <div class="mw-card-title">审核进度 <a-tag v-if="review?.isStub" color="orange" size="small">测试流程</a-tag></div>
+      <div class="mw-card-title">
+        审核进度 <a-tag v-if="review?.isStub" color="orange" size="small">测试流程</a-tag>
+      </div>
       <a-tag :color="statusColor" size="small">{{ statusText }}</a-tag>
     </div>
 
@@ -10,7 +12,9 @@
     <div v-if="review" class="space-y-1.5 mb-3">
       <div v-for="(g, gi) in review.gates" :key="gi" class="gate-row">
         <span class="gate-dot" :class="gateClass(g)" />
-        <span class="text-[13px] text-[#3c4a63] w-[180px] shrink-0 truncate" :title="gateName(g.gate)">{{ gateName(g.gate) }}</span>
+        <span class="text-[13px] text-[#3c4a63] w-[180px] shrink-0 truncate" :title="gateName(g.gate)">{{
+          gateName(g.gate)
+        }}</span>
         <span class="text-[12px] flex-1" :class="g.result === 'fail' ? 'text-[#c03e35]' : 'text-[#6b7688]'">
           {{ g.reason || (g.result === 'pass' ? '通过' : '未通过') }}
           <template v-if="g.riskPoints?.length">（风险点：{{ g.riskPoints.join('；') }}）</template>
@@ -20,11 +24,12 @@
     </div>
 
     <!-- 驳回原因 -->
-    <div v-if="copy?.status === 'rejected'" class="mb-3 px-3 py-2 rounded-lg bg-[#fdeeee] text-[12.5px] text-[#c03e35] leading-[1.7]">
+    <div
+      v-if="copy?.status === 'rejected'"
+      class="mb-3 px-3 py-2 rounded-lg bg-[#fdeeee] text-[12.5px] text-[#c03e35] leading-[1.7]"
+    >
       驳回原因：{{ review?.rejectReason || copy.rejectReason || '未填写' }}
-      <template v-if="review?.rejectedGate">
-        <br />拦截环节：{{ gateName(review.rejectedGate) }}
-      </template>
+      <template v-if="review?.rejectedGate"> <br />拦截环节：{{ gateName(review.rejectedGate) }} </template>
     </div>
 
     <!-- 操作 -->
@@ -34,9 +39,7 @@
         <template #icon><icon-download /></template>
         查看通过稿
       </a-button>
-      <span v-if="copy?.status === 'in_review'" class="mw-subtle">
-        送审后可撤回；进入人工复核后不可撤回。
-      </span>
+      <span v-if="copy?.status === 'in_review'" class="mw-subtle"> 送审后可撤回；进入人工复核后不可撤回。 </span>
     </div>
 
     <!-- 已通过稿预览 -->

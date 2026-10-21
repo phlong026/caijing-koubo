@@ -5,7 +5,8 @@ export type BindingMode = 'exclusive' | 'shared'
 
 /** §3.2 有效状态（读时派生） */
 export type EffectiveStatus = 'active' | 'auth_pending' | 'auth_expired' | 'auth_revoked' | 'disabled' | 'archived'
-export type PersonaExtraTag = 'voice_unconfirmed' | 'avatar_in_progress' | 'uncertain' | 'auth_expiring' | 'incomplete' | 'configured'
+export type PersonaExtraTag =
+  'voice_unconfirmed' | 'avatar_in_progress' | 'uncertain' | 'auth_expiring' | 'incomplete' | 'configured'
 
 export interface IpProfile {
   role: string
@@ -81,13 +82,16 @@ export function createPersona(input: {
 }
 
 /** PATCH 需带 rev（乐观锁，冲突 409 PERSONA_CONFLICT） */
-export function patchPersona(id: string, input: {
-  name?: string
-  ownerSubject?: string
-  description?: string
-  bindingMode?: BindingMode
-  rev: number
-}) {
+export function patchPersona(
+  id: string,
+  input: {
+    name?: string
+    ownerSubject?: string
+    description?: string
+    bindingMode?: BindingMode
+    rev: number
+  },
+) {
   return apiPatch<PersonaListItem>(`/personas/${id}`, input)
 }
 
@@ -134,9 +138,17 @@ export function getPersonaStats() {
 }
 
 export interface PersonaOptions {
-  ipOptions: { roles: string[]; serviceScopes: string[]; expressionStyles: string[]; contentDirections: string[] } & Record<string, string[]>
+  ipOptions: {
+    roles: string[]
+    serviceScopes: string[]
+    expressionStyles: string[]
+    contentDirections: string[]
+  } & Record<string, string[]>
   lineLabels: Record<PersonaLine, string>
-  lineRules: Record<PersonaLine, { label: string; bindingModes: BindingMode[]; defaultBindingMode: BindingMode } & Record<string, unknown>>
+  lineRules: Record<
+    PersonaLine,
+    { label: string; bindingModes: BindingMode[]; defaultBindingMode: BindingMode } & Record<string, unknown>
+  >
   lineDefaultDirections: Record<PersonaLine, string[]>
   lineDefaultForbidden: Record<PersonaLine, string[]>
   contentMixPresets: Array<{ label: string }> | string[]
@@ -156,7 +168,9 @@ export function getPersonaOptions() {
 }
 
 export function getPersonaVersions(id: string) {
-  return apiGet<Array<{ id: string; versionNo: number; trigger: string; createdAt: string | null }>>(`/personas/${id}/versions`)
+  return apiGet<Array<{ id: string; versionNo: number; trigger: string; createdAt: string | null }>>(
+    `/personas/${id}/versions`,
+  )
 }
 
 /* ── readiness / production-profile（FR-X4 / FR-X5）──────────── */
@@ -169,10 +183,13 @@ export interface ReadinessCheck {
 }
 
 export function getReadiness(id: string, purpose: 'copy' | 'avatar_video' | 'mixcut') {
-  return apiGet<{ personaId: string; purpose: string; status: EffectiveStatus; pass: boolean; checks: ReadinessCheck[] }>(
-    `/personas/${id}/readiness`,
-    { purpose },
-  )
+  return apiGet<{
+    personaId: string
+    purpose: string
+    status: EffectiveStatus
+    pass: boolean
+    checks: ReadinessCheck[]
+  }>(`/personas/${id}/readiness`, { purpose })
 }
 
 export function getProductionProfile(id: string, avatarId?: string) {
@@ -184,8 +201,25 @@ export function getProductionProfile(id: string, avatarId?: string) {
     name: string
     line: string
     provider: 'hifly'
-    avatar: { avatarId: string; vendorAvatarId: string; name: string; backgroundLabel: string | null; coverUrl: string | null; sourceWidth: number | null; sourceHeight: number | null }
-    voice: { voiceId: string; vendorVoiceId: string; name: string; language: string; speechRate: number; volume: number; pitch: number; demoUrl: string | null }
+    avatar: {
+      avatarId: string
+      vendorAvatarId: string
+      name: string
+      backgroundLabel: string | null
+      coverUrl: string | null
+      sourceWidth: number | null
+      sourceHeight: number | null
+    }
+    voice: {
+      voiceId: string
+      vendorVoiceId: string
+      name: string
+      language: string
+      speechRate: number
+      volume: number
+      pitch: number
+      demoUrl: string | null
+    }
   }>(`/personas/${id}/production-profile${suffix}`)
 }
 
@@ -337,7 +371,10 @@ export function confirmVoice(voiceId: string) {
 }
 
 /** 参数调整（R17 三段式：飞影先改后落库；0.5–2.0，最多一位小数） */
-export function updateVoiceSettings(voiceId: string, settings: { speechRate?: number; volume?: number; pitch?: number }) {
+export function updateVoiceSettings(
+  voiceId: string,
+  settings: { speechRate?: number; volume?: number; pitch?: number },
+) {
   return apiPut<PersonaVoice>(`/persona-voices/${voiceId}/settings`, settings)
 }
 
@@ -412,7 +449,11 @@ export interface PersonaAsset {
   height: number | null
   durationMs: number | null
   fps: number | null
-  quality: { hard: Array<{ code: string; message: string }>; soft: Array<{ code: string; message: string }>; metrics: Record<string, unknown> } | null
+  quality: {
+    hard: Array<{ code: string; message: string }>
+    soft: Array<{ code: string; message: string }>
+    metrics: Record<string, unknown>
+  } | null
   tags: string[]
   reviewDecision: string | null
   reviewReason: string | null
@@ -429,7 +470,10 @@ export function getAssets(id: string, query: { kind?: AssetKind; status?: AssetS
   return apiGet<PersonaAsset[]>(`/personas/${id}/assets`, { kind: query.kind, status: query.status })
 }
 
-export function reviewAsset(assetId: string, input: { decision: 'approved' | 'rejected'; reason?: string; issueCodes?: string[] }) {
+export function reviewAsset(
+  assetId: string,
+  input: { decision: 'approved' | 'rejected'; reason?: string; issueCodes?: string[] },
+) {
   return apiPost<PersonaAsset>(`/persona-assets/${assetId}/review`, input)
 }
 
@@ -437,7 +481,10 @@ export function setAssetCover(assetId: string) {
   return apiPost<PersonaAsset>(`/persona-assets/${assetId}/set-cover`)
 }
 
-export function patchAsset(assetId: string, input: { name?: string; backgroundLabel?: string; tags?: string[]; sort?: number }) {
+export function patchAsset(
+  assetId: string,
+  input: { name?: string; backgroundLabel?: string; tags?: string[]; sort?: number },
+) {
   return apiPatch<PersonaAsset>(`/persona-assets/${assetId}`, input)
 }
 
@@ -497,7 +544,10 @@ export function getAccounts(id: string) {
 }
 
 /** 全量替换（空数组 = 全部解绑）；违反线规则 409 PERSONA_BINDING_RULE */
-export function setAccounts(id: string, accounts: Array<{ platform: Platform; accountKey: string; displayName: string }>) {
+export function setAccounts(
+  id: string,
+  accounts: Array<{ platform: Platform; accountKey: string; displayName: string }>,
+) {
   return apiPut<AccountBinding[]>(`/personas/${id}/accounts`, { accounts })
 }
 
@@ -512,7 +562,9 @@ export interface PersonaReminder {
 }
 
 export function getReminders(unreadOnly = false) {
-  return apiGet<{ items: PersonaReminder[]; unread: number }>('/persona-reminders', { unread: unreadOnly ? '1' : undefined })
+  return apiGet<{ items: PersonaReminder[]; unread: number }>('/persona-reminders', {
+    unread: unreadOnly ? '1' : undefined,
+  })
 }
 
 export function readAllReminders() {
@@ -530,5 +582,11 @@ export function voicePreviewUrl(previewId: string): string {
 
 /** 版本详情（快照） */
 export function getPersonaVersion(versionId: string) {
-  return apiGet<{ id: string; versionNo: number; trigger: string; createdAt: string | null; snapshot: Record<string, unknown> }>(`/persona-versions/${versionId}`)
+  return apiGet<{
+    id: string
+    versionNo: number
+    trigger: string
+    createdAt: string | null
+    snapshot: Record<string, unknown>
+  }>(`/persona-versions/${versionId}`)
 }

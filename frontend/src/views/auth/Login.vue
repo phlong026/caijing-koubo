@@ -9,11 +9,27 @@
         </div>
       </div>
       <label for="login-username">账号</label>
-      <a-input :input-attrs="{ id: 'login-username' }" v-model="username" autocomplete="username" placeholder="请输入账号" :disabled="loading" allow-clear />
+      <a-input
+        :input-attrs="{ id: 'login-username' }"
+        v-model="username"
+        autocomplete="username"
+        placeholder="请输入账号"
+        :disabled="loading"
+        allow-clear
+      />
       <label for="login-password">密码</label>
-      <a-input-password :input-attrs="{ id: 'login-password' }" v-model="password" autocomplete="current-password" placeholder="请输入密码" :disabled="loading" @press-enter="submit" />
+      <a-input-password
+        :input-attrs="{ id: 'login-password' }"
+        v-model="password"
+        autocomplete="current-password"
+        placeholder="请输入密码"
+        :disabled="loading"
+        @press-enter="submit"
+      />
       <p v-if="error" class="login-error" role="alert">{{ error }}</p>
-      <a-button type="primary" html-type="submit" long :loading="loading" :disabled="!username.trim() || !password">登录</a-button>
+      <a-button type="primary" html-type="submit" long :loading="loading" :disabled="!username.trim() || !password"
+        >登录</a-button
+      >
       <p class="login-hint">账号由管理员分配；忘记密码请联系管理员重置。</p>
     </form>
   </div>
@@ -39,7 +55,8 @@ async function submit(): Promise<void> {
   error.value = ''
   try {
     await auth.login(username.value.trim(), password.value)
-    const redirect = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') ? route.query.redirect : '/'
+    const redirect =
+      typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') ? route.query.redirect : '/'
     await router.replace(redirect)
   } catch (e) {
     error.value = (e as Error).message || '登录失败'

@@ -1,9 +1,13 @@
 <template>
   <div class="p-7 pb-10 max-w-[1100px] mx-auto">
     <PageHead title="账号管理">
-      <template #sub>管理登录账号与角色：运营负责内容生产，审核负责授权核验、素材审核与文案复核，管理员可管理账号。</template>
+      <template #sub
+        >管理登录账号与角色：运营负责内容生产，审核负责授权核验、素材审核与文案复核，管理员可管理账号。</template
+      >
       <template #actions>
-        <a-button type="primary" @click="openCreate"><template #icon><icon-plus /></template>新建账号</a-button>
+        <a-button type="primary" @click="openCreate"
+          ><template #icon><icon-plus /></template>新建账号</a-button
+        >
       </template>
     </PageHead>
 
@@ -13,14 +17,22 @@
         <a-table-column title="显示名" data-index="displayName" />
         <a-table-column title="角色">
           <template #cell="{ record }">
-            <a-select :model-value="record.role" size="small" :style="{ width: '110px' }" :disabled="record.id === auth.user?.id" @change="(v) => changeRole(record, v as Role)">
+            <a-select
+              :model-value="record.role"
+              size="small"
+              :style="{ width: '110px' }"
+              :disabled="record.id === auth.user?.id"
+              @change="(v) => changeRole(record, v as Role)"
+            >
               <a-option v-for="(label, key) in ROLE_LABELS" :key="key" :value="key" :label="label" />
             </a-select>
           </template>
         </a-table-column>
         <a-table-column title="状态">
           <template #cell="{ record }">
-            <span class="mw-tag" :class="record.enabled ? 'mw-tag-green' : 'mw-tag-gray'">{{ record.enabled ? '启用' : '停用' }}</span>
+            <span class="mw-tag" :class="record.enabled ? 'mw-tag-green' : 'mw-tag-gray'">{{
+              record.enabled ? '启用' : '停用'
+            }}</span>
           </template>
         </a-table-column>
         <a-table-column title="最近登录">
@@ -30,14 +42,22 @@
           <template #cell="{ record }">
             <a-space>
               <a-button size="mini" @click="openReset(record)">重置密码</a-button>
-              <a-button size="mini" :disabled="record.id === auth.user?.id" @click="toggle(record)">{{ record.enabled ? '停用' : '启用' }}</a-button>
+              <a-button size="mini" :disabled="record.id === auth.user?.id" @click="toggle(record)">{{
+                record.enabled ? '停用' : '启用'
+              }}</a-button>
             </a-space>
           </template>
         </a-table-column>
       </template>
     </a-table>
 
-    <a-modal v-model:visible="createVisible" title="新建账号" :ok-loading="saving" @ok="submitCreate" @cancel="createVisible = false">
+    <a-modal
+      v-model:visible="createVisible"
+      title="新建账号"
+      :ok-loading="saving"
+      @ok="submitCreate"
+      @cancel="createVisible = false"
+    >
       <div class="flex flex-col gap-3">
         <a-input v-model="form.username" placeholder="账号（3–32 位字母、数字、下划线）" />
         <a-input v-model="form.displayName" placeholder="显示名（可选）" />
@@ -48,7 +68,13 @@
       </div>
     </a-modal>
 
-    <a-modal v-model:visible="resetVisible" :title="`重置密码：${resetTarget?.username ?? ''}`" :ok-loading="saving" @ok="submitReset" @cancel="resetVisible = false">
+    <a-modal
+      v-model:visible="resetVisible"
+      :title="`重置密码：${resetTarget?.username ?? ''}`"
+      :ok-loading="saving"
+      @ok="submitReset"
+      @cancel="resetVisible = false"
+    >
       <a-input-password v-model="resetPassword" placeholder="新密码（至少 8 位，含字母和数字）" />
       <p class="mw-subtle mt-2">重置后该账号已登录的会话会立即失效。</p>
     </a-modal>

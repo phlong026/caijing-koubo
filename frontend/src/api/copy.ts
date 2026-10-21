@@ -11,25 +11,12 @@ import { apiDel, apiGet, apiPatch, apiPost, apiPut, apiUpload, type PageResult }
 export type CopySource = 'news' | 'benchmark' | 'article' | 'manual'
 export type CopyLine = 'manager' | 'kos' | 'persona'
 export type CopyStatus = 'draft' | 'in_review' | 'approved' | 'rejected' | 'archived'
-export type CopyDerivedStatus =
-  | 'pending_write'
-  | 'writing'
-  | 'in_review'
-  | 'rejected'
-  | 'approved'
-  | 'revising'
+export type CopyDerivedStatus = 'pending_write' | 'writing' | 'in_review' | 'rejected' | 'approved' | 'revising'
 export type DurationTier = 'short' | 'medium' | 'long' | 'custom'
 export type VersionOrigin = 'ai_generate' | 'manual_save' | 'restore' | 'submit'
 export type DraftOrigin = 'ai' | 'manual'
 export type SubmissionStatus =
-  | 'submitted'
-  | 'gate1'
-  | 'gate2'
-  | 'gate3'
-  | 'pending_manual'
-  | 'approved'
-  | 'rejected'
-  | 'withdrawn'
+  'submitted' | 'gate1' | 'gate2' | 'gate3' | 'pending_manual' | 'approved' | 'rejected' | 'withdrawn'
 
 /** 结构化纯文本段落（W4） */
 export interface Section {
@@ -70,9 +57,33 @@ export interface CopyListItem {
   topicId: string | null
 }
 
-export interface CreativeSettings { templateId: string; styleId: string; durationTier: DurationTier; durationSeconds: number | null; count: number; instructions: string }
-export interface SourceReview { correctedText: string; note: string; confirmed: boolean; reviewedAt?: string }
-export interface SourceMaterial { type: string; title?: string; text: string | null; videoId?: string; coverUrl?: string; author?: string; shareUrl?: string; contentUrl?: string; publishedAt?: string; duration?: number; sentences?: Array<{ text: string; startTime: number; endTime: number }> }
+export interface CreativeSettings {
+  templateId: string
+  styleId: string
+  durationTier: DurationTier
+  durationSeconds: number | null
+  count: number
+  instructions: string
+}
+export interface SourceReview {
+  correctedText: string
+  note: string
+  confirmed: boolean
+  reviewedAt?: string
+}
+export interface SourceMaterial {
+  type: string
+  title?: string
+  text: string | null
+  videoId?: string
+  coverUrl?: string
+  author?: string
+  shareUrl?: string
+  contentUrl?: string
+  publishedAt?: string
+  duration?: number
+  sentences?: Array<{ text: string; startTime: number; endTime: number }>
+}
 
 export interface Draft {
   id: string
@@ -121,7 +132,7 @@ export interface SimilarityResult {
   threshold: number
   blocked: boolean
   longest: string
-  fragments: Array<string | {text:string;length:number}>
+  fragments: Array<string | { text: string; length: number }>
 }
 
 export interface Generation {
@@ -298,7 +309,14 @@ export interface CopyOptions {
     gates: Record<string, string>
     origins: Record<string, string>
   }
-  personas: Array<PersonaBrief & { enabled: boolean; usable?: boolean; statusLabel?: string; statusReasons?: Array<{ code: string; message: string }> }>
+  personas: Array<
+    PersonaBrief & {
+      enabled: boolean
+      usable?: boolean
+      statusLabel?: string
+      statusReasons?: Array<{ code: string; message: string }>
+    }
+  >
 }
 
 /* ── 文章 ────────────────────────────────────────────────────────── */
@@ -407,9 +425,18 @@ export const copyApi = {
     return apiPost<{ ok: true }>(`/copy/${copyId}/archive`)
   },
 
-  saveSettings(copyId: string, body: CreativeSettings) { return apiPut<{ settings: Record<string, unknown> }>(`/copy/${copyId}/settings`, body) },
-  saveSourceReview(copyId: string, body: SourceReview) { return apiPut<{ sourceReview: SourceReview }>(`/copy/${copyId}/source-review`, body) },
-  finalize(copyId: string, body: { draftId: string; rev: number }) { return apiPost<{ finalSelection: { draftId: string; versionId: string; versionNo: number } }>(`/copy/${copyId}/finalize`, body) },
+  saveSettings(copyId: string, body: CreativeSettings) {
+    return apiPut<{ settings: Record<string, unknown> }>(`/copy/${copyId}/settings`, body)
+  },
+  saveSourceReview(copyId: string, body: SourceReview) {
+    return apiPut<{ sourceReview: SourceReview }>(`/copy/${copyId}/source-review`, body)
+  },
+  finalize(copyId: string, body: { draftId: string; rev: number }) {
+    return apiPost<{ finalSelection: { draftId: string; versionId: string; versionNo: number } }>(
+      `/copy/${copyId}/finalize`,
+      body,
+    )
+  },
   source(copyId: string) {
     return apiGet<SourceMaterial>(`/copy/${copyId}/source`)
   },
@@ -421,7 +448,11 @@ export const copyApi = {
   getDraft(copyId: string, draftId: string) {
     return apiGet<Draft>(`/copy/${copyId}/drafts/${draftId}`)
   },
-  saveDraft(copyId: string, draftId: string, body: { title?: string | null; sections: Section[]; rev: number; confirmReedit?: boolean }) {
+  saveDraft(
+    copyId: string,
+    draftId: string,
+    body: { title?: string | null; sections: Section[]; rev: number; confirmReedit?: boolean },
+  ) {
     return apiPut<{ draft: Draft; versionCreated: false }>(`/copy/${copyId}/drafts/${draftId}`, body)
   },
   renameDraft(copyId: string, draftId: string, name: string) {
@@ -450,7 +481,12 @@ export const copyApi = {
     return apiGet<{
       baseVersionNo: number | null
       targetVersionNo: number
-      sections: Array<{ label: string; change: 'added' | 'removed' | 'modified' | 'same'; base: string; target: string }>
+      sections: Array<{
+        label: string
+        change: 'added' | 'removed' | 'modified' | 'same'
+        base: string
+        target: string
+      }>
     }>(`/copy/versions/${versionId}/diff`)
   },
   restoreVersion(versionId: string) {
@@ -526,7 +562,10 @@ export const copyApi = {
     submissionId: string,
     body: { result: 'approved' | 'rejected'; reason?: string; rejectedGate?: string; riskPoints?: string[] },
   ) {
-    return apiPost<{ copyId: string; status: 'approved' | 'rejected' }>(`/review/submissions/${submissionId}/decision`, body)
+    return apiPost<{ copyId: string; status: 'approved' | 'rejected' }>(
+      `/review/submissions/${submissionId}/decision`,
+      body,
+    )
   },
 
   /** 人工复核队列（P1-7，仅审核员 / 管理员） */
@@ -549,7 +588,10 @@ export const copyApi = {
     submissionId: string,
     body: { result: 'approved' | 'rejected'; reason?: string; riskPoints?: string[]; appendedRiskText?: string },
   ) {
-    return apiPost<{ copyId: string; status: 'approved' | 'rejected' }>(`/review/submissions/${submissionId}/manual-decision`, body)
+    return apiPost<{ copyId: string; status: 'approved' | 'rejected' }>(
+      `/review/submissions/${submissionId}/manual-decision`,
+      body,
+    )
   },
 
   /* 工具 */
@@ -557,11 +599,25 @@ export const copyApi = {
   scanCompliance(body: { copyId?: string; title?: string | null; sections: Section[] }) {
     return apiPost<{ hits: ComplianceHit[] }>('/copy/compliance/scan', body)
   },
-  promptPreview(copyId: string, body: { templateId: string; styleId: string; durationTier: DurationTier; durationSeconds?: number | null; instructions?: string; count?: number }) {
-    return apiPost<{ candidates?: Array<{direction: string; user: string}>; system: string; user: string; prompt: string; promptHash: string; wordRange: { min: number; max: number } }>(
-      `/copy/${copyId}/prompt-preview`,
-      body,
-    )
+  promptPreview(
+    copyId: string,
+    body: {
+      templateId: string
+      styleId: string
+      durationTier: DurationTier
+      durationSeconds?: number | null
+      instructions?: string
+      count?: number
+    },
+  ) {
+    return apiPost<{
+      candidates?: Array<{ direction: string; user: string }>
+      system: string
+      user: string
+      prompt: string
+      promptHash: string
+      wordRange: { min: number; max: number }
+    }>(`/copy/${copyId}/prompt-preview`, body)
   },
 }
 

@@ -36,21 +36,42 @@
     <a-tabs v-model:active-key="tab" size="small" class="mw-tabs people-tabs mt-3" lazy-load>
       <a-tab-pane key="ip" title="IP 定位">
         <ProfileTab
-          :persona="persona" :options="options"
-          @saved="$emit('changed')" @reload="$emit('reload')"
-          @open-bindings="bindingVisible = true" @open-authorizations="authVisible = true"
+          :persona="persona"
+          :options="options"
+          @saved="$emit('changed')"
+          @reload="$emit('reload')"
+          @open-bindings="bindingVisible = true"
+          @open-authorizations="authVisible = true"
         />
       </a-tab-pane>
-      <a-tab-pane key="photo" title="形象照片"><PhotoTab :persona="persona" :options="options" @changed="$emit('changed')" /></a-tab-pane>
-      <a-tab-pane key="avatar" title="口播分身"><AvatarTab :persona="persona" :options="options" @changed="$emit('changed')" /></a-tab-pane>
-      <a-tab-pane key="voice" title="声音档案"><VoiceTab :persona="persona" :options="options" @changed="$emit('changed')" /></a-tab-pane>
-      <a-tab-pane key="bg" title="背景与空镜"><BackgroundTab :persona="persona" :options="options" @changed="$emit('changed')" /></a-tab-pane>
+      <a-tab-pane key="photo" title="形象照片"
+        ><PhotoTab :persona="persona" :options="options" @changed="$emit('changed')"
+      /></a-tab-pane>
+      <a-tab-pane key="avatar" title="口播分身"
+        ><AvatarTab :persona="persona" :options="options" @changed="$emit('changed')"
+      /></a-tab-pane>
+      <a-tab-pane key="voice" title="声音档案"
+        ><VoiceTab :persona="persona" :options="options" @changed="$emit('changed')"
+      /></a-tab-pane>
+      <a-tab-pane key="bg" title="背景与空镜"
+        ><BackgroundTab :persona="persona" :options="options" @changed="$emit('changed')"
+      /></a-tab-pane>
     </a-tabs>
 
     <AuthorizationDrawer v-model:visible="authVisible" :persona="persona" @changed="$emit('changed')" />
     <AccountBindingDialog v-model:visible="bindingVisible" :persona="persona" @saved="$emit('changed')" />
-    <VersionDrawer v-model:visible="versionVisible" :persona-id="persona.id" :current-version-id="persona.currentVersionId" />
-    <PersonaFormDialog v-model:visible="editVisible" :persona="persona" :options="options" @saved="$emit('changed')" @conflict="$emit('reload')" />
+    <VersionDrawer
+      v-model:visible="versionVisible"
+      :persona-id="persona.id"
+      :current-version-id="persona.currentVersionId"
+    />
+    <PersonaFormDialog
+      v-model:visible="editVisible"
+      :persona="persona"
+      :options="options"
+      @saved="$emit('changed')"
+      @conflict="$emit('reload')"
+    />
 
     <a-modal v-model:visible="blockVisible" title="暂时不能归档" :footer="false">
       <div class="text-[13.5px] leading-6" role="alert">{{ blockReason }}</div>
@@ -97,14 +118,21 @@ const enableVisible = ref(false)
 const enableReason = ref('')
 const enableList = ref<string[]>([])
 
-watch(() => props.persona.id, () => { tab.value = 'ip' })
+watch(
+  () => props.persona.id,
+  () => {
+    tab.value = 'ip'
+  },
+)
 
 const extraTags = computed(() => {
   if (props.persona.status === 'archived' || props.persona.status === 'disabled') return []
   return props.persona.extraTags.map((t) => EXTRA_TAGS[t]).filter(Boolean)
 })
 const needsAuth = computed(() => ['auth_pending', 'auth_expired', 'auth_revoked'].includes(props.persona.status))
-const versionLabel = computed(() => props.persona.versions.find((v) => v.id === props.persona.currentVersionId)?.versionNo ?? '')
+const versionLabel = computed(
+  () => props.persona.versions.find((v) => v.id === props.persona.currentVersionId)?.versionNo ?? '',
+)
 
 async function toggle(next: string | number | boolean): Promise<void> {
   toggling.value = true

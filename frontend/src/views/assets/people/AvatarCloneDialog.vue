@@ -12,17 +12,27 @@
     @update:visible="(v: boolean) => !v && $emit('update:visible', false)"
   >
     <div v-if="source" class="flex items-center gap-3 mb-4">
-      <img v-if="source.thumbKey" :src="assetFileUrl(source.id, 'thumb')" :alt="source.name" class="w-[96px] h-[72px] object-cover rounded" />
+      <img
+        v-if="source.thumbKey"
+        :src="assetFileUrl(source.id, 'thumb')"
+        :alt="source.name"
+        class="w-[96px] h-[72px] object-cover rounded"
+      />
       <div class="min-w-0">
         <div class="font-medium truncate">{{ source.name }}</div>
-        <div class="mw-subtle">{{ source.width }}×{{ source.height }} · {{ fmtDuration(source.durationMs) }}<template v-if="source.backgroundLabel"> · 背景：{{ source.backgroundLabel }}</template></div>
+        <div class="mw-subtle">
+          {{ source.width }}×{{ source.height }} · {{ fmtDuration(source.durationMs)
+          }}<template v-if="source.backgroundLabel"> · 背景：{{ source.backgroundLabel }}</template>
+        </div>
       </div>
     </div>
 
     <a-form :model="form" layout="vertical">
       <a-form-item label="授权材料（须已核验、未过期，范围含「肖像」）" required>
         <a-select v-model="form.authId" placeholder="选择授权" :disabled="!auths.length" aria-label="授权材料">
-          <a-option v-for="a in auths" :key="a.id" :value="a.id">{{ a.grantorName }} · 至 {{ fmtDate(a.expiresAt) }}</a-option>
+          <a-option v-for="a in auths" :key="a.id" :value="a.id"
+            >{{ a.grantorName }} · 至 {{ fmtDate(a.expiresAt) }}</a-option
+          >
         </a-select>
         <template #extra>
           <span v-if="!auths.length" class="text-[#c0392b]">没有可用的肖像授权，请先在「授权管理」上传并核验。</span>
@@ -46,10 +56,22 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
-import { assetFileUrl, createAvatar, createConsent, type PersonaAsset, type PersonaDetail, type PersonaOptions } from '@/api/personas'
+import {
+  assetFileUrl,
+  createAvatar,
+  createConsent,
+  type PersonaAsset,
+  type PersonaDetail,
+  type PersonaOptions,
+} from '@/api/personas'
 import { errMsg, fmtDate, fmtDuration, isApiCode, newIdempotencyKey, usableAuthorizations } from './shared'
 
-const props = defineProps<{ visible: boolean; persona: PersonaDetail; source: PersonaAsset | null; options: PersonaOptions | null }>()
+const props = defineProps<{
+  visible: boolean
+  persona: PersonaDetail
+  source: PersonaAsset | null
+  options: PersonaOptions | null
+}>()
 const emit = defineEmits<{ (e: 'update:visible', v: boolean): void; (e: 'submitted'): void }>()
 
 const form = reactive({ authId: '', name: '', agree: false })
@@ -59,7 +81,11 @@ let idemKey = ''
 let consentId = ''
 
 const auths = computed(() => usableAuthorizations(props.persona.authorizations, 'portrait'))
-const consentText = computed(() => props.options?.consentTexts?.AVATAR_CLONE ?? '我确认已获得肖像权人的书面授权，同意将该素材提交给第三方数字人服务制作口播分身，并仅用于授权范围内的内容生产。')
+const consentText = computed(
+  () =>
+    props.options?.consentTexts?.AVATAR_CLONE ??
+    '我确认已获得肖像权人的书面授权，同意将该素材提交给第三方数字人服务制作口播分身，并仅用于授权范围内的内容生产。',
+)
 const canSubmit = computed(() => !!form.authId && !!form.name.trim() && form.agree && !submitting.value)
 
 watch(
@@ -91,7 +117,12 @@ async function send(confirmDuplicate: boolean): Promise<void> {
   }
   const r = await createAvatar(
     props.persona.id,
-    { name: form.name.trim(), sourceAssetId: props.source.id, consentId, ...(confirmDuplicate ? { confirmDuplicate: true } : {}) },
+    {
+      name: form.name.trim(),
+      sourceAssetId: props.source.id,
+      consentId,
+      ...(confirmDuplicate ? { confirmDuplicate: true } : {}),
+    },
     idemKey,
   )
   Message.success(r.replayed ? '该请求已提交过，已为你定位到原记录' : '已提交，分身制作中')

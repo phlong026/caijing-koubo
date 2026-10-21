@@ -97,7 +97,12 @@ try {
 
     // 6) 提交前检查
     const submitBtn = page.getByRole('button', { name: /提交审核/ })
-    const submitEnabled = (await submitBtn.count()) > 0 && !(await submitBtn.first().isDisabled().catch(() => true))
+    const submitEnabled =
+      (await submitBtn.count()) > 0 &&
+      !(await submitBtn
+        .first()
+        .isDisabled()
+        .catch(() => true))
     if (submitEnabled) {
       await submitBtn.first().click()
       await page.waitForTimeout(2500)

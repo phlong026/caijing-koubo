@@ -19,7 +19,18 @@
           <div class="mw-brand-tagline">{{ brand.appTagline }}</div>
         </div>
       </div>
-      <div class="mw-sidebar-tools"><a-button type="text" :aria-label="workspace.navigationCollapsed ? '展开导航' : '收起导航'" :aria-expanded="!workspace.navigationCollapsed" aria-controls="workspace-navigation" :title="workspace.navigationCollapsed ? '展开导航' : '收起导航'" @click="workspace.toggleNavigation()"><template #icon><icon-menu-unfold v-if="workspace.navigationCollapsed" /><icon-menu-fold v-else /></template><span v-if="!workspace.navigationCollapsed">收起导航</span></a-button></div>
+      <div class="mw-sidebar-tools">
+        <a-button
+          type="text"
+          :aria-label="workspace.navigationCollapsed ? '展开导航' : '收起导航'"
+          :aria-expanded="!workspace.navigationCollapsed"
+          aria-controls="workspace-navigation"
+          :title="workspace.navigationCollapsed ? '展开导航' : '收起导航'"
+          @click="workspace.toggleNavigation()"
+          ><template #icon><icon-menu-unfold v-if="workspace.navigationCollapsed" /><icon-menu-fold v-else /></template
+          ><span v-if="!workspace.navigationCollapsed">收起导航</span></a-button
+        >
+      </div>
       <nav id="workspace-navigation" class="mw-sidebar-nav">
         <template v-for="group in visibleNavGroups" :key="group.label">
           <div v-if="group.label" class="mw-nav-group">{{ group.label }}</div>
@@ -49,7 +60,9 @@
         <div class="mw-profile">
           <a-dropdown trigger="click" position="tl">
             <button type="button" class="mw-profile-trigger" :title="auth.user?.displayName" aria-label="账号菜单">
-              <div class="mw-profile-avatar">{{ (auth.user?.displayName || auth.user?.username || '?').slice(0, 1) }}</div>
+              <div class="mw-profile-avatar">
+                {{ (auth.user?.displayName || auth.user?.username || '?').slice(0, 1) }}
+              </div>
               <div class="mw-profile-meta flex-1 text-left">
                 <div class="font-medium">{{ auth.user?.displayName || auth.user?.username }}</div>
                 <div class="mw-subtle">{{ auth.user?.roleLabel }}</div>
@@ -62,7 +75,13 @@
             </template>
           </a-dropdown>
           <a-badge dot :count="bench.unread">
-            <a-button type="text" shape="circle" title="对标告警" aria-label="查看对标告警" @click="router.push('/topics')">
+            <a-button
+              type="text"
+              shape="circle"
+              title="对标告警"
+              aria-label="查看对标告警"
+              @click="router.push('/topics')"
+            >
               <template #icon><icon-notification :size="17" /></template>
             </a-button>
           </a-badge>
@@ -74,10 +93,20 @@
         <router-view />
       </main>
     </div>
-    <a-modal v-model:visible="passwordVisible" title="修改密码" :ok-loading="passwordSaving" @ok="submitPassword" @cancel="passwordVisible = false">
+    <a-modal
+      v-model:visible="passwordVisible"
+      title="修改密码"
+      :ok-loading="passwordSaving"
+      @ok="submitPassword"
+      @cancel="passwordVisible = false"
+    >
       <div class="flex flex-col gap-3">
         <a-input-password v-model="oldPassword" placeholder="原密码" autocomplete="current-password" />
-        <a-input-password v-model="newPassword" placeholder="新密码（至少 8 位，含字母和数字）" autocomplete="new-password" />
+        <a-input-password
+          v-model="newPassword"
+          placeholder="新密码（至少 8 位，含字母和数字）"
+          autocomplete="new-password"
+        />
       </div>
     </a-modal>
   </div>
@@ -142,7 +171,7 @@ const auth = useAuthStore()
 const visibleNavGroups = computed(() =>
   navGroups.map((g) => ({
     ...g,
-    items: g.items.filter((i) => !('roles' in i) || auth.hasRole(...((i as { roles: Role[] }).roles))),
+    items: g.items.filter((i) => !('roles' in i) || auth.hasRole(...(i as { roles: Role[] }).roles)),
   })),
 )
 const passwordVisible = ref(false)

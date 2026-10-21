@@ -9,7 +9,13 @@
   >
     <template #footer>
       <a-button @click="emit('update:visible', false)">取消</a-button>
-      <a-button type="primary" :disabled="loading || !result?.canSubmit || (hasWarnings && !acknowledged)" :loading="submitting" @click="onSubmit">确认提交审核</a-button>
+      <a-button
+        type="primary"
+        :disabled="loading || !result?.canSubmit || (hasWarnings && !acknowledged)"
+        :loading="submitting"
+        @click="onSubmit"
+        >确认提交审核</a-button
+      >
     </template>
     <div v-if="loading" class="py-14 text-center">
       <a-spin />
@@ -17,16 +23,27 @@
     </div>
 
     <template v-else-if="result">
-      <p class="mw-subtle mb-3">{{ store.drafts.find(d=>d.id===result?.draftId)?.name }} · {{ store.editor?.title }}</p>
+      <p class="mw-subtle mb-3">
+        {{ store.drafts.find((d) => d.id === result?.draftId)?.name }} · {{ store.editor?.title }}
+      </p>
       <!-- 结论条 -->
       <div
         class="rounded-lg px-4 py-3 mb-4 flex items-center gap-2"
         :class="result.canSubmit ? (hasWarnings ? 'bg-[#fff5e5]' : 'bg-[#e9f7ef]') : 'bg-[#fdeeee]'"
       >
         <icon-check-circle-fill v-if="result.canSubmit && !hasWarnings" style="color: #12805c" />
-        <icon-exclamation-circle-fill v-else :style="{color:result.canSubmit ? '#a56b13' : '#c03e35'}" />
-        <span class="text-[13px]" :class="result.canSubmit ? (hasWarnings ? 'text-[#a56b13]' : 'text-[#12805c]') : 'text-[#c03e35]'">
-          {{ result.canSubmit ? (hasWarnings ? '请确认以下提醒后提交' : '检查通过，可提交审核') : '请修改以下问题后再提交' }}
+        <icon-exclamation-circle-fill v-else :style="{ color: result.canSubmit ? '#a56b13' : '#c03e35' }" />
+        <span
+          class="text-[13px]"
+          :class="result.canSubmit ? (hasWarnings ? 'text-[#a56b13]' : 'text-[#12805c]') : 'text-[#c03e35]'"
+        >
+          {{
+            result.canSubmit
+              ? hasWarnings
+                ? '请确认以下提醒后提交'
+                : '检查通过，可提交审核'
+              : '请修改以下问题后再提交'
+          }}
         </span>
       </div>
 
@@ -50,7 +67,15 @@
 
       <p class="mw-subtle mb-4">实际时长以配音为准，风险提示将单独显示为字幕。</p>
       <!-- 检查项 -->
-      <div class="flex items-center justify-between mb-2"><span class="mw-subtle">{{ result.checks.filter(c=>!c.pass&&c.level==='hard').length }} 项需修正 · {{ result.checks.filter(c=>!c.pass&&c.level==='soft').length }} 项提醒 · {{ result.checks.filter(c=>c.pass).length }} 项通过</span><a-button type="text" size="mini" @click="showAll=!showAll">{{ showAll ? '只看待处理' : '显示全部检查' }}</a-button></div>
+      <div class="flex items-center justify-between mb-2">
+        <span class="mw-subtle"
+          >{{ result.checks.filter((c) => !c.pass && c.level === 'hard').length }} 项需修正 ·
+          {{ result.checks.filter((c) => !c.pass && c.level === 'soft').length }} 项提醒 ·
+          {{ result.checks.filter((c) => c.pass).length }} 项通过</span
+        ><a-button type="text" size="mini" @click="showAll = !showAll">{{
+          showAll ? '只看待处理' : '显示全部检查'
+        }}</a-button>
+      </div>
       <div class="space-y-2 mb-4">
         <div v-for="c in visibleChecks" :key="c.key" class="check-row">
           <icon-check-circle-fill v-if="c.pass" style="color: #12805c" :size="15" />
@@ -62,8 +87,19 @@
           <a-tag :color="c.pass ? 'gray' : c.level === 'hard' ? 'red' : 'orange'" size="small">
             {{ c.pass ? '通过' : c.level === 'hard' ? '需修正' : '需留意' }}
           </a-tag>
-          <a-button v-if="!c.pass && checkStep(c.key)" type="text" size="mini" :aria-label="`处理${c.label}`" @click="navigateTo(c.key)">去处理</a-button>
-          <span v-if="c.message || c.hint" class="text-[12px] w-full pl-[23px]" :class="c.pass ? 'text-[#9aa6ba]' : 'text-[#b95f1d]'">
+          <a-button
+            v-if="!c.pass && checkStep(c.key)"
+            type="text"
+            size="mini"
+            :aria-label="`处理${c.label}`"
+            @click="navigateTo(c.key)"
+            >去处理</a-button
+          >
+          <span
+            v-if="c.message || c.hint"
+            class="text-[12px] w-full pl-[23px]"
+            :class="c.pass ? 'text-[#9aa6ba]' : 'text-[#b95f1d]'"
+          >
             {{ c.message || c.hint }}
           </span>
         </div>
@@ -71,7 +107,9 @@
 
       <!-- 合规命中明细 -->
       <div v-if="result.complianceHits.length" class="mb-4">
-        <div class="text-[13px] font-medium text-[#3c4a63] mb-2">需留意的用词（{{ result.complianceHits.length }}）</div>
+        <div class="text-[13px] font-medium text-[#3c4a63] mb-2">
+          需留意的用词（{{ result.complianceHits.length }}）
+        </div>
         <div class="space-y-1.5 max-h-[160px] overflow-auto">
           <div
             v-for="(h, i) in result.complianceHits"
@@ -82,7 +120,9 @@
               {{ h.level === 'hard' ? '禁用' : '提示' }}
             </a-tag>
             <span class="font-medium text-[#131f38]">{{ h.word }}</span>
-            <a-button size="mini" type="text" @click="locate(h)">{{ h.sectionIndex < 0 ? '定位标题' : `定位第 ${h.sectionIndex + 1} 段` }}</a-button>
+            <a-button size="mini" type="text" @click="locate(h)">{{
+              h.sectionIndex < 0 ? '定位标题' : `定位第 ${h.sectionIndex + 1} 段`
+            }}</a-button>
             <span v-if="h.fromPersona" class="mw-subtle">（来自人物设定）</span>
           </div>
         </div>
@@ -93,8 +133,8 @@
         <div class="flex items-center justify-between mb-2">
           <span class="text-[13px] font-medium text-[#3c4a63]">与原文查重</span>
           <span class="text-[12px]" :class="result.similarity.blocked ? 'text-[#c03e35]' : 'text-[#6b7688]'">
-            相似度 {{ (result.similarity.similarity * 100).toFixed(1) }}%
-            （上限 {{ (result.similarity.threshold * 100).toFixed(0) }}%）
+            相似度 {{ (result.similarity.similarity * 100).toFixed(1) }}% （上限
+            {{ (result.similarity.threshold * 100).toFixed(0) }}%）
           </span>
         </div>
         <a-progress
@@ -111,11 +151,17 @@
         </div>
       </div>
 
-      <div class="precheck-boundary">提交后还需人工审核。<a-checkbox v-if="hasWarnings" v-model="acknowledged">我已了解以上提醒，继续提交</a-checkbox></div>
+      <div class="precheck-boundary">
+        提交后还需人工审核。<a-checkbox v-if="hasWarnings" v-model="acknowledged"
+          >我已了解以上提醒，继续提交</a-checkbox
+        >
+      </div>
     </template>
 
     <div v-else class="py-12 text-center">
-      <a-empty :description="store.error || '检查失败，请重试'" /><a-button class="mt-3" @click="checkAgain">重新检查</a-button>
+      <a-empty :description="store.error || '检查失败，请重试'" /><a-button class="mt-3" @click="checkAgain"
+        >重新检查</a-button
+      >
     </div>
   </a-modal>
 </template>
@@ -134,29 +180,56 @@ const emit = defineEmits<{
 }>()
 
 const store = useCopyStore()
-function checkStep(key:string):'source'|'settings'|'write'|undefined {
-  const steps:Partial<Record<string,'source'|'settings'|'write'>>={sourceReview:'source',finalSelection:'write',duration:'write',wordRange:'write',content:'write',title:'write'}
+function checkStep(key: string): 'source' | 'settings' | 'write' | undefined {
+  const steps: Partial<Record<string, 'source' | 'settings' | 'write'>> = {
+    sourceReview: 'source',
+    finalSelection: 'write',
+    duration: 'write',
+    wordRange: 'write',
+    content: 'write',
+    title: 'write',
+  }
   return steps[key]
 }
-function navigateTo(key:string) {const step=checkStep(key);if(step)emit('navigate',step)}
-const acknowledged=ref(false), showAll=ref(false)
-const visibleChecks=computed(()=>showAll.value ? result.value?.checks ?? [] : (result.value?.checks ?? []).filter(c=>!c.pass))
-const hasWarnings=computed(()=>!!result.value?.checks.some(c=>!c.pass && c.level==='soft'))
+function navigateTo(key: string) {
+  const step = checkStep(key)
+  if (step) emit('navigate', step)
+}
+const acknowledged = ref(false),
+  showAll = ref(false)
+const visibleChecks = computed(() =>
+  showAll.value ? (result.value?.checks ?? []) : (result.value?.checks ?? []).filter((c) => !c.pass),
+)
+const hasWarnings = computed(() => !!result.value?.checks.some((c) => !c.pass && c.level === 'soft'))
 const loading = ref(false)
 const submitting = ref(false)
 const result = ref<PrecheckResult | null>(null)
 
-let checkSeq=0
-async function checkAgain(){ const seq=++checkSeq;loading.value=true;acknowledged.value=false;const r=await store.runPrecheck();if(seq===checkSeq && props.visible){result.value=r;loading.value=false} }
-async function locate(h:{sectionIndex:number;start:number;end:number}){emit('update:visible',false);await nextTick();window.dispatchEvent(new CustomEvent('copy-focus-hit',{detail:h}))}
+let checkSeq = 0
+async function checkAgain() {
+  const seq = ++checkSeq
+  loading.value = true
+  acknowledged.value = false
+  const r = await store.runPrecheck()
+  if (seq === checkSeq && props.visible) {
+    result.value = r
+    loading.value = false
+  }
+}
+async function locate(h: { sectionIndex: number; start: number; end: number }) {
+  emit('update:visible', false)
+  await nextTick()
+  window.dispatchEvent(new CustomEvent('copy-focus-hit', { detail: h }))
+}
 watch(
   () => props.visible,
   async (v) => {
     if (!v) {
-      ++checkSeq;loading.value=false
+      ++checkSeq
+      loading.value = false
       return
     }
-    result.value=null
+    result.value = null
     await checkAgain()
   },
 )
@@ -182,7 +255,18 @@ async function onSubmit(): Promise<void> {
 </script>
 
 <style scoped>
-.precheck-boundary{padding:12px;background:#f5f7f5;border-radius:8px;font-size:12px;color:#6f7e74;line-height:1.8}.precheck-boundary :deep(.arco-checkbox){display:flex;margin-top:10px}
+.precheck-boundary {
+  padding: 12px;
+  background: #f5f7f5;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #6f7e74;
+  line-height: 1.8;
+}
+.precheck-boundary :deep(.arco-checkbox) {
+  display: flex;
+  margin-top: 10px;
+}
 
 .stat-box {
   padding: 10px 12px;

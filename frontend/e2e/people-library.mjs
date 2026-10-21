@@ -29,7 +29,19 @@ fs.mkdirSync(SHOTS, { recursive: true })
 /** 夹具现场生成（不入库）：照片 / 竖屏视频 / 8 秒与 3 秒样本 / 最小 PDF */
 const ff = (...a) => execFileSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', ...a])
 ff('-f', 'lavfi', '-i', 'color=c=#2b4ac0:s=720x720:d=1', '-frames:v', '1', '-q:v', '3', path.join(FX, 'photo1.jpg'))
-ff('-f', 'lavfi', '-i', 'testsrc2=size=720x1280:rate=30', '-t', '12', '-pix_fmt', 'yuv420p', '-c:v', 'libx264', path.join(FX, 'avatar.mp4'))
+ff(
+  '-f',
+  'lavfi',
+  '-i',
+  'testsrc2=size=720x1280:rate=30',
+  '-t',
+  '12',
+  '-pix_fmt',
+  'yuv420p',
+  '-c:v',
+  'libx264',
+  path.join(FX, 'avatar.mp4'),
+)
 ff('-f', 'lavfi', '-i', 'sine=frequency=440:duration=8', '-ar', '16000', '-ac', '1', path.join(FX, 'sample.wav'))
 ff('-f', 'lavfi', '-i', 'sine=frequency=440:duration=3', '-ar', '16000', '-ac', '1', path.join(FX, 'short.wav'))
 fs.writeFileSync(path.join(FX, 'auth.pdf'), '%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n')
@@ -38,32 +50,52 @@ const API = `${BASE}/api`
 async function apiCall(method, p, body, token) {
   const res = await fetch(`${API}${p}`, {
     method,
-    headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: {
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   })
   return { status: res.status, json: await res.json().catch(() => ({})) }
 }
 async function login(username, password) {
   const r = await apiCall('POST', '/auth/login', { username, password })
-  if (!r.json?.data?.token) throw new Error(`登录失败（${username}）：${r.status} ${JSON.stringify(r.json?.error ?? r.json)}`)
+  if (!r.json?.data?.token)
+    throw new Error(`登录失败（${username}）：${r.status} ${JSON.stringify(r.json?.error ?? r.json)}`)
   return r.json.data.token
 }
 const E2E_PASSWORD = 'E2e-12345'
 const adminToken = await login(process.env.E2E_ADMIN_USER || 'admin', process.env.E2E_ADMIN_PASSWORD || 'admin123')
-for (const [username, role] of [['e2e_ops', 'ops'], ['e2e_reviewer', 'reviewer']]) {
-  const created = await apiCall('POST', '/users', { username, role, password: E2E_PASSWORD, displayName: username }, adminToken)
+for (const [username, role] of [
+  ['e2e_ops', 'ops'],
+  ['e2e_reviewer', 'reviewer'],
+]) {
+  const created = await apiCall(
+    'POST',
+    '/users',
+    { username, role, password: E2E_PASSWORD, displayName: username },
+    adminToken,
+  )
   if (created.status !== 200) {
-    const user = (await apiCall('GET', '/users', null, adminToken)).json?.data?.items?.find((u) => u.username === username)
+    const user = (await apiCall('GET', '/users', null, adminToken)).json?.data?.items?.find(
+      (u) => u.username === username,
+    )
     if (!user) throw new Error(`无法创建测试账号 ${username}：${created.status}`)
     await apiCall('PATCH', `/users/${user.id}`, { role, enabled: true, password: E2E_PASSWORD }, adminToken)
   }
 }
 const tokens = { ops: await login('e2e_ops', E2E_PASSWORD), reviewer: await login('e2e_reviewer', E2E_PASSWORD) }
 
-const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH, args: ['--no-sandbox'] } : { args: ['--no-sandbox'] })
+const browser = await chromium.launch(
+  process.env.CHROMIUM_PATH
+    ? { executablePath: process.env.CHROMIUM_PATH, args: ['--no-sandbox'] }
+    : { args: ['--no-sandbox'] },
+)
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 1024 } })
 // 默认以运营身份进入（令牌存 localStorage；<img>/<video> 读媒体靠同名 Cookie）
-await ctx.addInitScript((t) => { if (!localStorage.getItem('mw_token')) localStorage.setItem('mw_token', t) }, tokens.ops)
+await ctx.addInitScript((t) => {
+  if (!localStorage.getItem('mw_token')) localStorage.setItem('mw_token', t)
+}, tokens.ops)
 await ctx.addCookies([{ name: 'mw_token', value: tokens.ops, url: BASE }])
 const page = await ctx.newPage()
 /** 以审核员身份执行一段操作（四眼原则），结束后切回运营 */
@@ -79,11 +111,15 @@ page.setDefaultTimeout(12000)
 
 const consoleErrors = []
 const apiFailures = []
-page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource: the server responded with a status of 4\d\d/.test(m.text())) consoleErrors.push(m.text()) })
+page.on('console', (m) => {
+  if (m.type() === 'error' && !/Failed to load resource: the server responded with a status of 4\d\d/.test(m.text()))
+    consoleErrors.push(m.text())
+})
 page.on('pageerror', (e) => consoleErrors.push(`pageerror: ${e.message}`))
 page.on('response', (r) => {
   const u = r.url()
-  if (u.includes('/api/') && r.status() >= 400) apiFailures.push(`${r.status()} ${r.request().method()} ${u.replace(BASE, '')}`)
+  if (u.includes('/api/') && r.status() >= 400)
+    apiFailures.push(`${r.status()} ${r.request().method()} ${u.replace(BASE, '')}`)
 })
 
 let pass = 0
@@ -101,7 +137,9 @@ async function step(name, fn) {
     await page.screenshot({ path: path.join(SHOTS, `fail-${fails.length}.png`), fullPage: true }).catch(() => {})
   }
 }
-const expect = (cond, msg) => { if (!cond) throw new Error(msg || 'expectation failed') }
+const expect = (cond, msg) => {
+  if (!cond) throw new Error(msg || 'expectation failed')
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const detail = () => page.locator('.people-detail')
 const toast = (text) => page.locator('.arco-message', { hasText: text }).first()
@@ -128,27 +166,40 @@ await step('示例人物带「示例」标，状态按授权派生', async () =>
   expect(cards.length === 3 && cards.every((c) => c.includes('示例')), cards.join('|'))
 })
 await step('飞影积分展示（mock 环境标注模拟）', async () => {
-  expect(await page.getByText(/飞影积分/).first().isVisible())
+  expect(
+    await page
+      .getByText(/飞影积分/)
+      .first()
+      .isVisible(),
+  )
 })
 await page.screenshot({ path: path.join(SHOTS, '01-list.png'), fullPage: true })
 
 console.log('\n[2] 新增人物与 IP 定位')
 const NAME = `浏览器验收${Date.now() % 10000}`
 await step('新增人物：重名校验前先创建 KOS', async () => {
-  await page.getByRole('button', { name: /新增人物/ }).first().click()
+  await page
+    .getByRole('button', { name: /新增人物/ })
+    .first()
+    .click()
   const modal = page.locator('.arco-modal:visible').last()
   await modal.getByPlaceholder('如：张经理').fill(NAME)
   await modal.getByText('员工 KOS', { exact: true }).first().click()
   await modal.getByRole('button', { name: '创建' }).click()
   await toast('已创建').waitFor({ timeout: 8000 })
-  await page.waitForFunction((n) => document.querySelector('.people-detail')?.innerText.includes(n), NAME, { timeout: 8000 })
+  await page.waitForFunction((n) => document.querySelector('.people-detail')?.innerText.includes(n), NAME, {
+    timeout: 8000,
+  })
 })
 await step('新建后状态为「授权待核验」且右侧显示原因', async () => {
   const t = await detail().innerText()
   expect(t.includes('授权待核验'), t.slice(0, 200))
 })
 await step('重名被拒并在表单内提示', async () => {
-  await page.getByRole('button', { name: /新增人物/ }).first().click()
+  await page
+    .getByRole('button', { name: /新增人物/ })
+    .first()
+    .click()
   const modal = page.locator('.arco-modal:visible').last()
   await modal.getByPlaceholder('如：张经理').fill(` ${NAME} `)
   await modal.getByRole('button', { name: '创建' }).click()
@@ -160,7 +211,9 @@ await step('保存定位按钮：未修改时禁用', async () => {
   expect(await btn.isDisabled(), '应禁用')
 })
 await step('编辑角色与禁用表达后保存，提示版本', async () => {
-  await detail().getByPlaceholder(/基金经理/).fill('投资者教育专员')
+  await detail()
+    .getByPlaceholder(/基金经理/)
+    .fill('投资者教育专员')
   await detail().locator('.arco-collapse-item-header').click()
   await detail().locator('input[aria-label="禁用表达"], [aria-label="禁用表达"] input').first().fill('稳赚不赔')
   await page.keyboard.press('Enter')
@@ -187,7 +240,11 @@ await step('上传并核验授权后人物变为可用', async () => {
     await toast('已核验通过').waitFor({ timeout: 8000 })
   })
   await page.keyboard.press('Escape')
-  await page.waitForFunction(() => !document.querySelector('.people-detail')?.innerText.includes('授权待核验，人物不可用'), null, { timeout: 8000 })
+  await page.waitForFunction(
+    () => !document.querySelector('.people-detail')?.innerText.includes('授权待核验，人物不可用'),
+    null,
+    { timeout: 8000 },
+  )
 })
 await step('驳回授权必须填写原因（空提交被拦）', async () => {
   await detail().getByRole('button', { name: '授权管理' }).click()
@@ -207,7 +264,10 @@ await step('驳回授权必须填写原因（空提交被拦）', async () => {
 console.log('\n[4] 形象照片')
 await step('上传照片 → 处理 → 待审核 → 通过 → 设为封面', async () => {
   await tab('形象照片')
-  await detail().locator('.arco-tabs-content-item-active input[type=file]').first().setInputFiles([path.join(FX, 'photo1.jpg')])
+  await detail()
+    .locator('.arco-tabs-content-item-active input[type=file]')
+    .first()
+    .setInputFiles([path.join(FX, 'photo1.jpg')])
   await detail().getByText('待审核').first().waitFor({ timeout: 40000 })
   await asReviewer(async () => {
     await detail().getByRole('button', { name: '通过' }).first().click()
@@ -217,20 +277,34 @@ await step('上传照片 → 处理 → 待审核 → 通过 → 设为封面', 
   await toast('已设为封面').waitFor({ timeout: 8000 })
 })
 await step('重复上传同一文件提示已存在', async () => {
-  await detail().locator('.arco-tabs-content-item-active input[type=file]').first().setInputFiles([path.join(FX, 'photo1.jpg')])
+  await detail()
+    .locator('.arco-tabs-content-item-active input[type=file]')
+    .first()
+    .setInputFiles([path.join(FX, 'photo1.jpg')])
   await detail().getByText('已存在，未重复上传').first().waitFor({ timeout: 10000 })
 })
 await step('上传非法类型被前端拦下（不发请求）', async () => {
-  await detail().locator('.arco-tabs-content-item-active input[type=file]').first().setInputFiles([path.join(FX, 'sample.wav')])
-  await detail().getByText(/仅支持/).first().waitFor({ timeout: 4000 })
+  await detail()
+    .locator('.arco-tabs-content-item-active input[type=file]')
+    .first()
+    .setInputFiles([path.join(FX, 'sample.wav')])
+  await detail()
+    .getByText(/仅支持/)
+    .first()
+    .waitFor({ timeout: 4000 })
 })
 await page.screenshot({ path: path.join(SHOTS, '03-photo.png'), fullPage: true })
 
 console.log('\n[5] 口播分身')
 await step('上传分身素材 → 转码质检 → 审核通过', async () => {
   await tab('口播分身')
-  await detail().getByPlaceholder(/背景名/).fill('办公室')
-  await detail().locator('.arco-tabs-content-item-active input[type=file]').first().setInputFiles([path.join(FX, 'avatar.mp4')])
+  await detail()
+    .getByPlaceholder(/背景名/)
+    .fill('办公室')
+  await detail()
+    .locator('.arco-tabs-content-item-active input[type=file]')
+    .first()
+    .setInputFiles([path.join(FX, 'avatar.mp4')])
   await detail().getByText('待审核').first().waitFor({ timeout: 90000 })
   await asReviewer(async () => {
     await detail().getByRole('button', { name: '通过' }).first().click()
@@ -248,7 +322,11 @@ await step('提交分身制作 → 制作中 → 可用 → 设为默认', async
   const modal = page.locator('.arco-modal:visible').last()
   await modal.getByRole('button', { name: '确认并提交' }).click()
   await toast('已提交').waitFor({ timeout: 10000 })
-  await detail().getByText('制作中').first().waitFor({ timeout: 10000 }).catch(() => {})
+  await detail()
+    .getByText('制作中')
+    .first()
+    .waitFor({ timeout: 10000 })
+    .catch(() => {})
   await detail().locator('.mw-card', { hasText: '可用' }).first().waitFor({ timeout: 90000 })
   await detail().getByRole('button', { name: '设为默认' }).first().click()
   await detail().getByText('默认', { exact: true }).first().waitFor({ timeout: 8000 })
@@ -289,13 +367,23 @@ await step('参数滑杆展开且未修改时保存禁用', async () => {
 await step('任意文本试听可生成并播放', async () => {
   await detail().getByLabel('试听文本').fill('大家好，欢迎来到我的频道。')
   await detail().getByRole('button', { name: '生成并试听' }).click()
-  await detail().getByText(/已生成|命中缓存/).first().waitFor({ timeout: 90000 })
+  await detail()
+    .getByText(/已生成|命中缓存/)
+    .first()
+    .waitFor({ timeout: 90000 })
 })
 await page.screenshot({ path: path.join(SHOTS, '05-voice.png'), fullPage: true })
 
 console.log('\n[7] 状态联动与其它')
 await step('配置齐全后人物卡显示「已配置」', async () => {
-  await page.waitForFunction((n) => [...document.querySelectorAll('.people-card')].some((c) => c.innerText.includes(n) && c.innerText.includes('已配置')), NAME, { timeout: 15000 })
+  await page.waitForFunction(
+    (n) =>
+      [...document.querySelectorAll('.people-card')].some(
+        (c) => c.innerText.includes(n) && c.innerText.includes('已配置'),
+      ),
+    NAME,
+    { timeout: 15000 },
+  )
 })
 await step('背景与空镜 Tab：说明与三个分组', async () => {
   await tab('背景与空镜')
@@ -324,7 +412,14 @@ await step('账号绑定：保存 1 个账号；第 2 个共享账号合法', as
 await step('停用后卡片显示「已停用」，再启用成功', async () => {
   await detail().getByRole('switch').click()
   await toast('已停用').waitFor({ timeout: 8000 })
-  await page.waitForFunction((n) => [...document.querySelectorAll('.people-card')].some((c) => c.innerText.includes(n) && c.innerText.includes('已停用')), NAME, { timeout: 8000 })
+  await page.waitForFunction(
+    (n) =>
+      [...document.querySelectorAll('.people-card')].some(
+        (c) => c.innerText.includes(n) && c.innerText.includes('已停用'),
+      ),
+    NAME,
+    { timeout: 8000 },
+  )
   await detail().getByRole('switch').click()
   await toast('已启用').waitFor({ timeout: 8000 })
 })
@@ -338,13 +433,18 @@ await step('搜索：回车触发、清空恢复', async () => {
   await page.waitForSelector('.people-card', { timeout: 6000 })
 })
 await step('新建素人：口播分身 / 声音 Tab 显示不使用数字人口播（AC-F9）', async () => {
-  await page.getByRole('button', { name: /新增人物/ }).first().click()
+  await page
+    .getByRole('button', { name: /新增人物/ })
+    .first()
+    .click()
   const modal = page.locator('.arco-modal:visible').last()
   await modal.getByPlaceholder('如：张经理').fill(`素人验收${Date.now() % 10000}`)
   await modal.getByText('素人矩阵', { exact: true }).first().click()
   await modal.getByRole('button', { name: '创建' }).click()
   await toast('已创建').waitFor({ timeout: 8000 })
-  await page.waitForFunction(() => document.querySelector('.people-detail')?.innerText.includes('素人矩阵'), null, { timeout: 8000 })
+  await page.waitForFunction(() => document.querySelector('.people-detail')?.innerText.includes('素人矩阵'), null, {
+    timeout: 8000,
+  })
   await tab('口播分身')
   expect((await detail().innerText()).includes('素人矩阵不使用数字人口播'), '分身 Tab 应显示空态')
   await tab('声音档案')

@@ -1,6 +1,8 @@
 <template>
   <a-drawer :visible="visible" :width="460" title="版本历史" unmount-on-close @cancel="$emit('update:visible', false)">
-    <div class="mw-subtle mb-3">定位、默认分身 / 声音与声音参数发生变化时自动生成快照；历史文案与视频引用的是当时的版本，不受后续修改影响。</div>
+    <div class="mw-subtle mb-3">
+      定位、默认分身 / 声音与声音参数发生变化时自动生成快照；历史文案与视频引用的是当时的版本，不受后续修改影响。
+    </div>
     <a-spin :loading="loading" class="w-full">
       <a-empty v-if="!loading && !versions.length" description="暂无版本" />
       <div class="space-y-2">
@@ -12,8 +14,13 @@
             <span class="flex-1" />
             <span class="mw-subtle">{{ fmtDateTime(v.createdAt) }}</span>
           </div>
-          <a-button size="mini" type="text" class="mt-1" @click="toggle(v.id)">{{ opened === v.id ? '收起快照' : '查看快照' }}</a-button>
-          <pre v-if="opened === v.id" class="mt-1 text-[12px] leading-5 whitespace-pre-wrap break-all bg-[#f7f8f6] rounded p-2 max-h-[260px] overflow-auto">{{ snapshotText }}</pre>
+          <a-button size="mini" type="text" class="mt-1" @click="toggle(v.id)">{{
+            opened === v.id ? '收起快照' : '查看快照'
+          }}</a-button>
+          <pre
+            v-if="opened === v.id"
+            class="mt-1 text-[12px] leading-5 whitespace-pre-wrap break-all bg-[#f7f8f6] rounded p-2 max-h-[260px] overflow-auto"
+            >{{ snapshotText }}</pre>
         </div>
       </div>
     </a-spin>

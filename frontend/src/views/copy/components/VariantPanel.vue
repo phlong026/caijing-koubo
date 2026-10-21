@@ -10,7 +10,9 @@
     <!-- 目标段落 -->
     <div class="mb-4">
       <div class="mw-subtle mb-1.5">当前段落（第 {{ sectionIndex + 1 }} 段）</div>
-      <div class="px-3.5 py-2.5 rounded-lg bg-[#fbfcfe] border border-[#eef2f8] text-[13px] leading-[1.8] text-[#3c4a63] max-h-[120px] overflow-auto">
+      <div
+        class="px-3.5 py-2.5 rounded-lg bg-[#fbfcfe] border border-[#eef2f8] text-[13px] leading-[1.8] text-[#3c4a63] max-h-[120px] overflow-auto"
+      >
         {{ sectionText || '（该段为空）' }}
       </div>
     </div>
@@ -55,9 +57,7 @@
       </div>
     </div>
 
-    <div v-else-if="!loading" class="mt-4 mw-subtle text-center py-2">
-      还没有变体，选好改法后点击生成
-    </div>
+    <div v-else-if="!loading" class="mt-4 mw-subtle text-center py-2">还没有变体，选好改法后点击生成</div>
   </a-modal>
 </template>
 
@@ -135,7 +135,9 @@ async function onGenerate(): Promise<void> {
           clearInterval(timer)
           loading.value = false
           const fresh = await copyApi.detail(store.copy!.id)
-          variants.value = fresh.variants.filter((v) => v.sectionIndex === props.sectionIndex && !v.appliedAt).slice(-10)
+          variants.value = fresh.variants
+            .filter((v) => v.sectionIndex === props.sectionIndex && !v.appliedAt)
+            .slice(-10)
           if (!variants.value.length) Message.warning(g.error || '未生成有效变体，请换个改法试试')
         }
       } catch {
@@ -153,9 +155,7 @@ function onApply(v: Variant, mode: 'replace' | 'new_draft'): void {
   Modal.confirm({
     title: mode === 'replace' ? '替换当前段落？' : '另存为新稿？',
     content:
-      mode === 'replace'
-        ? '原段落内容会被覆盖，可通过「历史版本」找回。'
-        : '会用该写法生成一份新稿，原稿保持不变。',
+      mode === 'replace' ? '原段落内容会被覆盖，可通过「历史版本」找回。' : '会用该写法生成一份新稿，原稿保持不变。',
     okText: '确认',
     cancelText: '取消',
     onOk: async () => {

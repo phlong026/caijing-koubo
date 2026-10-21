@@ -25,9 +25,7 @@ export class ApiError extends Error {
   }
 }
 
-type ApiEnvelope<T> =
-  | { ok: true; data: T }
-  | { ok: false; error: { code: string; message: string } }
+type ApiEnvelope<T> = { ok: true; data: T } | { ok: false; error: { code: string; message: string } }
 
 export type QueryValue = string | number | boolean | null | undefined
 

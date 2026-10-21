@@ -19,10 +19,28 @@
       @remove="remove"
     />
 
-    <ReasonDialog :visible="!!rejecting" title="驳回照片" :loading="busy" @update:visible="(v: boolean) => !v && (rejecting = null)" @confirm="reject" />
+    <ReasonDialog
+      :visible="!!rejecting"
+      title="驳回照片"
+      :loading="busy"
+      @update:visible="(v: boolean) => !v && (rejecting = null)"
+      @confirm="reject"
+    />
 
-    <a-modal :visible="!!previewing" :title="previewing?.name" :footer="false" :width="720" unmount-on-close @cancel="previewing = null">
-      <img v-if="previewing" :src="assetFileUrl(previewing.id, 'original')" :alt="previewing.name" class="w-full max-h-[70vh] object-contain" />
+    <a-modal
+      :visible="!!previewing"
+      :title="previewing?.name"
+      :footer="false"
+      :width="720"
+      unmount-on-close
+      @cancel="previewing = null"
+    >
+      <img
+        v-if="previewing"
+        :src="assetFileUrl(previewing.id, 'original')"
+        :alt="previewing.name"
+        class="w-full max-h-[70vh] object-contain"
+      />
       <div class="mw-subtle mt-2">查看原图会留下敏感访问记录。</div>
     </a-modal>
   </div>
@@ -31,7 +49,16 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
-import { assetFileUrl, deleteAsset, reviewAsset, setAssetCover, uploadAsset, type PersonaAsset, type PersonaDetail, type PersonaOptions } from '@/api/personas'
+import {
+  assetFileUrl,
+  deleteAsset,
+  reviewAsset,
+  setAssetCover,
+  uploadAsset,
+  type PersonaAsset,
+  type PersonaDetail,
+  type PersonaOptions,
+} from '@/api/personas'
 import AssetGrid from './AssetGrid.vue'
 import ReasonDialog from './ReasonDialog.vue'
 import { checkUploadFile, toastError } from './shared'
@@ -57,7 +84,9 @@ async function approve(a: PersonaAsset): Promise<void> {
     await reviewAsset(a.id, { decision: 'approved' })
     Message.success('已通过')
     emit('changed')
-  } catch (e) { toastError(e) }
+  } catch (e) {
+    toastError(e)
+  }
 }
 async function reject(reason: string): Promise<void> {
   if (!rejecting.value) return
@@ -67,19 +96,27 @@ async function reject(reason: string): Promise<void> {
     Message.success('已驳回')
     rejecting.value = null
     emit('changed')
-  } catch (e) { toastError(e) } finally { busy.value = false }
+  } catch (e) {
+    toastError(e)
+  } finally {
+    busy.value = false
+  }
 }
 async function setCover(a: PersonaAsset): Promise<void> {
   try {
     await setAssetCover(a.id)
     Message.success('已设为封面')
     emit('changed')
-  } catch (e) { toastError(e) }
+  } catch (e) {
+    toastError(e)
+  }
 }
 async function remove(a: PersonaAsset): Promise<void> {
   try {
     await deleteAsset(a.id)
     emit('changed')
-  } catch (e) { toastError(e) }
+  } catch (e) {
+    toastError(e)
+  }
 }
 </script>
