@@ -10,6 +10,7 @@ import { registerBenchmarkJobs } from './modules/benchmark/sweep.js'
 import { registerExtractWorker } from './modules/benchmark/extract.js'
 import { registerCopyWorker } from './modules/copy/worker.js'
 import { resumeStubSubmissions } from './modules/copy/review.js'
+import { registerPersonaModule } from './modules/personas/index.js'
 import { checkFfmpeg } from './media/pipeline.js'
 import { ossStatus } from './integrations/aliyun-oss/client.js'
 import { describeUpstream } from './integrations/tikhub/client.js'
@@ -112,6 +113,11 @@ async function main(): Promise<void> {
   await registerExtractWorker()
   // 文案工坊生成队列（W2）
   registerCopyWorker()
+  // 人物库模块（PL4/PL5）：素材处理 / 克隆执行 / 授权到期扫描三类 worker + 每日排期
+  // + 重启时 submitting→uncertain 扫描（R9）
+  await registerPersonaModule().catch((e) =>
+    logger.error({ err: (e as Error).message }, 'persona.module.register_failed'),
+  )
   // 审核桩在进程内推进，重启后续推未走完三关的桩审核单（P2-19）
   await resumeStubSubmissions().catch((e) => logger.error({ err: (e as Error).message }, 'review.stub.resume_scan_failed'))
 

@@ -5,10 +5,10 @@ import { logger } from '../../log.js'
 
 /**
  * FR-C4 第三方调用记录。
- * provider：tikhub / dashscope / news（资讯源，cost=0，仅供可观测）/ copy_llm（文案二创专用模型）。
+ * provider：tikhub / dashscope / news（资讯源，cost=0，仅供可观测）/ copy_llm（文案二创专用模型）/ hifly（飞影数字人）。
  * 列宽 32，新增供应商无需迁移。
  */
-export type CallProvider = 'tikhub' | 'dashscope' | 'news' | 'copy_llm'
+export type CallProvider = 'tikhub' | 'dashscope' | 'news' | 'copy_llm' | 'hifly'
 
 export interface LogCallInput {
   provider: CallProvider

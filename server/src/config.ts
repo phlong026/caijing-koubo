@@ -215,6 +215,33 @@ export const config = {
     outputPricePer1k: num('COPY_LLM_OUTPUT_PRICE_PER_1K', 0),
   },
 
+  /**
+   * 飞影 HiFly 开放平台 V2（https://hfw-api.hifly.cc，文档 https://api.hifly.cc/hifly.html）。
+   * 声音克隆 / 口播分身制作 / 数字人口播视频生成统一走飞影（人物库模块任务书 §0.2 A8）。
+   * 无密钥且 MOCK_FALLBACK=true 时由 mock 客户端接管（确定性标识、可注入 uncertain/failed）。
+   */
+  hifly: {
+    apiKey: str('HIFLY_API_KEY', ''),
+    baseUrl: str('HIFLY_BASE_URL', 'https://hfw-api.hifly.cc'),
+    /** JSON 接口超时（毫秒） */
+    timeoutMs: num('HIFLY_TIMEOUT_MS', 60000),
+    /** 二进制（上传 / 下载）超时（毫秒） */
+    binaryTimeoutMs: num('HIFLY_BINARY_TIMEOUT_MS', 300000),
+    /** 轮询超过该时长仍非终态 → uncertain（R9，2 小时） */
+    pollMaxAgeMs: num('HIFLY_POLL_MAX_AGE_MS', 7200000),
+    /** 提交飞影时的 AIGC 标识（Q11，默认 1） */
+    aigcFlag: num('HIFLY_AIGC_FLAG', 1) ? 1 : 0,
+    /** 轮询起始间隔与退避上限（毫秒） */
+    pollInitialMs: num('HIFLY_POLL_INITIAL_MS', 15000),
+    pollMaxMs: num('HIFLY_POLL_MAX_MS', 120000),
+    /** 积分余额缓存（毫秒，L14） */
+    creditCacheMs: num('HIFLY_CREDIT_CACHE_MS', 300000),
+    /** 授权即将到期提醒提前天数（FR-U3） */
+    authExpiryRemindDays: num('AUTH_EXPIRY_REMIND_DAYS', 30),
+    /** KOS 共享人物账号绑定上限（Q5） */
+    kosSharedAccountLimit: num('KOS_SHARED_ACCOUNT_LIMIT', 5),
+  },
+
   defaultOperator: str('DEFAULT_OPERATOR', 'ops'),
   // P1-7：生产环境默认**关闭** mock 兜底；否则漏配 key 时会静默返回假账号/假视频/假转写。
   mockFallback: bool('MOCK_FALLBACK', str('NODE_ENV', 'development') !== 'production'),
@@ -253,6 +280,10 @@ export function hasOss(): boolean {
 /** FinStep 资讯接口是否可用（无 Key 时该源整体不启用，不影响其它资讯源） */
 export function hasFinStep(): boolean {
   return !!config.finstep.apiKey
+}
+/** 飞影 HiFly 是否已配置（无 Key 时 mock 兜底，人物库克隆链路仍可联调） */
+export function hasHifly(): boolean {
+  return !!config.hifly.apiKey
 }
 /** 曙光舆情 MCP 是否可用 */
 export function hasSaturnNews(): boolean {
