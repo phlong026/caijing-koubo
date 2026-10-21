@@ -83,25 +83,24 @@ export function sleep(ms: number): Promise<void> {
  *   - `runQueued(key, fn, waitMs)`：**排队等待**，拿到锁后再执行。适合「用户主动点击、期望有结果」的场景。
  */
 export class Mutex {
-  private locked = false
-  private key = ''
-  /** 等待队列：当前持有者释放后依次唤醒 */
-  private waiters: Array<() => void> = []
+  /**
+   * 每个 key 独立加锁（P2-13d）：key → 等待队列；Map 中有该 key 即表示被占用。
+   * 原实现只有一个全局 locked / key：不同 key 并发时第二个调用不等待且覆盖 key，
+   * 先结束的一方会把锁整体释放，而另一方仍在执行。
+   */
+  private held = new Map<string, Array<() => void>>()
   constructor(private name = 'mutex') {}
 
   async run<T>(key: string, fn: () => Promise<T>, onBusy?: () => T | null): Promise<T | null> {
-    if (this.locked && this.key === key) {
+    if (this.held.has(key)) {
       if (onBusy) return onBusy()
       throw new Error(`${this.name}: 已有相同任务在执行（key=${key}）`)
     }
-    this.locked = true
-    this.key = key
+    this.held.set(key, [])
     try {
       return await fn()
     } finally {
-      this.locked = false
-      this.key = ''
-      this.wakeNext()
+      this.release(key)
     }
   }
 
@@ -115,49 +114,49 @@ export class Mutex {
     waitMs = 120_000,
     onTimeout?: () => T | null,
   ): Promise<T | null> {
-    if (!(this.locked && this.key === key)) {
-      // 无人占用，直接拿锁
+    if (!this.held.has(key)) {
+      this.held.set(key, [])
     } else {
-      const acquired = await this.waitForRelease(waitMs)
+      const acquired = await this.waitForHandoff(key, waitMs)
       if (!acquired) return onTimeout ? onTimeout() : null
     }
-    this.locked = true
-    this.key = key
     try {
       return await fn()
     } finally {
-      this.locked = false
-      this.key = ''
-      this.wakeNext()
+      this.release(key)
     }
   }
 
-  /** 当前是否被占用 */
+  /** 当前是否有任一 key 被占用 */
   get busy(): boolean {
-    return this.locked
+    return this.held.size > 0
   }
 
-  private waitForRelease(waitMs: number): Promise<boolean> {
+  /** 等待持有者释放；释放时锁直接移交给队首等待者，中间不会被其它调用插队 */
+  private waitForHandoff(key: string, waitMs: number): Promise<boolean> {
     return new Promise((resolve) => {
       let done = false
-      const timer = setTimeout(() => {
-        if (done) return
-        done = true
-        this.waiters = this.waiters.filter((w) => w !== onWake)
-        resolve(false)
-      }, waitMs)
       const onWake = () => {
         if (done) return
         done = true
         clearTimeout(timer)
         resolve(true)
       }
-      this.waiters.push(onWake)
+      const timer = setTimeout(() => {
+        if (done) return
+        done = true
+        const queue = this.held.get(key)
+        if (queue) this.held.set(key, queue.filter((w) => w !== onWake))
+        resolve(false)
+      }, waitMs)
+      this.held.get(key)!.push(onWake)
     })
   }
 
-  private wakeNext(): void {
-    const next = this.waiters.shift()
+  private release(key: string): void {
+    const queue = this.held.get(key)
+    const next = queue?.shift()
     if (next) next()
+    else this.held.delete(key)
   }
 }

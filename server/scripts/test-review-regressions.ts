@@ -162,6 +162,28 @@ try {
     assert.equal(existsSync(stray), false); assert.equal(existsSync(foreign), true)
     assert.equal((await db.get<{ storage_path: string | null }>("SELECT storage_path FROM article_source WHERE id = 'art_cleanup'"))?.storage_path, null)
   })
+  await test('Mutex (P2-13d): keys are independent, same key is exclusive, queued waiters get a direct hand-off', async () => {
+    const { Mutex } = await import('../src/lib/util.js')
+    const m = new Mutex('test')
+    const a = deferred(), b = deferred()
+    const order: string[] = []
+    const runA = m.run('a', async () => { order.push('a:start'); await a.promise; order.push('a:end'); return 'A' })
+    const runB = m.run('b', async () => { order.push('b:start'); await b.promise; order.push('b:end'); return 'B' })
+    await turn()
+    assert.deepEqual(order, ['a:start', 'b:start'])
+    assert.equal(await m.run('a', async () => 'dup', () => 'busy'), 'busy')
+    b.resolve(); assert.equal(await runB, 'B')
+    // b 结束不能释放 a 的锁（原实现会整体解锁）
+    assert.equal(await m.run('a', async () => 'dup', () => 'busy'), 'busy')
+    const queued = m.runQueued('a', async () => { order.push('q:run'); return 'Q' }, 5_000)
+    await turn()
+    a.resolve(); assert.equal(await runA, 'A')
+    // 移交给排队者的瞬间，非排队调用不能插队
+    assert.equal(await m.run('a', async () => 'dup', () => 'busy'), 'busy')
+    assert.equal(await queued, 'Q')
+    assert.equal(m.busy, false)
+    assert.equal(await m.runQueued('a', async () => 'free', 10), 'free')
+  })
   await test('rate limiter (P2-12): bursts up to the per-minute budget, then refills over time', async () => {
     const { takeToken, resetBuckets } = await import('../src/lib/rate-limit.js')
     resetBuckets()
