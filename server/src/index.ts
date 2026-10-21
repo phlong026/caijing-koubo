@@ -16,6 +16,7 @@ import { registerPersonaModule } from './modules/personas/index.js'
 import { checkFfmpeg } from './media/pipeline.js'
 import { ossStatus } from './integrations/aliyun-oss/client.js'
 import { describeUpstream } from './integrations/tikhub/client.js'
+import { createBurstCounter } from './lib/burst.js'
 
 /**
  * 全局异常兜底。
@@ -27,11 +28,40 @@ import { describeUpstream } from './integrations/tikhub/client.js'
  *
  * 注意：这不代表可以吞掉错误——未捕获异常通常意味着状态可能不一致，
  * 所以一律以 error 级别记录堆栈，便于事后排查。
+ *
+ * P3-5：偶发一次照旧「记录 + 存活」；但同一分钟内反复出现（默认 3 次，UNCAUGHT_EXIT_THRESHOLD），
+ * 说明进程大概率已带着不一致的状态在跑，此时走优雅停机并以非 0 退出，交给守护进程重启。
  */
+const uncaughtBurst = createBurstCounter(60_000)
+let requestFatalShutdown: ((reason: string) => void) | null = null
+
 function installGlobalHandlers(): void {
+  const threshold = Math.max(0, Number(process.env.UNCAUGHT_EXIT_THRESHOLD ?? 3) || 0)
+  // 日志 worker 线程已退出时 logger 本身会抛错；在异常处理器里再抛会形成新的未捕获异常，退回直接写 stderr
+  const safeLog = (write: () => void, fallback: string) => {
+    try {
+      write()
+    } catch {
+      process.stderr.write(`${fallback}\n`)
+    }
+  }
   process.on('uncaughtException', (err) => {
-    logger.error({ err: err.message, stack: err.stack, kind: 'uncaughtException' }, 'server.uncaught_exception')
-    // 进程已处于不确定状态，但仍继续服务；由外部监控按日志频次告警
+    const recent = uncaughtBurst.hit()
+    safeLog(
+      () =>
+        logger.error(
+          { err: err.message, stack: err.stack, kind: 'uncaughtException', recentPerMinute: recent, exitThreshold: threshold || null },
+          'server.uncaught_exception',
+        ),
+      `server.uncaught_exception (${recent}/min): ${err.stack ?? err.message}`,
+    )
+    if (!threshold || recent < threshold) return
+    safeLog(
+      () => logger.fatal({ recentPerMinute: recent, threshold }, 'server.uncaught_burst：一分钟内多次未捕获异常，主动退出交给守护进程重启'),
+      `server.uncaught_burst: ${recent} uncaught exceptions within a minute, exiting`,
+    )
+    if (requestFatalShutdown) requestFatalShutdown('uncaughtException')
+    else process.exit(1)
   })
   process.on('unhandledRejection', (reason) => {
     const e = reason instanceof Error ? reason : new Error(String(reason))
@@ -162,10 +192,10 @@ async function main(): Promise<void> {
   }
 
   let shuttingDown = false
-  const shutdown = async (signal: string) => {
+  const shutdown = async (signal: string, exitCode = 0) => {
     if (shuttingDown) return
     shuttingDown = true
-    logger.info({ signal }, 'server.shutdown')
+    logger.info({ signal, exitCode }, 'server.shutdown')
     // P2-10：worker.close() 会等进行中的任务结束（提取轮询最长 15 分钟），停机必须有上限。
     // 被打断的任务由既有续跑逻辑接住：提取按 running + task_id 续轮询、审核桩续推、克隆由 poll_sweep 续上
     const forceMs = Math.max(1000, Number(process.env.SHUTDOWN_TIMEOUT_MS ?? 10_000) || 10_000)
@@ -178,10 +208,11 @@ async function main(): Promise<void> {
     } catch {}
     await closeQueues()
     await closeAll()
-    process.exit(0)
+    process.exit(exitCode)
   }
   process.on('SIGINT', () => void shutdown('SIGINT'))
   process.on('SIGTERM', () => void shutdown('SIGTERM'))
+  requestFatalShutdown = (reason) => void shutdown(reason, 1)
 }
 
 main().catch((e) => {
