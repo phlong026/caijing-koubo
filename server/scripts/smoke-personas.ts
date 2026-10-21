@@ -306,8 +306,8 @@ async function main(): Promise<void> {
   check('设置封面 200', setCover.status === 200, setCover.raw)
 
   const thumb = await fetch(`${BASE}/persona-assets/${photoId}/file?variant=thumb`, { headers: authHeader('GET', '/') })
-  const thumbBytes = (await thumb.arrayBuffer()).byteLength
-  check('缩略图可流式读取（200 + 图片类型 + 非空正文）', thumb.status === 200 && (thumb.headers.get('content-type') ?? '').startsWith('image/') && thumbBytes > 0, { status: thumb.status, bytes: thumbBytes })
+  const thumbBytes = Buffer.from(await thumb.arrayBuffer())
+  check('缩略图可流式读取（200 + 图片类型 + 有真实字节）', thumb.status === 200 && (thumb.headers.get('content-type') ?? '').startsWith('image/') && thumbBytes.length > 100 && thumbBytes[0] === 0xff && thumbBytes[1] === 0xd8, { status: thumb.status, bytes: thumbBytes.length })
   // P2-4：Range（含末尾范围）与越界 416
   const tail = await fetch(`${BASE}/persona-assets/${photoId}/file?variant=thumb`, { headers: { ...authHeader('GET', '/'), Range: 'bytes=-16' } })
   check('末尾范围 bytes=-16 返回 206 且 16 字节', tail.status === 206 && (await tail.arrayBuffer()).byteLength === 16, tail.status)
@@ -448,7 +448,8 @@ async function main(): Promise<void> {
   check('声音带归档试听（demo_key）', !!voiceReady?.demoKey || !!voiceReady?.demo_key, voiceReady?.demoKey)
 
   const demo = await fetch(`${BASE}/persona-voices/${voiceId}/demo`, { headers: authHeader('GET', '/') })
-  check('厂商试听可播放（200 + audio）', demo.status === 200 && (demo.headers.get('content-type') ?? '').startsWith('audio/'), demo.status)
+  const demoBytes = Buffer.from(await demo.arrayBuffer())
+  check('厂商试听可播放（200 + audio + 有真实字节）', demo.status === 200 && (demo.headers.get('content-type') ?? '').startsWith('audio/') && demoBytes.length > 1000, { status: demo.status, bytes: demoBytes.length })
 
   const confirm = await req('POST', `/persona-voices/${voiceId}/confirm`)
   check('确认声音（FR-V5）200', confirm.status === 200 && confirm.data?.confirmed === true, confirm.raw)
@@ -470,7 +471,8 @@ async function main(): Promise<void> {
   })
   check('试听 ready 且可播放（AC-V7）', previewReady?.status === 'ready' && !!previewReady?.audioKey, previewReady?.status)
   const previewFile = await fetch(`${BASE}/persona-voice-previews/${previewId}/file`, { headers: authHeader('GET', '/') })
-  check('试听音频可读取', previewFile.status === 200 && (previewFile.headers.get('content-type') ?? '').startsWith('audio/'), previewFile.status)
+  const previewBytes = Buffer.from(await previewFile.arrayBuffer())
+  check('试听音频可读取（有真实字节）', previewFile.status === 200 && (previewFile.headers.get('content-type') ?? '').startsWith('audio/') && previewBytes.length > 1000, { status: previewFile.status, bytes: previewBytes.length })
 
   const previewCache = await req('POST', `/persona-voices/${voiceId}/preview`, { text: '大家好，欢迎来到我的频道，今天聊聊家庭理财。' })
   check('同参数同文本试听走缓存（AC-V7）', previewCache.data?.cached === true, previewCache.data)

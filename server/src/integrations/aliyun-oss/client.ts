@@ -17,16 +17,55 @@ export function isOssEnabled(): boolean {
   return hasOss()
 }
 
-async function getClient(): Promise<any> {
+type OssClient = any
+let dataClient: OssClient | null = null
+let signClient: OssClient | null = null
+
+async function makeClient(extra: Record<string, unknown>): Promise<OssClient> {
   const OSS = (await import('ali-oss')).default as any
   return new OSS({
     region: config.oss.region,
     bucket: config.oss.bucket,
     accessKeyId: config.oss.accessKeyId,
     accessKeySecret: config.oss.accessKeySecret,
-    internal: config.oss.internal,
     secure: true,
+    // 单次请求超时：分片上传 / 大文件下载由 ali-oss 内部按分片计时
+    timeout: 120_000,
+    ...extra,
   })
+}
+
+/** 数据面客户端（读写删）：OSS_INTERNAL / OSS_ENDPOINT 只影响它 */
+async function getClient(): Promise<OssClient> {
+  if (!dataClient) {
+    dataClient = await makeClient({
+      internal: config.oss.internal,
+      ...(config.oss.endpoint ? { endpoint: config.oss.endpoint, cname: config.oss.cname } : {}),
+    })
+  }
+  return dataClient
+}
+
+/**
+ * 签名客户端：签出的 URL 要交给飞影等外部服务访问，所以永远走公网域名，
+ * 不受 OSS_INTERNAL 影响（内网域名签出的 URL 外部根本打不开）。
+ * 仅在显式配了 OSS_ENDPOINT 且未配 OSS_SIGN_ENDPOINT 时沿用数据面端点（私有域名 / 仿真场景）。
+ */
+async function getSignClient(): Promise<OssClient> {
+  if (!signClient) {
+    const endpoint = config.oss.signEndpoint || config.oss.endpoint
+    signClient = await makeClient({
+      internal: false,
+      ...(endpoint ? { endpoint, cname: config.oss.cname } : {}),
+    })
+  }
+  return signClient
+}
+
+/** 测试 / 配置热更新用：丢弃缓存的客户端 */
+export function resetOssClients(): void {
+  dataClient = null
+  signClient = null
 }
 
 /** 本地兜底：无 OSS 配置时写入 .data/oss，返回 file:// URL（仅供 mock 链路） */
@@ -49,13 +88,18 @@ export async function putObjectFromFile(filePath: string, objectKey: string, pre
     return putLocal(filePath, key)
   }
   const client = await getClient()
-  // P2-2：传文件路径由 SDK 流式上传；超过 100MB 走分片上传，避免整份读入内存
-  const { size } = await fsp.stat(filePath)
-  const res =
-    size > 100 * 1024 * 1024
-      ? await client.multipartUpload(key, filePath, { partSize: 10 * 1024 * 1024 })
-      : await client.put(key, filePath)
-  return { key, url: res?.url ?? res?.res?.requestUrls?.[0]?.split('?')[0] ?? '', mock: false }
+  const size = (await fsp.stat(filePath)).size
+  let res: any
+  if (size > config.oss.multipartThresholdMb * 1024 * 1024) {
+    // 大文件（分身素材可达 200MB）走分片：不整体读入内存，单片失败只重传该片
+    res = await client.multipartUpload(key, filePath, { partSize: 8 * 1024 * 1024, parallel: 3 })
+  } else {
+    // 传路径而不是 Buffer：ali-oss 内部按流发送
+    res = await client.put(key, filePath)
+  }
+  // 返回不带查询串的对象地址，避免把任何签名信息落进库 / 日志
+  const url = String(res?.url ?? res?.res?.requestUrls?.[0] ?? '').split('?')[0]
+  return { key, url, mock: false }
 }
 
 /** 把存储对象流式写到本地文件（OSS 或本地兜底） */
@@ -76,7 +120,7 @@ export async function signedUrl(key: string, ttlSeconds?: number): Promise<strin
     const local = path.join(paths.dataDir, 'oss', key)
     return `file:///${local.replace(/\\/g, '/')}`
   }
-  const client = await getClient()
+  const client = await getSignClient()
   return client.signatureUrl(key, { expires: ttl })
 }
 
@@ -147,17 +191,23 @@ export async function getObjectStream(key: string, range?: string): Promise<Obje
   }
   try {
     const client = await getClient()
-    const res = await client.get(key, range ? { headers: { Range: range } } : {})
+    // 必须用 getStream：get() 会把整个对象读进 Buffer，res.res 不是可读流
+    const res = await client.getStream(key, range ? { headers: { Range: range } } : {})
     const headers = (res.res as any)?.headers ?? {}
     return {
-      stream: res.res as unknown as NodeJS.ReadableStream,
+      stream: res.stream as NodeJS.ReadableStream,
       contentType: (headers['content-type'] as string) ?? null,
       contentLength: Number(headers['content-length'] ?? 0) || null,
       contentRange: (headers['content-range'] as string) ?? null,
-      status: Number((res.res as any)?.statusCode ?? 200),
+      status: Number((res.res as any)?.status ?? (res.res as any)?.statusCode ?? 200),
     }
   } catch (e) {
-    logger.warn({ key, err: (e as Error).message }, 'oss.get_failed')
+    const code = (e as { code?: string; status?: number }).code
+    if (code === 'NoSuchKey' || (e as { status?: number }).status === 404) return null
+    if ((e as { status?: number }).status === 416) {
+      return { stream: Readable.from([]), contentType: null, contentLength: 0, contentRange: null, status: 416 }
+    }
+    logger.warn({ key, code, err: (e as Error).message }, 'oss.get_failed')
     return null
   }
 }

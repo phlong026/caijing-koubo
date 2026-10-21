@@ -1,6 +1,11 @@
 const rawBase = import.meta.env.VITE_API_BASE || '/api'
 const API_BASE = rawBase.replace(/\/$/, '')
 
+/** 拼出可直接给 <img> / <video> / <audio> 使用的绝对接口地址（走同一 API_BASE） */
+export function apiUrl(path: string): string {
+  return `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`
+}
+
 export type PageResult<T> = {
   items: T[]
   total: number

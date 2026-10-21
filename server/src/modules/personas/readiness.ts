@@ -90,7 +90,7 @@ export async function checkReadiness(
     // 肖像授权有效（默认分身绑定）
     if (avatar) {
       const auths = await validAuthorizationsOf(personaId, db)
-      const authOk = auths.some((a) => a.id === avatar.authorization_id && a.scopes.includes('portrait'))
+      const authOk = auths.some((a) => a.scopes.includes('portrait'))
       checks.push(hard('portrait_auth', authOk, authOk ? '肖像授权有效' : '肖像授权缺失或已失效'))
     }
     // 默认声音 ready 且已确认
@@ -107,11 +107,12 @@ export async function checkReadiness(
     // 声音授权有效（默认声音绑定）
     if (voice) {
       const auths = await validAuthorizationsOf(personaId, db)
-      const authOk = auths.some((a) => a.id === voice.authorization_id && a.scopes.includes('voice'))
+      const authOk = auths.some((a) => a.scopes.includes('voice'))
       checks.push(hard('voice_auth', authOk, authOk ? '声音授权有效' : '声音授权缺失或已失效'))
-      // P2-1：共享人物的声音用于多个账号即构成声音共享（FR-V9），授权还须含「允许共享」
+      // P2-1：共享人物的声音用于多个账号即构成声音共享（FR-V9），授权还须含「允许共享」。
+      // 与肖像 / 声音授权同口径：任一有效的声音授权含「允许共享」即可（补授权后旧声音无需重建）
       if (persona.bindingMode === 'shared') {
-        const shareOk = auths.some((a) => a.id === voice.authorization_id && a.scopes.includes('share'))
+        const shareOk = auths.some((a) => a.scopes.includes('voice') && a.scopes.includes('share'))
         checks.push(hard('voice_share_auth', shareOk, shareOk ? '声音共享授权有效' : '共享人物的声音授权须包含「允许共享」'))
       }
     }
@@ -175,8 +176,8 @@ export async function getProductionProfile(personaId: string, avatarId?: string,
   }
   const persona = (await getPersonaById(personaId, true))!
   const targetAvatarId = avatarId || persona.defaultAvatarId!
-  // P1-4：指定分身必须属于该人物，且绑定的肖像授权当前有效——
-  // 否则可用 B 人物的声音配 A 人物的分身生成视频（冒用肖像）
+  // P1-4：指定分身必须属于该人物——否则可用 B 人物的声音配 A 人物的分身生成视频（冒用肖像）。
+  // 肖像授权按「该人物任一有效肖像授权」判定（场景 3：补授权后旧分身无需重建），已由上面的 readiness 校验
   const avatar = await db.get<Record<string, any>>(
     'SELECT * FROM `persona_avatar` WHERE `id` = ? AND `persona_id` = ? AND `deleted_at` IS NULL',
     [targetAvatarId, personaId],
@@ -186,16 +187,6 @@ export async function getProductionProfile(personaId: string, avatarId?: string,
       avatarId: targetAvatarId,
       status: avatar?.status ?? null,
     })
-  }
-  if (avatarId && avatarId !== persona.defaultAvatarId) {
-    const auths = await validAuthorizationsOf(personaId, db)
-    const authOk = auths.some((a) => a.id === avatar.authorization_id && a.scopes.includes('portrait'))
-    if (!authOk) {
-      throw err.authorizationRequired('指定分身的肖像授权已失效，不能用于视频生成', {
-        avatarId: targetAvatarId,
-        authorizationId: avatar.authorization_id,
-      })
-    }
   }
   const voice = await db.get<Record<string, any>>(
     'SELECT * FROM `persona_voice` WHERE `id` = ? AND `is_sample` = 0 AND `deleted_at` IS NULL',

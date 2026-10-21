@@ -120,8 +120,9 @@ export const VENDOR_CODE_MESSAGES: Record<number, string> = {
 
 /** 业务码 → 统一错误码（L14） */
 export function vendorErrorOf(vendorCode: number, fallbackMessage?: string): ReturnType<typeof err.badRequest> {
-  const message = fallbackMessage || VENDOR_CODE_MESSAGES[vendorCode] || `飞影服务返回错误（业务码 ${vendorCode}）`
-  const details = { vendorCode }
+  // 已知业务码用本地中文映射（L14，界面可读）；厂商原话保留在 details.vendorMessage 供排查；未知业务码才直接展示厂商原话
+  const message = VENDOR_CODE_MESSAGES[vendorCode] || fallbackMessage || `飞影服务返回错误（业务码 ${vendorCode}）`
+  const details = { vendorCode, ...(fallbackMessage && fallbackMessage !== message ? { vendorMessage: fallbackMessage } : {}) }
   switch (vendorCode) {
     case 1002:
       return err.hiflyInsufficientCredit(message, details)

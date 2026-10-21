@@ -2,8 +2,6 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { Transform } from 'node:stream'
-import { pipeline } from 'node:stream/promises'
 import { ok } from '../../app.js'
 import { err } from '../../errors.js'
 import { config, paths } from '../../config.js'
@@ -21,7 +19,6 @@ import {
   archivePersona,
   updatePersona,
   derivePersonaStatus,
-  derivePersonaStatuses,
   type Persona,
 } from './repo.js'
 import { listVersions, getVersion, ensurePersonaVersion } from './versions.js'
@@ -71,6 +68,7 @@ import {
 } from './clone/voices.js'
 import { pollAvatar, pollVoice, reconcileAvatar, reconcileVoice } from './clone/worker.js'
 import { checkReadiness, getProductionProfile } from './readiness.js'
+import { decoratePersonas } from './decorate.js'
 import {
   ASSET_KIND_LABELS,
   ASSET_LIMITS,
@@ -107,9 +105,6 @@ import {
  *  - 插件级 limits.fileSize 会覆盖每次调用传入的 limits，全局上限见 app.ts，
  *    各素材类型的细分上限在这里按 size 早停判定。
  */
-
-/** 计数 Transform 超限时抛出，pipeline 会据此销毁两端流并 reject */
-class UploadTooLarge extends Error {}
 
 interface UploadedFile {
   filePath: string
@@ -168,30 +163,40 @@ async function readMultipart(
     const headChunks: Buffer[] = []
     let size = 0
     let headLen = 0
-    // P1-1：用 pipeline + 计数 Transform 早停。原实现超限时直接 destroy 两端流，
-    // destroy 不触发 finish / end，Promise 永不返回，请求挂住且临时文件残留。
-    const counter = new Transform({
-      transform(chunk: Buffer, _enc, cb) {
-        size += chunk.length
+    let tooLarge = false
+    await new Promise<void>((resolve, reject) => {
+      let settled = false
+      const settle = (e?: Error) => {
+        if (settled) return
+        settled = true
+        if (e && !tooLarge) reject(e)
+        else resolve()
+      }
+      const ws = fs.createWriteStream(dest)
+      const src = part.file!
+      src.on('data', (c: Buffer) => {
+        size += c.length
         if (headLen < 16) {
-          headChunks.push(chunk)
-          headLen += chunk.length
+          headChunks.push(c)
+          headLen += c.length
         }
-        if (size > effectiveMax) {
-          cb(new UploadTooLarge())
-          return
+        if (size > effectiveMax && !tooLarge) {
+          // 超出该类型上限：停止落盘（不把超大文件整份写到磁盘），但继续把剩余字节读完丢弃。
+          // 不能直接断流：服务端在客户端还在上传时关连接，浏览器只会看到「网络错误」而拿不到 413 提示。
+          tooLarge = true
+          src.unpipe(ws)
+          ws.destroy()
+          // unpipe 掉最后一个目标后 Node 会暂停流，必须手动恢复，否则剩余字节永远读不完、请求挂住
+          ;(src as NodeJS.ReadableStream & { resume: () => void }).resume()
         }
-        cb(null, chunk)
-      },
+      })
+      src.on('error', (e) => settle(e as Error))
+      ws.on('error', (e) => settle(e as Error))
+      ws.on('finish', () => settle())
+      src.on('end', () => (tooLarge ? settle() : ws.end()))
+      src.pipe(ws)
     })
-    try {
-      await pipeline(part.file!, counter, fs.createWriteStream(dest))
-    } catch (e) {
-      await fsp.unlink(dest).catch(() => undefined)
-      if (e instanceof UploadTooLarge) throw err.assetTooLarge(effectiveMsg, { max: effectiveMax, size })
-      throw e
-    }
-    if (part.file?.truncated || size > effectiveMax) {
+    if (tooLarge || part.file?.truncated || size > effectiveMax) {
       await fsp.unlink(dest).catch(() => undefined)
       throw err.assetTooLarge(effectiveMsg, { max: effectiveMax, size })
     }
@@ -234,8 +239,8 @@ async function streamStorage(
     if (res.contentLength != null) headers['Content-Length'] = String(res.contentLength)
     reply.headers(headers)
   }
-  // 必须把 reply 返回给 async 处理函数：流式响应的响应头要等管道开始写才发出，
-  // 处理函数若 resolve undefined，Fastify 会认为尚未响应并补发一个空正文（Content-Length: 0）
+  // 必须把 reply 返回给 Fastify：async 处理函数若返回 undefined，Fastify 会再以空载荷 send 一次，
+  // 把已经交给 reply 的文件流覆盖成 0 字节（thumb / original / 授权文件 / 试听都会读到空内容）
   return reply.send(res.stream as any)
 }
 
@@ -260,66 +265,25 @@ async function mustGetPersona(id: string): Promise<Persona> {
   return p
 }
 
-/** 列表项：人物 + 派生有效状态 + 计数（FR-L1 / FR-X1）。P2-9：批量查询，避免按人物逐个查库 */
-async function decoratePersonas(list: Persona[]) {
-  if (!list.length) return []
-  const db = (await import('../../db/index.js')).getDb()
-  const ids = list.map((p) => p.id)
-  const ph = ids.map(() => '?').join(', ')
-  const countBy = async (sql: string, params: unknown[]) => {
-    const rows = await db.all<{ persona_id: string; c: number }>(sql, params)
-    return new Map(rows.map((r) => [r.persona_id, Number(r.c)]))
+/** 「已配置」附加标签（§3.2）：readiness(avatar_video) 全过；素人线为 readiness(copy) 全过。
+ *  只对「可用且已设默认分身 + 默认声音」的人物才真正跑 readiness，避免列表（≤500 人）逐个人物多查一遍 */
+async function withConfiguredTag(p: Persona, derived: { usable: boolean; extraTags: string[] }): Promise<string[]> {
+  const tags = [...derived.extraTags]
+  if (!derived.usable || tags.includes('configured')) return tags
+  if (p.line === 'persona') {
+    tags.push('configured')
+    return tags
   }
-  const coverIds = list.map((p) => p.coverAssetId).filter((x): x is string => !!x)
-  const [derived, photos, avatars, voices, bindings, covers] = await Promise.all([
-    derivePersonaStatuses(list, db),
-    countBy(
-      `SELECT \`persona_id\`, COUNT(*) AS c FROM \`persona_asset\` WHERE \`persona_id\` IN (${ph}) AND \`kind\` = 'photo' AND \`status\` = 'approved' AND \`deleted_at\` IS NULL GROUP BY \`persona_id\``,
-      ids,
-    ),
-    countBy(
-      `SELECT \`persona_id\`, COUNT(*) AS c FROM \`persona_avatar\` WHERE \`persona_id\` IN (${ph}) AND \`status\` = 'ready' AND \`deleted_at\` IS NULL GROUP BY \`persona_id\``,
-      ids,
-    ),
-    countBy(
-      `SELECT \`persona_id\`, COUNT(*) AS c FROM \`persona_voice\` WHERE \`persona_id\` IN (${ph}) AND \`is_sample\` = 0 AND \`status\` = 'ready' AND \`confirmed\` = 1 AND \`deleted_at\` IS NULL GROUP BY \`persona_id\``,
-      ids,
-    ),
-    countBy(
-      `SELECT \`persona_id\`, COUNT(*) AS c FROM \`persona_account_binding\` WHERE \`persona_id\` IN (${ph}) AND \`released_at\` IS NULL GROUP BY \`persona_id\``,
-      ids,
-    ),
-    coverIds.length
-      ? db.all<{ id: string; thumb_key: string | null }>(
-          `SELECT \`id\`, \`thumb_key\` FROM \`persona_asset\` WHERE \`id\` IN (${coverIds.map(() => '?').join(', ')})`,
-          coverIds,
-        )
-      : Promise.resolve([] as Array<{ id: string; thumb_key: string | null }>),
-  ])
-  const coverThumb = new Map(covers.map((c) => [c.id, c.thumb_key]))
-  return list.map((p) => {
-    const d = derived.get(p.id)!
-    return {
-      ...p,
-      status: d.status,
-      statusLabel: d.label,
-      usable: d.usable,
-      statusReasons: d.reasons,
-      extraTags: d.extraTags,
-      counts: {
-        photos: photos.get(p.id) ?? 0,
-        avatars: avatars.get(p.id) ?? 0,
-        voices: voices.get(p.id) ?? 0,
-        bindings: bindings.get(p.id) ?? 0,
-      },
-      coverUrl: p.coverAssetId && coverThumb.get(p.coverAssetId) ? `/api/persona-assets/${p.coverAssetId}/file?variant=thumb` : null,
-      currentVersionId: p.currentVersionId,
-    }
-  })
+  if (p.defaultAvatarId && p.defaultVoiceId) {
+    const r = await checkReadiness(p.id, 'avatar_video')
+    if (r.pass) tags.push('configured')
+  }
+  return tags
 }
 
+/** 列表项：人物 + 派生有效状态 + 计数（FR-L1 / FR-X1）；批量实现见 decorate.ts（AC-L6：无 N+1） */
 async function decoratePersona(p: Persona) {
-  return (await decoratePersonas([p]))[0]!
+  return (await decoratePersonas([p]))[0]
 }
 
 export function registerPersonaRoutes(app: FastifyInstance): void {
@@ -435,7 +399,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
       statusLabel: derived.label,
       usable: derived.usable,
       statusReasons: derived.reasons,
-      extraTags: derived.extraTags,
+      extraTags: await withConfiguredTag(persona, derived),
       authorizations: auths,
       bindings,
       assets,
@@ -487,6 +451,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
       ownerSubject?: string
       description?: string
       bindingMode?: 'exclusive' | 'shared'
+      line?: string
       rev?: number
     }
     if (body.rev === undefined) throw err.badRequest('rev 必填（乐观锁）')

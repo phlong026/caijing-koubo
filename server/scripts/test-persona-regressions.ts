@@ -82,7 +82,7 @@ try {
     await assert.rejects(getProductionProfile(b.personaId, a.avatarId), (e: any) => e?.code === 'PERSONA_NOT_READY')
   })
 
-  await test('P1-4 指定的非默认分身肖像授权失效时被拒', async () => {
+  await test('P1-4 指定非默认分身：按人物任一有效肖像授权判定，授权全部失效时被拒', async () => {
     const now = toDb(utcNow())
     const expiredAuth = uid('auth')
     await db.run(
@@ -98,9 +98,13 @@ try {
        VALUES (?, ?, '旧授权分身', 'asset', 'video', 't', ?, 'vendor_x', 'ready', 'c', ?, ?, 'h', ?, ?)`,
       [second, a.personaId, second.slice(-6), expiredAuth, second, now, now],
     )
-    await assert.rejects(getProductionProfile(a.personaId, second), (e: any) => e?.code === 'AUTHORIZATION_REQUIRED')
-    const ok = await getProductionProfile(a.personaId)
-    assert.equal(ok.avatar.avatarId, a.avatarId)
+    // 旧分身绑定的授权已过期，但人物另有有效肖像授权（场景 3：补授权后旧分身无需重建）
+    const viaOther = await getProductionProfile(a.personaId, second)
+    assert.equal(viaOther.avatar.avatarId, second)
+    // 人物的有效授权被撤销后，任何分身都不能用于视频生成
+    await db.run("UPDATE persona_authorization SET status = 'revoked' WHERE persona_id = ? AND id <> ?", [a.personaId, expiredAuth])
+    await assert.rejects(getProductionProfile(a.personaId, second), (e: any) => e?.code === 'PERSONA_NOT_READY')
+    await assert.rejects(getProductionProfile(a.personaId), (e: any) => e?.code === 'PERSONA_NOT_READY')
     assert.ok(await getPersonaById(a.personaId, true))
   })
 

@@ -66,11 +66,17 @@ async function main(): Promise<void> {
 
   // GET /personas 返回 { items, total }，默认只含可用人物（FR-X1）
   const personas = await req('GET', '/personas')
-  const personaList: any[] = Array.isArray(personas.data?.items) ? personas.data.items : []
+  // FR-X1：GET /personas 返回 {items,total}，默认仅含 usable 人物（兼容旧数组形态）
+  const personaList: any[] = Array.isArray(personas.data?.items)
+    ? personas.data.items
+    : Array.isArray(personas.data)
+      ? personas.data
+      : []
   const enabledPersona = personaList.find((p) => p.usable ?? p.enabled)
   check('存在可用人物', !!enabledPersona, { count: personaList.length })
   if (!enabledPersona) {
     console.log('\n无可用人物，终止')
+    process.exitCode = 1
     return
   }
 

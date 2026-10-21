@@ -3,7 +3,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { config } from '../../config.js'
 import { err } from '../../errors.js'
+import { logApiCall } from '../../modules/metrics/call-log.js'
 import {
+  PATHS,
   HiflyQueryError,
   HiflySubmissionUncertain,
   HiflyVendorError,
@@ -23,7 +25,11 @@ import {
  * 仅在无 HIFLY_API_KEY 且 MOCK_FALLBACK=true 时启用；真实密钥到位后自动切换真实客户端。
  */
 
-export type MockBehavior = 'uncertain' | 'failed' | 'vendor_code'
+/**
+ * uncertain          提交结果未知，且飞影侧没有受理（核对后应转 failed）
+ * uncertain_accepted 提交结果未知，但飞影侧已受理并完成（响应在途中丢失；核对后应在列表里找到 → ready）
+ */
+export type MockBehavior = 'uncertain' | 'uncertain_accepted' | 'failed' | 'vendor_code'
 
 export interface MockInjection {
   behavior: MockBehavior
@@ -32,35 +38,29 @@ export interface MockInjection {
   times?: number
 }
 
-const injections = new Map<string, MockInjection[]>()
-const counters = new Map<string, number>()
+const injections = new Map<string, Array<MockInjection & { remaining: number }>>()
 
 /** 注入一次故障（按操作名：avatar.create / voice.create / voice.edit / video.create / audio.create / upload / download / credit） */
 export function injectHifly(op: string, injection: MockInjection): void {
   const list = injections.get(op) ?? []
-  list.push({ times: 1, ...injection })
+  list.push({ ...injection, times: injection.times ?? 1, remaining: injection.times ?? 1 })
   injections.set(op, list)
 }
 
 export function clearHiflyInjections(): void {
   injections.clear()
-  counters.clear()
 }
 
-/** 取当前生效的注入（命中后按 times 递减，耗尽移除） */
+/**
+ * 取当前生效的注入：按注册顺序先进先出，每条自带剩余次数，用尽即移除。
+ * （旧实现把计数存在按下标命名的全局 Map 里，移除后下标复用，第二次注入永远不再触发。）
+ */
 function takeInjection(op: string): MockInjection | null {
   const list = injections.get(op)
   if (!list?.length) return null
-  const idx = list.findIndex((i) => {
-    const key = `${op}#${list.indexOf(i)}`
-    return (counters.get(key) ?? 0) < (i.times ?? 1)
-  })
-  if (idx < 0) return null
-  const inj = list[idx]
-  const key = `${op}#${idx}`
-  const used = (counters.get(key) ?? 0) + 1
-  counters.set(key, used)
-  if (used >= (inj.times ?? 1)) list.splice(idx, 1)
+  const inj = list[0]
+  inj.remaining -= 1
+  if (inj.remaining <= 0) list.shift()
   if (!list.length) injections.delete(op)
   return inj
 }
@@ -82,14 +82,33 @@ interface MockTask {
 const tasks = new Map<string, MockTask>()
 const POLLS_TO_DONE = Number(process.env.HIFLY_MOCK_POLLS_TO_DONE ?? 2)
 
-function applyInjection(op: string): void {
-  const inj = takeInjection(op)
-  if (!inj) return
-  if (inj.behavior === 'uncertain') throw new HiflySubmissionUncertain(`[mock] 注入提交结果未知（${op}）`)
+function throwInjection(op: string, inj: MockInjection): never {
   if (inj.behavior === 'failed') throw new HiflyVendorError(1011, '[mock] 注入失败：素材未通过数字人服务合规校验')
   if (inj.behavior === 'vendor_code' && inj.vendorCode) {
     throw new HiflyVendorError(inj.vendorCode, `[mock] 注入业务码 ${inj.vendorCode}`)
   }
+  throw new HiflySubmissionUncertain(`[mock] 注入提交结果未知（${op}）`)
+}
+
+function applyInjection(op: string): void {
+  const inj = takeInjection(op)
+  if (inj) throwInjection(op, inj)
+}
+
+/** 创建类调用：注入 uncertain_accepted 时先真实登记任务（并标记完成），再抛「结果未知」 */
+function applyCreateInjection(op: string, register: () => string): string {
+  const inj = takeInjection(op)
+  if (inj?.behavior === 'uncertain_accepted') {
+    const taskId = register()
+    const t = tasks.get(taskId)
+    if (t) {
+      t.state = 'DONE'
+      t.polls = POLLS_TO_DONE
+    }
+    throw new HiflySubmissionUncertain(`[mock] 注入：飞影已受理但响应丢失（${op}）`)
+  }
+  if (inj) throwInjection(op, inj)
+  return register()
 }
 
 function registerTask(kind: MockTask['kind'], title: string, result: MockTask['result']): string {
@@ -155,9 +174,8 @@ class MockHiflyClient implements HiflyClient {
     fileId?: string
     aigcFlag?: number
   }): Promise<HiflyAccept> {
-    applyInjection('avatar.create')
     const avatarId = detId('mock_avatar', input.videoUrl ?? input.fileId, input.title)
-    const taskId = registerTask('avatar', clipTitle(input.title), { avatarId })
+    const taskId = applyCreateInjection('avatar.create', () => registerTask('avatar', clipTitle(input.title), { avatarId }))
     return { taskId, raw: { mock: true, avatar_id: avatarId } }
   }
 
@@ -167,9 +185,8 @@ class MockHiflyClient implements HiflyClient {
     fileId?: string
     aigcFlag?: number
   }): Promise<HiflyAccept> {
-    applyInjection('avatar.create')
     const avatarId = detId('mock_avatar', input.imageUrl ?? input.fileId, input.title)
-    const taskId = registerTask('avatar', clipTitle(input.title), { avatarId })
+    const taskId = applyCreateInjection('avatar.create', () => registerTask('avatar', clipTitle(input.title), { avatarId }))
     return { taskId, raw: { mock: true, avatar_id: avatarId } }
   }
 
@@ -194,10 +211,9 @@ class MockHiflyClient implements HiflyClient {
     voiceType?: number
     languages?: string | null
   }): Promise<HiflyAccept> {
-    applyInjection('voice.create')
     const voiceId = detId('mock_voice', input.audioUrl ?? input.fileId, input.title)
     const demoUrl = `mock://demo/${voiceId}.wav`
-    const taskId = registerTask('voice', clipTitle(input.title), { voiceId, demoUrl })
+    const taskId = applyCreateInjection('voice.create', () => registerTask('voice', clipTitle(input.title), { voiceId, demoUrl }))
     return { taskId, raw: { mock: true, voice_id: voiceId } }
   }
 
@@ -299,9 +315,51 @@ class MockHiflyClient implements HiflyClient {
   }
 }
 
-let mockClient: MockHiflyClient | null = null
+/**
+ * 与真实客户端一致的调用留痕（AC-C7）：每次飞影调用写 api_call_log(provider=hifly, ref_type=…)，
+ * 端点路径沿用真实 PATHS，便于断言「创建类调用只发出一次」。上传 / 下载与真实客户端一样不记。
+ */
+const TRACED: Record<string, { path: string; refType: string | null }> = {
+  createAvatarByVideo: { path: PATHS.avatarCreateByVideo, refType: 'persona_avatar' },
+  createAvatarByImage: { path: PATHS.avatarCreateByImage, refType: 'persona_avatar' },
+  avatarTask: { path: PATHS.avatarTask, refType: 'persona_avatar' },
+  avatarList: { path: PATHS.avatarList, refType: 'persona_avatar' },
+  createVoice: { path: PATHS.voiceCreate, refType: 'persona_voice' },
+  editVoice: { path: PATHS.voiceEdit, refType: 'persona_voice' },
+  voiceTask: { path: PATHS.voiceTask, refType: 'persona_voice' },
+  voiceList: { path: PATHS.voiceList, refType: 'persona_voice' },
+  createVideoByTts: { path: PATHS.videoCreateByTts, refType: 'persona_avatar' },
+  createVideoByAudio: { path: PATHS.videoCreateByAudio, refType: 'persona_avatar' },
+  videoTask: { path: PATHS.videoTask, refType: 'persona_avatar' },
+  createAudioByTts: { path: PATHS.audioCreateByTts, refType: 'persona_voice' },
+  createUploadUrl: { path: PATHS.toolCreateUploadUrl, refType: null },
+  credit: { path: PATHS.accountCredit, refType: null },
+}
+
+function withCallLog(target: MockHiflyClient): HiflyClient {
+  return new Proxy(target, {
+    get(obj, prop, receiver) {
+      const value = Reflect.get(obj, prop, receiver)
+      const meta = typeof prop === 'string' ? TRACED[prop] : undefined
+      if (!meta || typeof value !== 'function') return value
+      return async (...args: unknown[]) => {
+        const started = Date.now()
+        try {
+          const result = await value.apply(obj, args)
+          await logApiCall({ provider: 'hifly', endpoint: meta.path, refType: meta.refType, ok: true, httpStatus: 200, durationMs: Date.now() - started })
+          return result
+        } catch (e) {
+          await logApiCall({ provider: 'hifly', endpoint: meta.path, refType: meta.refType, ok: false, durationMs: Date.now() - started, error: (e as Error).message })
+          throw e
+        }
+      }
+    },
+  }) as unknown as HiflyClient
+}
+
+let mockClient: HiflyClient | null = null
 
 export function getMockHiflyClient(): HiflyClient {
-  if (!mockClient) mockClient = new MockHiflyClient()
+  if (!mockClient) mockClient = withCallLog(new MockHiflyClient())
   return mockClient
 }

@@ -1,5 +1,5 @@
+import { decoratePersonas } from '../personas/decorate.js'
 import {
-  derivePersonaStatuses,
   getPersonaById,
   listPersonas,
   type Persona,
@@ -25,20 +25,8 @@ export interface PersonaForCopy extends Persona {
 
 /** 供 GET /copy/options 与来源卡使用；含已停用（前端标灰 + 原因） */
 export async function listPersonasForCopy(): Promise<PersonaForCopy[]> {
-  const all = await listPersonas({ includeDisabled: true })
   const labels: Record<string, string> = { manager: '经理 IP', kos: '员工 KOS', persona: '素人矩阵' }
-  const out: PersonaForCopy[] = []
-  const statuses = await derivePersonaStatuses(all)
-  for (const p of all) {
-    const derived = statuses.get(p.id)!
-    out.push({
-      ...p,
-      lineLabel: labels[p.line] ?? p.line,
-      status: derived.status,
-      statusLabel: derived.label,
-      usable: derived.usable,
-      statusReasons: derived.reasons,
-    })
-  }
-  return out
+  // 批量派生（decorate.ts）：不再对每个人物各发多条查询
+  const decorated = await decoratePersonas(await listPersonas({ includeDisabled: true }))
+  return decorated.map((d) => ({ ...d, lineLabel: labels[d.line] ?? d.line }))
 }

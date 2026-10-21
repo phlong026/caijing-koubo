@@ -115,7 +115,7 @@ export function deriveStatus(
 
   const live = auths.filter((a) => a.status !== 'revoked' && a.status !== 'rejected')
   const valid = live.filter((a) => isAuthorizationValid(a, now))
-  // P1-5：revoked 已被 live 过滤掉，必须从全部授权里取，否则「授权已撤销」永远不会出现
+  // 撤销的授权不在 live 里：必须从全量里取，否则 auth_revoked 永远派生不出来（§3.2：撤销优于过期）
   const revoked = auths.filter((a) => a.status === 'revoked')
   const expired = live.filter((a) => authorizationEffectiveStatus(a, now) === 'expired')
   const pending = live.filter((a) => a.status === 'pending')
@@ -152,7 +152,12 @@ export function deriveStatus(
   if (status === 'archived') reasons.push({ code: 'PERSONA_ARCHIVED', message: '人物已归档' })
   if (status === 'disabled') reasons.push({ code: 'PERSONA_DISABLED', message: '人物已停用' })
   if (status === 'auth_revoked') reasons.push({ code: 'AUTH_REVOKED', message: '授权已撤销，人物不可用' })
-  if (status === 'auth_expired') reasons.push({ code: 'AUTH_EXPIRED', message: '授权已过期，人物不可用' })
+  if (status === 'auth_expired') {
+    // 提示最近一次到期的日期（FR-U3 / AC-U2：授权失效后文案预检要能告诉运营是哪天过期的）
+    const last = expired.map((a) => a.expiresAt ?? '').filter(Boolean).sort().pop()
+    const day = last ? String(last).slice(0, 10) : ''
+    reasons.push({ code: 'AUTH_EXPIRED', message: day ? `授权已于 ${day} 过期，人物不可用` : '授权已过期，人物不可用' })
+  }
   if (status === 'auth_pending') reasons.push({ code: 'AUTH_PENDING', message: '授权待核验，人物不可用' })
 
   return {
