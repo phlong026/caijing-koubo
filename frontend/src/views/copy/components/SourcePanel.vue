@@ -1,10 +1,9 @@
 <template>
-  <details open class="copy-source">
-    <summary class="copy-source-heading">
+  <section class="copy-source" aria-label="来源材料">
+    <div class="copy-source-heading">
       <div class="mw-card-title">来源材料</div>
       <span v-if="c" class="mw-tag mw-tag-gray">{{ c.sourceLabel }}</span>
-      <icon-down :size="13" class="copy-source-chevron" />
-    </summary>
+    </div>
 
     <!-- 加载 -->
     <a-skeleton v-if="loading" :animation="true">
@@ -30,7 +29,7 @@
       <!-- 来源摘要 -->
       <div v-if="summary" class="copy-source-summary">
         <div class="mw-subtle mb-1">{{ summary.label }}</div>
-        <div class="text-[13px] leading-[1.75] text-[#3c4a63] whitespace-pre-wrap max-h-[144px] overflow-auto">
+        <div class="copy-source-fulltext text-[13px] leading-[1.85] text-[#3c4a63] whitespace-pre-wrap">
           {{ summary.text }}
         </div>
       </div>
@@ -38,7 +37,7 @@
       <!-- 文章大纲（article 模式） -->
       <div v-if="article?.outline?.length" class="mb-3">
         <div class="mw-subtle mb-2">原文大纲 · {{ article.charCount }} 字</div>
-        <div class="max-h-[240px] overflow-auto space-y-1">
+        <div class="space-y-1">
           <div
             v-for="node in article.outline"
             :key="node.index"
@@ -77,7 +76,7 @@
         已审核通过。再次编辑将回到「修订中」，并保留原通过版本。
       </div>
     </template>
-  </details>
+  </section>
 </template>
 
 <script setup lang="ts">

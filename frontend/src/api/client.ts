@@ -24,7 +24,7 @@ type ApiEnvelope<T> =
   | { ok: true; data: T }
   | { ok: false; error: { code: string; message: string } }
 
-type QueryValue = string | number | boolean | null | undefined
+export type QueryValue = string | number | boolean | null | undefined
 
 function buildUrl(path: string, query?: Record<string, QueryValue>) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`

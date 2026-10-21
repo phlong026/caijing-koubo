@@ -565,7 +565,8 @@ async function prepareEntry(entry: string, injection: string, personaId: string,
   }
   if (entry === '人物样稿') {
     const row = await req('GET', '/personas')
-    const p = (row.data ?? []).find((x: any) => x.id === personaId)
+    // FR-X1：GET /personas 返回 {items,total}
+    const p = (row.data?.items ?? []).find((x: any) => x.id === personaId)
     const ipProfile = (p?.ipProfile ?? {}) as Record<string, unknown>
     const backup = { ...ipProfile }
     const sampleKey = 'sampleScript' in ipProfile ? 'sampleScript' : 'sample_script'
@@ -607,10 +608,9 @@ async function prepareArticleEntry(injection: string, personaId: string, title: 
   return { copyId, draftId, articleId }
 }
 
-/** 人物样稿写入：M1 尚未提供写接口时返回 false */
+/** 人物样稿写入：走 PUT /personas/:id/profile（PL1 已提供写接口） */
 async function setPersonaSampleScript(personaId: string, ipProfile: Record<string, unknown>): Promise<boolean> {
-  // 先探测是否存在写接口（PUT /personas/:id）
-  const probe = await req('PUT', `/personas/${personaId}`, { ipProfile })
+  const probe = await req('PUT', `/personas/${personaId}/profile`, { ipProfile })
   return probe.ok === true
 }
 

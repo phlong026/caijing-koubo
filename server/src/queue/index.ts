@@ -75,6 +75,10 @@ export const QUEUE_NAMES = {
   benchmarkSweep: 'benchmark-sweep',
   scriptExtract: 'script-extract',
   copyGenerate: 'copy-generate',
+  // ── 人物库模块（任务书 §5.3）──
+  personaAssetProcess: 'persona-asset-process',
+  personaClone: 'persona-clone',
+  personaAuthExpiry: 'persona-auth-expiry',
 } as const
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES]

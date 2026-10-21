@@ -35,8 +35,13 @@ async function putLocal(filePath: string, key: string): Promise<OssPutResult> {
   return { key, url: `file:///${dest.replace(/\\/g, '/')}`, mock: true }
 }
 
-export async function putObjectFromFile(filePath: string, objectKey: string): Promise<OssPutResult> {
-  const key = `${config.oss.prefix}${objectKey}`.replace(/\/{2,}/g, '/')
+/**
+ * 上传（R30：前缀按调用传参，不再用固定 OSS_PREFIX）。
+ * 传 prefix 时以调用方为准；不传则回退 config.oss.prefix（兼容既有调用方）。
+ */
+export async function putObjectFromFile(filePath: string, objectKey: string, prefix?: string): Promise<OssPutResult> {
+  const base = (prefix ?? config.oss.prefix).replace(/^\/+|\/+$/g, '')
+  const key = base ? `${base}/${objectKey}`.replace(/\/{2,}/g, '/') : objectKey
   if (!isOssEnabled()) {
     if (!config.mockFallback) throw new Error('OSS 未配置（OSS_BUCKET / AccessKey）')
     return putLocal(filePath, key)
@@ -47,7 +52,7 @@ export async function putObjectFromFile(filePath: string, objectKey: string): Pr
   return { key, url: res?.url ?? '', mock: false }
 }
 
-/** 签名 URL：有效期覆盖转写耗时 */
+/** 签名 URL：有效期覆盖转写耗时；L13 飞影自取需 24 小时有效期 */
 export async function signedUrl(key: string, ttlSeconds?: number): Promise<string> {
   const ttl = ttlSeconds ?? config.oss.signedUrlTtl
   if (!isOssEnabled()) {
@@ -73,6 +78,84 @@ export async function deleteObject(key: string): Promise<void> {
   } catch (e) {
     logger.warn({ key, err: (e as Error).message }, 'oss.delete_failed')
   }
+}
+
+export interface ObjectStreamResult {
+  stream: NodeJS.ReadableStream
+  contentType: string | null
+  contentLength: number | null
+  contentRange: string | null
+  status: number
+}
+
+/**
+ * 流式读取（FR-A4：/persona-assets/:id/file 经后端代理，不暴露真实路径与长期公网 URL）。
+ * 本地兜底：fs 流 + Range 精确切片；OSS：get 透传 Range 头。
+ */
+export async function getObjectStream(key: string, range?: string): Promise<ObjectStreamResult | null> {
+  if (!isOssEnabled()) {
+    const local = path.join(paths.dataDir, 'oss', key)
+    if (!fs.existsSync(local)) return null
+    const stat = await fsp.stat(local)
+    const total = stat.size
+    let start = 0
+    let end = total - 1
+    if (range) {
+      const m = /bytes=(\d*)-(\d*)/.exec(range)
+      if (m) {
+        if (m[1]) start = Number(m[1])
+        if (m[2]) end = Math.min(Number(m[2]), total - 1)
+        if (start > end || start >= total) {
+          return {
+            stream: fs.createReadStream(local, { start: 0, end: 0 }),
+            contentType: null,
+            contentLength: 0,
+            contentRange: null,
+            status: 416,
+          }
+        }
+      }
+    }
+    return {
+      stream: fs.createReadStream(local, { start, end }),
+      contentType: guessContentType(local),
+      contentLength: end - start + 1,
+      contentRange: range ? `bytes ${start}-${end}/${total}` : null,
+      status: range ? 206 : 200,
+    }
+  }
+  try {
+    const client = await getClient()
+    const res = await client.get(key, range ? { headers: { Range: range } } : {})
+    const headers = (res.res as any)?.headers ?? {}
+    return {
+      stream: res.res as unknown as NodeJS.ReadableStream,
+      contentType: (headers['content-type'] as string) ?? null,
+      contentLength: Number(headers['content-length'] ?? 0) || null,
+      contentRange: (headers['content-range'] as string) ?? null,
+      status: Number((res.res as any)?.statusCode ?? 200),
+    }
+  } catch (e) {
+    logger.warn({ key, err: (e as Error).message }, 'oss.get_failed')
+    return null
+  }
+}
+
+function guessContentType(filePath: string): string | null {
+  const ext = path.extname(filePath).toLowerCase()
+  const map: Record<string, string> = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+    '.mp4': 'video/mp4',
+    '.mov': 'video/quicktime',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.m4a': 'audio/mp4',
+    '.pdf': 'application/pdf',
+  }
+  return map[ext] ?? null
 }
 
 /** 健康检查用 */

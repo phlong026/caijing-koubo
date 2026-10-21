@@ -186,10 +186,11 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
     [
       '【输出格式】',
       '只输出一个 JSON 对象，不要输出任何解释、markdown 代码围栏或前后缀文字：',
-      '{"title":"口播标题（不超过 30 字）","sections":[{"label":"开场","text":"正文字数充足的口播内容"},{"label":"01 要点","text":"..."}]}',
+      '{"title":"口播标题（不超过 30 字）","sections":[{"label":"段落1","text":"直接可朗读的改写文案"},{"label":"段落2","text":"自然衔接的后续文案"}]}',
       '约束：',
       `- sections 为 1–8 段，每段 text 非空且为纯文本（不要 Markdown 标记、不要分点符号、不要表情）；`,
-      `- label 用简短的段落名（如「开场」「01 什么是定投」「收尾」）；`,
+      '- label 仅供内部定位，按「段落1」「段落2」填写，不属于正文；',
+      '- text 直接输出可朗读的改写文案，不写「开场」「中间」「收尾」等结构标志，不添加段落标题、编号或讲解说明；段落之间自然衔接；',
       mode === 'article' ? '- 每段必须带 sourceRefs（数组，元素为大纲节点序号，整体非递减）；' : '- 无需输出 sourceRefs；',
       `- 全文总字数控制在 ${range.min}–${range.max} 字。`,
     ].join('\n'),
@@ -214,7 +215,8 @@ export function assembleVariantPrompt(input: {
   const system = `${SYSTEM_RULES}
 
 【本次任务】只改写一个段落，输出 JSON：{"variants":[{"kind":"类型名","text":"改写后的段落文本"}]}。
-不得改变该段落承担的信息功能，不得新增无依据的事实、数字或经历；不得出现收益承诺与绝对化表述。`
+不得改变该段落承担的信息功能，不得新增无依据的事实、数字或经历；不得出现收益承诺与绝对化表述。
+text 只写可直接朗读的改写文案，不添加「开场」「中间」「收尾」等结构标志、段落标题或编号。`
 
   const user = [
     `【人物】${personaName}（${line}）`,

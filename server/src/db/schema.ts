@@ -45,7 +45,7 @@ const int = (name: string, def: number | null = 0, extra: Partial<Col> = {}): Co
   def,
   ...extra,
 })
-const big = (name: string, def = 0): Col => ({ name, type: 'bigint', def })
+const big = (name: string, def = 0, extra: Partial<Col> = {}): Col => ({ name, type: 'bigint', def, ...extra })
 const tint = (name: string, def = 0): Col => ({ name, type: 'tinyint', def })
 const dec = (name: string, def = 0): Col => ({ name, type: 'decimal', len: 12, scale: 6, def })
 const dt = (name: string, nullable = true): Col => ({ name, type: 'datetime', nullable })
@@ -194,6 +194,8 @@ export const TABLES: TableDef[] = [
       vc('video_id', 64),
       vc('title', 1024, { nullable: true }),
       vc('cover_url', 1024, { nullable: true }),
+      int('video_width', 0),
+      int('video_height', 0),
       int('duration', 0, { nullable: true }),
       vc('share_url', 1024, { nullable: true }),
       vc('author_nickname', 128, { nullable: true }),
@@ -316,12 +318,297 @@ export const TABLES: TableDef[] = [
       vc('line', 16), // manager | kos | persona
       tint('enabled', 1),
       { name: 'ip_profile', type: 'json', nullable: true },
-      tint('is_stub', 1), // D13：M1 人物库未就绪前的只读桩标记
+      tint('is_stub', 1), // D13：M1 人物库未就绪前的只读桩标记；M1 后语义为「示例人物」
+      dt('created_at'),
+      dt('updated_at'),
+      // ── 人物库模块扩展（任务书 §4.1，L1 原地升级）──
+      vc('owner_subject', 64, { nullable: true }), // 归属主体
+      vc('description', 255, { nullable: true }), // 简介
+      vc('binding_mode', 16, { def: 'exclusive' }), // exclusive | shared
+      vc('cover_asset_id', 40, { nullable: true }), // → persona_asset(kind=photo)
+      vc('default_avatar_id', 40, { nullable: true }), // → persona_avatar
+      vc('default_voice_id', 40, { nullable: true }), // → persona_voice
+      int('profile_revision', 0), // IP 定位保存递增（hash 不变不升）
+      int('rev', 0), // 基本信息乐观锁
+      vc('current_version_id', 40, { nullable: true }), // 最新人物版本
+      vc('active_name_key', 64, { nullable: true }), // 规范化名称（未归档唯一，归档置 NULL）
+      dt('archived_at'),
+      vc('created_by', 64, { nullable: true }),
+      vc('updated_by', 64, { nullable: true }),
+    ],
+    // 注意：active_name_key 唯一键走 indexes（unique）而非 uniques——
+    // persona 是存量表，CREATE TABLE IF NOT EXISTS 不会给它补约束，
+    // 必须经 migrate 的 indexExists 守卫单独建索引（MySQL 无 IF NOT EXISTS）。
+    indexes: [
+      { name: 'idx_persona_line', cols: ['line', 'enabled'] },
+      { name: 'idx_persona_archived', cols: ['archived_at'] },
+      { name: 'uk_persona_active_name', cols: ['active_name_key'], unique: true },
+    ],
+    comment: '人物（D13 桩升级：人物库模块 L1 原地扩展，存量 id 保留）',
+  },
+
+  // ── 人物库模块（任务书 §4.2）─────────────────────────────────────
+  {
+    name: 'persona_asset',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('persona_id', 40),
+      vc('kind', 24), // photo | avatar_source | background_image | background_video | broll_video
+      vc('name', 60),
+      vc('background_label', 20, { nullable: true }), // 仅 avatar_source：分身背景名（L15）
+      vc('status', 16, { def: 'uploaded' }), // uploaded|processing|pending_review|approved|rejected|failed
+      vc('storage_key', 255),
+      vc('compat_key', 255, { nullable: true }), // 分身兼容版本（H.264 mp4）
+      vc('thumb_key', 255, { nullable: true }),
+      vc('mime', 64),
+      big('size_bytes'),
+      vc('sha256', 64),
+      vc('compat_sha256', 64, { nullable: true }),
+      vc('sha256_key', 64, { nullable: true }), // 去重键（软删置 NULL 释放）
+      int('width', 0, { nullable: true }),
+      int('height', 0, { nullable: true }),
+      big('duration_ms', 0, { nullable: true }),
+      { name: 'fps', type: 'decimal', len: 6, scale: 2, def: 0, nullable: true },
+      { name: 'quality', type: 'json', nullable: true }, // {schemaVersion, hard[], soft[], metrics}
+      { name: 'tags', type: 'json', nullable: true },
+      vc('review_decision', 16, { nullable: true }),
+      { name: 'review_reason', type: 'text', nullable: true },
+      { name: 'review_issue_codes', type: 'json', nullable: true },
+      vc('reviewed_by', 64, { nullable: true }),
+      dt('reviewed_at'),
+      { name: 'error', type: 'text', nullable: true },
+      int('sort', 0),
+      vc('created_by', 64, { nullable: true }),
+      dt('created_at'),
+      dt('updated_at'),
+      dt('deleted_at'),
+      vc('deleted_by', 64, { nullable: true }),
+    ],
+    uniques: [['persona_id', 'kind', 'sha256_key']],
+    indexes: [
+      { name: 'idx_passet_persona', cols: ['persona_id', 'kind', 'status'] },
+      { name: 'idx_passet_status', cols: ['status'] },
+    ],
+    comment: '人物素材（照片/分身素材/背景图/背景视频/空镜，软删）',
+  },
+  {
+    name: 'persona_avatar',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('persona_id', 40),
+      vc('name', 60),
+      vc('source_asset_id', 40),
+      vc('source_kind', 16), // video | image
+      vc('background_label', 20, { nullable: true }),
+      vc('provider', 16, { def: 'hifly' }),
+      vc('vendor_title', 40),
+      vc('short_ref', 6), // 短引用（核对用，库内唯一）
+      vc('vendor_task_id', 128, { nullable: true }),
+      vc('vendor_avatar_id', 128, { nullable: true }),
+      vc('status', 16, { def: 'pending' }), // pending|submitting|running|ready|failed|uncertain
+      { name: 'error', type: 'text', nullable: true },
+      vc('consent_id', 40),
+      vc('authorization_id', 40),
+      vc('idempotency_key', 64),
+      vc('request_hash', 64),
+      int('attempts', 0),
+      dt('submitted_at'),
+      dt('last_polled_at'),
+      dt('next_poll_at'),
+      dt('ready_at'),
+      vc('created_by', 64, { nullable: true }),
+      dt('created_at'),
+      dt('updated_at'),
+      dt('deleted_at'),
+      vc('deleted_by', 64, { nullable: true }),
+    ],
+    uniques: [
+      ['idempotency_key'],
+      ['short_ref'],
+    ],
+    indexes: [
+      { name: 'idx_pavatar_persona', cols: ['persona_id', 'status'] },
+      { name: 'idx_pavatar_poll', cols: ['status', 'next_poll_at'] },
+    ],
+    comment: '飞影口播分身（平移 oral_avatars，软删）',
+  },
+  {
+    name: 'persona_voice',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('persona_id', 40),
+      vc('name', 60),
+      tint('is_sample', 0), // 1=声音样本（未发起克隆）；0=克隆声音（FR-V1/V3）
+      vc('provider', 16, { def: 'hifly' }),
+      int('voice_type', 8),
+      vc('language', 24, { def: 'zh' }),
+      vc('sample_key', 255),
+      vc('sample_sha256', 64),
+      big('sample_duration_ms', 0),
+      vc('vendor_title', 40),
+      vc('short_ref', 6),
+      vc('vendor_task_id', 128, { nullable: true }),
+      vc('vendor_voice_id', 128, { nullable: true }),
+      vc('demo_key', 255, { nullable: true }), // 归档后的试听文件
+      vc('consent_id', 40),
+      vc('authorization_id', 40),
+      vc('status', 16, { def: 'pending' }),
+      { name: 'error', type: 'text', nullable: true },
+      tint('confirmed', 0), // 人工试听确认
+      vc('confirmed_by', 64, { nullable: true }),
+      dt('confirmed_at'),
+      { name: 'speech_rate', type: 'decimal', len: 3, scale: 1, def: 1.0 },
+      { name: 'volume', type: 'decimal', len: 3, scale: 1, def: 1.0 },
+      { name: 'pitch', type: 'decimal', len: 3, scale: 1, def: 1.0 },
+      vc('idempotency_key', 64),
+      vc('request_hash', 64),
+      int('attempts', 0),
+      dt('submitted_at'),
+      dt('last_polled_at'),
+      dt('next_poll_at'),
+      dt('ready_at'),
+      vc('created_by', 64, { nullable: true }),
+      dt('created_at'),
+      dt('updated_at'),
+      dt('deleted_at'),
+      vc('deleted_by', 64, { nullable: true }),
+    ],
+    uniques: [
+      ['idempotency_key'],
+      ['short_ref'],
+    ],
+    indexes: [
+      { name: 'idx_pvoice_persona', cols: ['persona_id', 'status'] },
+      { name: 'idx_pvoice_poll', cols: ['status', 'next_poll_at'] },
+    ],
+    comment: '飞影声音档案（平移 oral_voices，软删；is_sample=1 为未发起克隆的声音样本）',
+  },
+  {
+    name: 'persona_voice_preview',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('voice_id', 40),
+      vc('params_hash', 64),
+      vc('text_hash', 64),
+      { name: 'text', type: 'longtext', nullable: true }, // 试听原文（轮询重试需要）
+      vc('vendor_task_id', 128, { nullable: true }),
+      vc('status', 16, { def: 'running' }), // running|ready|failed
+      vc('audio_key', 255, { nullable: true }),
+      { name: 'error', type: 'text', nullable: true },
+      int('attempts', 0),
+      dt('created_at'),
+      dt('expires_at'),
+    ],
+    uniques: [['voice_id', 'params_hash', 'text_hash']],
+    indexes: [{ name: 'idx_pvprev_status', cols: ['status'] }],
+    comment: '任意文本试听缓存（FR-V7，7 天）',
+  },
+  {
+    name: 'persona_authorization',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('persona_id', 40),
+      vc('grantor_name', 60),
+      { name: 'scopes', type: 'json', nullable: true }, // portrait|voice|share
+      vc('file_key', 255),
+      vc('file_mime', 64),
+      big('file_size', 0),
+      vc('file_sha256', 64),
+      vc('effective_from', 10), // YYYY-MM-DD
+      dt('expires_at'), // Q4：必须填到期日期
+      vc('status', 16, { def: 'pending' }), // pending|verified|rejected|revoked（expired 读时派生）
+      { name: 'decision_reason', type: 'text', nullable: true },
+      vc('verified_by', 64, { nullable: true }),
+      dt('verified_at'),
+      vc('revoked_by', 64, { nullable: true }),
+      dt('revoked_at'),
+      dt('remind_sent_at'), // 到期前 30 天提醒已发
+      vc('note', 255, { nullable: true }),
+      vc('created_by', 64, { nullable: true }),
       dt('created_at'),
       dt('updated_at'),
     ],
-    indexes: [{ name: 'idx_persona_line', cols: ['line', 'enabled'] }],
-    comment: 'D13 persona 只读桩（M1 落地后切换数据源、接口不变）',
+    indexes: [
+      { name: 'idx_pauth_persona', cols: ['persona_id', 'status'] },
+      { name: 'idx_pauth_expires', cols: ['status', 'expires_at'] },
+    ],
+    comment: '授权材料（读时派生 expired，FR-U3）',
+  },
+  {
+    name: 'persona_consent',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('persona_id', 40),
+      vc('authorization_id', 40),
+      vc('purpose', 16), // AVATAR_CLONE | VOICE_CLONE
+      vc('source_kind', 16), // avatar_source | voice_sample
+      vc('source_id', 40),
+      vc('source_sha256', 64),
+      vc('consent_text_version', 32),
+      vc('consented_by', 64),
+      dt('consented_at'),
+    ],
+    indexes: [{ name: 'idx_pconsent_persona', cols: ['persona_id', 'purpose'] }],
+    comment: '克隆授权确认（L6，五元组一致才放行）',
+  },
+  {
+    name: 'persona_account_binding',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('persona_id', 40),
+      vc('platform', 16), // douyin|xiaohongshu|kuaishou|shipinhao
+      vc('account_key', 128),
+      vc('display_name', 60),
+      vc('created_by', 64, { nullable: true }),
+      dt('created_at'),
+      dt('released_at'),
+      vc('active_key', 160, { nullable: true }), // platform:account_key（解绑置 NULL）
+    ],
+    uniques: [['active_key']],
+    indexes: [{ name: 'idx_pbind_persona', cols: ['persona_id'] }],
+    comment: '账号绑定（L11，M4 迁 platform_account 外键）',
+  },
+  {
+    name: 'persona_version',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('persona_id', 40),
+      int('version_no', 1),
+      { name: 'snapshot', type: 'longtext', nullable: true },
+      vc('snapshot_hash', 64),
+      vc('trigger', 16), // profile | default_asset | voice_settings | migrate
+      vc('created_by', 64, { nullable: true }),
+      dt('created_at'),
+    ],
+    uniques: [['persona_id', 'version_no']],
+    indexes: [{ name: 'idx_pversion_persona', cols: ['persona_id', 'created_at'] }],
+    comment: '人物版本快照（L7，不可变）',
+  },
+  {
+    name: 'persona_reminder',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('persona_id', 40),
+      vc('kind', 24), // auth_expiring | auth_expired | clone_uncertain | clone_failed
+      vc('ref_id', 40, { nullable: true }),
+      vc('message', 255),
+      dt('read_at'),
+      dt('created_at'),
+    ],
+    indexes: [
+      { name: 'idx_preminder_unread', cols: ['read_at', 'created_at'] },
+      { name: 'idx_preminder_kind', cols: ['kind', 'ref_id'] },
+    ],
+    comment: '站内提醒（授权到期 / 克隆不确定态 / 失败）',
   },
   {
     name: 'copy',
@@ -434,6 +721,7 @@ export const TABLES: TableDef[] = [
       int('target_section', 0, { nullable: true }),
       vc('target_section_text', 64, { nullable: true }),
       { name: 'persona_snapshot', type: 'json', nullable: true },
+      vc('persona_version_id', 40, { nullable: true }), // FR-X3：生成时的人物版本
       { name: 'prompt_text', type: 'longtext', nullable: true },
       // 受理时的 system 段（prompt_text = system + 空行 + user）；执行时据此拆回 system / user，
       // 直接用落库快照调用模型，不再按运行时最新的人物 / 模板重拼（FR-G6 追溯一致）

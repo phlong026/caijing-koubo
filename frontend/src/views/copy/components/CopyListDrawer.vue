@@ -2,7 +2,7 @@
   <a-drawer
     :visible="visible"
     :width="520"
-    title="文案列表"
+    title="文案任务"
     unmount-on-close
     @cancel="emit('update:visible', false)"
   >
@@ -35,7 +35,7 @@
         <div
           v-for="it in items"
           :key="it.id"
-          class="list-row"
+          class="list-row" role="button" tabindex="0" @keydown.enter="onPick(it.id)" @keydown.space.prevent="onPick(it.id)"
           :class="{ active: it.id === store.copy?.id }"
           @click="onPick(it.id)"
         >

@@ -1,4 +1,5 @@
 import { getDb, isDuplicateKey } from '../../db/index.js'
+import { candidateUser } from './candidates.js'
 import { config } from '../../config.js'
 import { err } from '../../errors.js'
 import { logger } from '../../log.js'
@@ -152,6 +153,8 @@ export async function acceptGeneration(args: GenerateArgs): Promise<GenerateAcce
     name: persona.name,
     line: persona.line,
     ipProfile: ip,
+    // FR-X3：生成时的人物版本（供详情回显版本号）
+    versionId: persona.currentVersionId ?? null,
     capturedAt: toDb(utcNow()),
   }
 
@@ -174,6 +177,7 @@ export async function acceptGeneration(args: GenerateArgs): Promise<GenerateAcce
         instructions,
         target_section: null,
         persona_snapshot: personaSnapshot,
+        persona_version_id: persona.currentVersionId ?? null,
         prompt_text: assembled.promptText,
         prompt_system: assembled.system,
         prompt_hash: assembled.promptHash,
@@ -207,7 +211,10 @@ export async function acceptGeneration(args: GenerateArgs): Promise<GenerateAcce
     count,
     instructions,
   }
-  await updateCopy(copy.id, { settings: jenc(settings), updated_at: toDb(utcNow()) }, db)
+  await db.tx(async tx => {
+    const fresh = await requireCopy(copy.id, tx)
+    await updateCopy(copy.id, { settings: jenc({ ...fresh.settings, templateId: settings.templateId, styleId: settings.styleId, durationTier: settings.durationTier, durationSeconds: settings.durationSeconds, count, instructions }), updated_at: toDb(utcNow()) }, tx)
+  })
 
   // 6) 入队（jobId 用 generationId，天然去重）
   await enqueue(
@@ -274,7 +281,7 @@ export async function assembleForCopy(
     durationTier: opts.durationTier,
     durationSeconds: opts.durationSeconds,
     instructions: opts.instructions,
-    source: await buildSourceBlock(copy),
+    source: { ...(await buildSourceBlock(copy)), ...((copy.settings?.sourceReview as any)?.correctedText ? { sourceText: String((copy.settings!.sourceReview as any).correctedText) } : {}) },
   })
 }
 
@@ -402,7 +409,8 @@ export async function runGeneration(generationId: string): Promise<void> {
       let cost = 0
       let parsed: ReturnType<typeof parseDraftJson> = null
       for (let attempt = 0; attempt <= 1 && !parsed; attempt++) {
-        const r = await callLlmWithRetry(prompt.system, prompt.user, generationId)
+        const candidate = candidateUser(prompt.user, i, gen.count)
+        const r = await callLlmWithRetry(prompt.system, candidate.user, generationId)
         cost += r.cost
         parsed = parseDraftJson(r.content)
       }
@@ -443,6 +451,7 @@ export async function runGeneration(generationId: string): Promise<void> {
           plainText: toPlainText(parsed.title, parsed.sections),
           wordCount: wc,
           origin: 'ai',
+          name: gen.count > 1 ? candidateUser(prompt.user, i, gen.count).direction : '自由创作',
           generationId,
           createdBy: gen.createdBy ?? 'system',
         },
@@ -623,7 +632,14 @@ export async function acceptVariant(args: VariantArgs): Promise<{ generationId: 
       count: kinds.length,
       target_section: idx,
       target_section_text: (target.label ?? '').slice(0, 60),
-      persona_snapshot: { id: persona.id, name: persona.name, line: persona.line, ipProfile: persona.ipProfile },
+      persona_snapshot: {
+        id: persona.id,
+        name: persona.name,
+        line: persona.line,
+        ipProfile: persona.ipProfile,
+        versionId: persona.currentVersionId ?? null,
+      },
+      persona_version_id: persona.currentVersionId ?? null,
       prompt_text: assembled.promptText,
       prompt_system: assembled.system,
       prompt_hash: assembled.promptHash,

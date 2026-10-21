@@ -1,7 +1,7 @@
 <template>
-  <div class="mw-shell">
+  <div class="mw-shell" :class="{ 'is-nav-collapsed': workspace.navigationCollapsed }">
     <!-- 侧边导航 -->
-    <aside class="mw-sidebar">
+    <aside class="mw-sidebar" aria-label="主导航">
       <div class="mw-brand">
         <div
           class="mw-brand-mark"
@@ -14,12 +14,13 @@
           <template v-if="brand.logoText">{{ brand.logoText }}</template>
           <icon-sun-fill v-else :size="19" />
         </div>
-        <div class="leading-tight min-w-0">
+        <div class="mw-brand-copy leading-tight min-w-0">
           <div class="mw-brand-name">{{ brand.appName }}</div>
           <div class="mw-brand-tagline">{{ brand.appTagline }}</div>
         </div>
       </div>
-      <nav class="mw-sidebar-nav">
+      <div class="mw-sidebar-tools"><a-button type="text" :aria-label="workspace.navigationCollapsed ? '展开导航' : '收起导航'" :aria-expanded="!workspace.navigationCollapsed" aria-controls="workspace-navigation" :title="workspace.navigationCollapsed ? '展开导航' : '收起导航'" @click="workspace.toggleNavigation()"><template #icon><icon-menu-unfold v-if="workspace.navigationCollapsed" /><icon-menu-fold v-else /></template><span v-if="!workspace.navigationCollapsed">收起导航</span></a-button></div>
+      <nav id="workspace-navigation" class="mw-sidebar-nav">
         <template v-for="group in navGroups" :key="group.label">
           <div v-if="group.label" class="mw-nav-group">{{ group.label }}</div>
           <RouterLink
@@ -32,12 +33,14 @@
             <a
               :href="href"
               :aria-current="isActive ? 'page' : undefined"
+              :aria-label="item.label"
+              :title="workspace.navigationCollapsed ? item.label : undefined"
               class="mw-nav-item"
               :class="{ active: isActive }"
               @click="navigate"
             >
               <component :is="item.icon" :size="17" />
-              <span>{{ item.label }}</span>
+              <span class="mw-nav-label">{{ item.label }}</span>
             </a>
           </RouterLink>
         </template>
@@ -45,7 +48,7 @@
       <div class="mw-sidebar-footer">
         <div class="mw-profile">
           <div class="mw-profile-avatar">陈</div>
-          <div class="flex-1"><div class="font-medium">陈</div><div class="mw-subtle">管理员</div></div>
+          <div class="mw-profile-meta flex-1"><div class="font-medium">陈</div><div class="mw-subtle">管理员</div></div>
           <a-badge dot :count="bench.unread">
             <a-button type="text" shape="circle" title="对标告警" aria-label="查看对标告警" @click="router.push('/topics')">
               <template #icon><icon-notification :size="17" /></template>
@@ -67,6 +70,7 @@ import { h, onBeforeUnmount, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { brand, applyBrand } from '@/config/brand'
 import { useBenchmarkStore } from '@/stores/benchmark'
+import { useWorkspaceStore } from '@/stores/workspace'
 import {
   IconHome,
   IconFire,
@@ -112,6 +116,7 @@ const navGroups = [
 ]
 
 const router = useRouter()
+const workspace = useWorkspaceStore()
 // 导航铃铛：对标告警未读数（FR-B9），60s 刷新一次
 const bench = useBenchmarkStore()
 let unreadTimer: number | undefined

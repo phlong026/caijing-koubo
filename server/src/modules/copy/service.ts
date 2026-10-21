@@ -36,10 +36,12 @@ import {
   SOURCE_LABELS,
   SUBMISSION_STATUS_LABELS,
   wordRangeOf,
+  tierOf,
   type Section,
   WITHDRAWABLE_STATUSES,
 } from './constants.js'
 import { listComplianceWords } from './repo.js'
+import { assertPersonasUsable, derivePersonaStatus, getPersonasByIds } from '../personas/repo.js'
 import { getPersonaById } from './persona-bridge.js'
 
 /**
@@ -132,11 +134,9 @@ export async function createCopyFromArticleOrManual(input: CreateCopyInput): Pro
   const personaIds = Array.from(new Set((input.personaIds ?? []).filter(Boolean).map(String)))
   if (!personaIds.length) throw err.badRequest('请至少选择一位目标人物')
 
-  // 人物校验与所属线冗余值（一次查出，避免事务内多次往返）
-  const personas = await Promise.all(personaIds.map((id) => getPersonaById(id)))
-  personas.forEach((p, i) => {
-    if (!p) throw err.badRequest(`人物不存在：${personaIds[i]}`)
-  })
+  // 人物校验（FR-X2：不存在 / 归档 / 停用 / 授权失效分别给出原因）与所属线冗余值
+  await assertPersonasUsable(personaIds, db, 'copy')
+  const personas = await getPersonasByIds(personaIds)
 
   let sourceText = String(input.sourceText ?? '').trim()
   let refType: string | null = null
@@ -239,6 +239,8 @@ export interface CopyDetailDraft {
   latestVersionNo: number
   hasSubmitted: boolean
   origin: string
+  isFinal?: boolean
+  generationId?: string | null
   updatedAt: string | null
 }
 
@@ -259,6 +261,7 @@ export interface CopyDetail {
     id: string
     copyId: string
     copyVersionId: string
+    isStub: boolean
     versionNo: number
     status: string
     statusLabel: string
@@ -350,6 +353,8 @@ export async function getCopyDetail(copyId: string): Promise<CopyDetail> {
       latestVersionNo: d.latestVersionNo,
       hasSubmitted: d.hasSubmitted,
       origin: d.origin,
+      generationId: d.generationId,
+      isFinal: (copy.settings?.finalSelection as any)?.draftId === d.id && (copy.settings?.finalSelection as any)?.contentHash === contentHash(d.title, d.sections),
       updatedAt: d.updatedAt,
     })),
     // 当前稿需与列表项同构，前端 switchEditor 读 sections/title/rev
@@ -374,6 +379,7 @@ export async function getCopyDetail(copyId: string): Promise<CopyDetail> {
           id: submission.id,
           copyId: submission.copyId,
           copyVersionId: submission.copyVersionId,
+          isStub: submission.isStub,
           versionNo: versions.find((v) => v.id === submission.copyVersionId)?.versionNo ?? 0,
           status: submission.status,
           statusLabel: SUBMISSION_STATUS_LABELS[submission.status] ?? submission.status,
@@ -784,6 +790,10 @@ export interface PrecheckResult {
   similarity: ReturnType<typeof computeSimilarity> | null
   checks: PrecheckCheck[]
   canSubmit: boolean
+  durationRange: { min: number; max: number }
+  durationOk: boolean
+  warnings: number
+  riskHintMode: string
 }
 
 export async function precheck(copyId: string, draftId: string): Promise<PrecheckResult> {
@@ -798,6 +808,9 @@ export async function precheck(copyId: string, draftId: string): Promise<Prechec
   const words = draft.wordCount
   const bodyWords = countBodyWords(draft.sections)
   const estSeconds = estimateSeconds(bodyWords)
+  const def = tierOf(tier) ?? tierOf('medium')!
+  const durationRange = tier === 'custom' ? { min: Number(settings.durationSeconds), max: Number(settings.durationSeconds) } : { min: def.minSeconds, max: def.maxSeconds }
+  const durationOk = estSeconds >= durationRange.min && estSeconds <= durationRange.max
 
   const hits = await scanDraftCompliance(draft, copy)
   const hardHits = hits.filter((h) => h.level === 'hard')
@@ -811,25 +824,30 @@ export async function precheck(copyId: string, draftId: string): Promise<Prechec
   }
 
   const persona = copy.personaId ? await getPersonaById(copy.personaId, true) : null
+  // FR-X2：预检 ⑤ 与 assertPersonasUsable 同一判定（授权失效同样不过）
+  const personaStatus = persona ? await derivePersonaStatus(persona) : null
 
   const checks: PrecheckCheck[] = [
+    ...((copy.settings?.finalSelection as any)?.draftId ? [{ key: 'finalSelection', label: '提审内容与定稿版本一致', level: 'hard' as const, pass: (copy.settings!.finalSelection as any).draftId === draftId && (copy.settings!.finalSelection as any).contentHash === contentHash(draft.title, draft.sections), message: '如果改过定稿内容或切换了候选稿，请先重新定稿，再提交审核' }] : []),
+    { key: 'duration', label: `口播时长目标 ${durationRange.min === durationRange.max ? durationRange.max : `${durationRange.min}–${durationRange.max}`} 秒`, level: 'soft', pass: durationOk, message: durationOk ? `正文预计 ${estSeconds} 秒` : estSeconds > durationRange.max ? `预计超时 ${(estSeconds-durationRange.max).toFixed(1)} 秒；建议压缩正文后复检` : `预计少于目标 ${(durationRange.min-estSeconds).toFixed(1)} 秒；可适当补充解释` },
+    { key: 'sourceReview', label: '素材已人工核对', level: 'soft', pass: (copy.settings?.sourceReview as any)?.confirmed === true && (copy.settings?.sourceReview as any)?.originalHash === contentHash(copy.sourceText, []), message: (copy.settings?.sourceReview as any)?.confirmed ? '素材已确认，新稿中的新增事实仍需核对' : '请在「准备素材」中核对名称、数字和引用' },
     {
       key: 'content',
-      label: '正文非空且至少 1 段',
+      label: '已填写正文',
       level: 'hard',
       pass: draft.sections.length >= 1 && bodyWords > 0,
       message: draft.sections.length >= 1 && bodyWords > 0 ? `共 ${draft.sections.length} 段` : '正文为空，请先写入内容',
     },
     {
       key: 'title',
-      label: '标题非空',
+      label: '已填写标题',
       level: 'hard',
       pass: !!(draft.title ?? '').trim(),
       message: (draft.title ?? '').trim() ? '' : '请填写口播标题',
     },
     {
       key: 'wordRange',
-      label: `字数在档位区间（${range.min}–${range.max} 字）`,
+      label: `建议字数 ${range.min}–${range.max} 字`,
       level: 'soft',
       pass: words >= range.min && words <= range.max,
       message:
@@ -839,14 +857,14 @@ export async function precheck(copyId: string, draftId: string): Promise<Prechec
     },
     {
       key: 'complianceHard',
-      label: '合规硬禁用 0 命中',
+      label: '未使用禁用词',
       level: 'hard',
       pass: hardHits.length === 0,
       message: hardHits.length === 0 ? '' : `命中 ${hardHits.length} 处：${uniqWords(hardHits).join('、')}`,
     },
     {
       key: 'complianceSoft',
-      label: '软提示词',
+      label: '需留意的用词',
       level: 'soft',
       pass: softHits.length === 0,
       message: softHits.length === 0 ? '' : `提醒 ${softHits.length} 处：${uniqWords(softHits).join('、')}（不阻止提交）`,
@@ -855,8 +873,12 @@ export async function precheck(copyId: string, draftId: string): Promise<Prechec
       key: 'persona',
       label: '人物处于启用状态',
       level: 'hard',
-      pass: !!persona && persona.enabled,
-      message: !persona ? '文案未绑定人物' : persona.enabled ? '' : '人物已停用，请更换人物或联系管理员启用',
+      pass: !!personaStatus?.usable,
+      message: !persona
+        ? '文案未绑定人物'
+        : personaStatus?.usable
+          ? ''
+          : `人物当前不可用：${personaStatus!.reasons.map((r) => r.message).join('；')}`,
     },
   ]
 
@@ -884,6 +906,7 @@ export async function precheck(copyId: string, draftId: string): Promise<Prechec
     durationSeconds: settings.durationSeconds ?? null,
     wordRange: range,
     tierOk: words >= range.min && words <= range.max,
+    durationRange, durationOk, warnings: checks.filter(c => !c.pass && c.level === 'soft').length, riskHintMode: '风险提示作为独立字幕；预计口播时长只计算正文，若配音朗读需额外计时',
     complianceHits: hits,
     similarity,
     checks,

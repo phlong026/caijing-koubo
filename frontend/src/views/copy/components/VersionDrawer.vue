@@ -2,30 +2,32 @@
   <a-drawer
     :visible="visible"
     :width="480"
-    title="历史版本"
+    title="稿件历史版本"
     unmount-on-close
     @cancel="emit('update:visible', false)"
   >
     <a-spin :loading="loading" class="w-full">
       <a-empty v-if="!loading && !items.length" description="暂无版本记录" />
 
-      <div v-else class="space-y-2.5">
+      <div class="flex items-center gap-3 mb-4"><a-checkbox v-model="onlyCurrent">只看当前候选稿</a-checkbox><span class="mw-subtle">{{ visibleItems.length }} 个版本</span></div>
+      <div v-if="items.length" class="space-y-2.5">
         <div
-          v-for="v in items"
+          v-for="v in visibleItems"
           :key="v.id"
           class="version-row"
           :class="{ expanded: expandedId === v.id }"
         >
-          <div class="flex items-center gap-2 cursor-pointer" @click="toggle(v.id)">
+          <button type="button" class="flex items-center gap-2 cursor-pointer w-full border-0 bg-transparent p-0 text-left" :aria-expanded="expandedId === v.id" @click="toggle(v.id)">
             <a-tag :color="originColor(v.origin)" size="small">{{ originLabel(v.origin) }}</a-tag>
-            <span class="text-[13px] font-medium text-[#131f38]">v{{ v.versionNo }}</span>
+            <span class="text-[13px] font-medium text-[#131f38]">第 {{ v.versionNo }} 版</span>
             <span v-if="v.isLocked" class="mw-tag mw-tag-blue">已提审</span>
             <span class="flex-1" />
             <span class="mw-subtle tabular-nums">{{ v.wordCount }}字</span>
             <span class="mw-subtle">{{ fmtTime(v.createdAt) }}</span>
             <icon-down class="text-[#9aa6ba] transition-transform" :class="{ 'rotate-180': expandedId === v.id }" />
-          </div>
+          </button>
 
+          <div class="mw-subtle mt-2">{{ v.draftName || store.drafts.find(d=>d.id===v.draftId)?.name || '候选稿' }}</div>
           <!-- 版本摘要 -->
           <div v-if="v.title" class="mt-1.5 text-[13px] text-[#4a5872] pl-1">{{ v.title }}</div>
 
@@ -47,7 +49,7 @@
             <a-spin :loading="detailLoading">
               <div v-if="detail?.sections?.length" class="space-y-2 max-h-[320px] overflow-auto">
                 <div v-for="(s, i) in detail.sections" :key="i" class="text-[13px] leading-[1.8] text-[#3c4a63]">
-                  <span class="text-[#9aa6ba] mr-1.5">{{ s.label }}</span>{{ s.text }}
+                  {{ s.text }}
                 </div>
               </div>
               <div v-else class="mw-subtle">（该版本无正文）</div>
@@ -74,7 +76,7 @@
         >
           <div class="flex items-center gap-2 mb-1">
             <a-tag :color="diffColor(d.change)" size="small">{{ diffLabel(d.change) }}</a-tag>
-            <span class="text-[13px] font-medium text-[#131f38]">{{ d.label }}</span>
+            <span class="text-[13px] font-medium text-[#131f38]">第 {{ i + 1 }} 段</span>
           </div>
           <div v-if="d.change !== 'added'" class="text-[12px] leading-[1.75] text-[#9aa6ba] line-through whitespace-pre-wrap">
             {{ d.base || '（空）' }}
@@ -89,7 +91,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
 import { copyApi, type CopyVersion, type Section, type VersionOrigin } from '@/api/copy'
@@ -97,6 +99,8 @@ import { copyApi, type CopyVersion, type Section, type VersionOrigin } from '@/a
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: 'update:visible', v: boolean): void }>()
 const store = useCopyStore()
+const onlyCurrent=ref(true)
+const visibleItems=computed(()=>onlyCurrent.value?items.value.filter(v=>v.draftId===store.editor?.draftId):items.value)
 
 const loading = ref(false)
 const items = ref<CopyVersion[]>([])
@@ -152,7 +156,7 @@ function originLabel(o: VersionOrigin): string {
     ai_generate: 'AI 生成',
     manual_save: '手动保存',
     restore: '版本恢复',
-    submit: '提交快照',
+    submit: '提交审核',
   }
   return map[o] ?? o
 }

@@ -59,14 +59,10 @@ export function estimateSeconds(words: number): number {
 
 /* ── 结构化正文 ───────────────────────────────────────────────────── */
 
-/** 拼纯文本（段落之间空一行；风险提示块不参与） */
+/** 正文只包含可朗读的文案，段落名仅作内部定位，段落之间空一行。 */
 export function toPlainText(title: string | null | undefined, sections: Section[]): string {
   const body = sections
-    .map((s) => {
-      const label = (s.label ?? '').trim()
-      const text = (s.text ?? '').trim()
-      return label ? `${label}\n${text}` : text
-    })
+    .map((s) => (s.text ?? '').trim())
     .filter(Boolean)
     .join('\n\n')
   const t = (title ?? '').trim()
@@ -403,6 +399,12 @@ export function scanCompliance(
         from = at + word.length
         // 非承诺语境（否定 / 引述 / 疑问反问）视为合规表达，不计命中
         if (isNonClaim(text, at, at + word.length)) continue
+        // Only exempt ordinal/list syntax. Claims such as 行业第一 / 第一名 remain flagged.
+        if (!fromPersona && level === 'soft' && word === '第一') {
+          const before = text.slice(0, at)
+          const after = text.slice(at + word.length)
+          if ((at === 0 || /[。！？；\n]\s*$/.test(before)) && (/^[、，,:：]/.test(after) || /^(步|点|项|段|条|章|节|次|个问题)/.test(after))) continue
+        }
         hits.push({ word, level, category, sectionIndex: index, start: at, end: at + word.length, fromPersona })
         if (hits.length > 500) break
       }

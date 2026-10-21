@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { ok } from '../../app.js'
+import { registerCopyWorkspaceRoutes } from './workspace.js'
 import { err } from '../../errors.js'
 import { config } from '../../config.js'
 import { chat, resolveLlm } from '../../integrations/copy-llm/index.js'
@@ -131,6 +132,7 @@ function safeHost(url: string): string {
 }
 
 export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
+  registerCopyWorkspaceRoutes(app)
   /* ── 配置 / 选项（W0 AC-0.4）────────────────────────────────────── */
 
   app.get('/copy/options', async (req) => {
@@ -395,12 +397,15 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
       }
       return ok({
         type: 'benchmark',
+        videoId: copy.sourceRefId,
+        coverUrl: v?.cover_url ?? null,
+        publishedAt: v?.published_at ?? null,
         title: v?.title ?? copy.title,
         author: v?.author_nickname ?? null,
         shareUrl: v?.share_url ?? null,
         duration: v?.duration ?? null,
         text: cache?.text ?? copy.sourceText,
-        sentences,
+        sentences: Array.isArray(sentences) ? sentences.map((s: any) => ({ text: String(s.text ?? ''), startTime: Number(s.startTime ?? s.beginTime ?? 0), endTime: Number(s.endTime ?? 0) })) : [],
       })
     }
     if (copy.sourceRefType === 'article_source' && copy.sourceRefId) {
@@ -603,6 +608,10 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
       'SELECT `id`, `draft_no`, `name`, `title`, `word_count` FROM `copy_draft` WHERE `generation_id` = ? AND `deleted_at` IS NULL ORDER BY `draft_no`',
       [generationId],
     )
+    // FR-X3：回显人物版本号（版本不可变，可追溯当次生成所用的人物配置）
+    const personaVersion = g.personaVersionId
+      ? await db.get<{ version_no: number }>('SELECT `version_no` FROM `persona_version` WHERE `id` = ?', [g.personaVersionId])
+      : null
     return ok({
       id: g.id,
       copyId: g.copyId,
@@ -626,6 +635,8 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
       prompt: g.promptText,
       promptHash: g.promptHash,
       personaSnapshot: g.personaSnapshot,
+      personaVersionId: g.personaVersionId,
+      personaVersionNo: personaVersion ? Number(personaVersion.version_no) : null,
       createdAt: g.createdAt,
       finishedAt: g.finishedAt,
       drafts: drafts.map((d) => ({ id: d.id, draftNo: Number(d.draft_no), name: d.name, title: d.title, wordCount: Number(d.word_count) })),
@@ -1039,7 +1050,10 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
       durationSeconds: validateDuration(durationTier, body.durationSeconds),
       instructions: body.instructions ? String(body.instructions).trim().slice(0, config.copy.maxInstructions) : null,
     })
-    return ok({ system: a.system, user: a.user, prompt: a.promptText, promptHash: a.promptHash, wordRange: a.wordRange })
+    const count = Math.max(1, Math.min(config.copy.maxBatchCount, Number((req.body as any)?.count) || 1))
+    const { candidateUser } = await import('./candidates.js')
+    const candidates = Array.from({ length: count }, (_, i) => ({ direction: candidateUser(a.user, i + 1, count).direction, user: candidateUser(a.user, i + 1, count).user }))
+    return ok({ system: a.system, user: candidates[0]!.user, candidates, prompt: a.promptText, promptHash: a.promptHash, wordRange: a.wordRange })
   })
 
   void withReply

@@ -47,6 +47,7 @@ export async function fetchAccountVideos(accountId: string, opts: FetchOptions):
   }
 
   let cursor = 0
+  const toEvaluate = new Set<string>()
   for (let page = 0; page < maxPages; page++) {
     const res = await fetchUserPosts(acc.secUid, cursor, 20, { type: 'account', id: acc.id })
     outcome.pages++
@@ -61,19 +62,19 @@ export async function fetchAccountVideos(accountId: string, opts: FetchOptions):
         post,
         isBackfill: !!opts.backfill,
         allowAlert,
+        authorNickname: post.authorNickname || acc.nickname,
+        authorSecUid: post.authorSecUid || acc.secUid,
       })
 
       if (isNew) {
         outcome.newCount++
-        const hot = await evaluateHot(video, { allowAlert })
-        if (hot.isHot && hot.reason === 'above_threshold') outcome.hotMarked++
+        toEvaluate.add(video.id)
       } else {
         // 近 7 天内的已知视频：刷新互动后重判爆款（FR-B4）
         const published = video.publishedAt ? new Date(video.publishedAt).getTime() : 0
         const withinWindow = published >= Date.now() - config.hot.refreshDays * 86_400_000
         if (withinWindow) {
-          const hot = await evaluateHot(video, { allowAlert })
-          if (hot.isHot && hot.reason === 'above_threshold') outcome.hotMarked++
+          toEvaluate.add(video.id)
         }
         outcome.refreshedCount++
         if (!post.isTop) pageAllNew = false // 置顶作品不作为"已知视频即停"的信号
@@ -83,6 +84,16 @@ export async function fetchAccountVideos(accountId: string, opts: FetchOptions):
     if (!res.hasMore || !res.nextCursor) break
     if (page === 0 && !pageAllNew) break
     cursor = res.nextCursor
+  }
+
+  // 整页写完后再计算基线，避免前几条因样本不足或列表顺序而漏判。
+  // 新入库作品即使发布时间较早（例如置顶作品）也参与本次判定。
+  const { getVideoById } = await import('./videos.js')
+  for (const id of toEvaluate) {
+    const video = await getVideoById(id)
+    if (!video) continue
+    const hot = await evaluateHot(video, { allowAlert })
+    if (hot.isHot && hot.reason === 'above_threshold') outcome.hotMarked++
   }
 
   // 每日首次抓取刷新用户信息

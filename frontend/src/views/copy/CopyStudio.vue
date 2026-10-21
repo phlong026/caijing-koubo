@@ -1,68 +1,23 @@
 <template>
-  <div class="copy-page mw-page">
+  <div class="copy-page copy-flow-page mw-page">
     <PageHead title="文案工坊">
       <template #sub>
         <span v-if="copy">
-          {{ copy.title || '（未命名文案）' }}
+          {{ store.editor?.title || copy.title || '（未命名文案）' }}
           <!-- persona 在详情接口顶层，不在 copy 上；这里统一走 personaName -->
           <template v-if="personaName"> · {{ personaName }}</template>
           <template v-if="copy.lineLabel"> · {{ copy.lineLabel }}</template>
         </span>
-        <span v-else>从爆款选题或文章生成可审核、可追溯的口播文案</span>
+        <span v-else>选择素材，开始创作口播文案</span>
       </template>
       <template #actions>
+        <a-button v-if="copy" :aria-pressed="workspace.focusWriting" @click="toggleWritingFocus"><template #icon><icon-shrink v-if="workspace.focusWriting" /><icon-expand v-else /></template>{{ workspace.focusWriting ? '退出专注' : '专注写作' }}</a-button>
         <a-button @click="listVisible = true">
           <template #icon><icon-file /></template>
-          草稿记录
-        </a-button>
-        <a-button :disabled="!copy" @click="versionVisible = true">历史版本</a-button>
-        <!-- P1-21：效果图页头为「草稿记录 / 保存草稿 / 提交审核」，补回「保存草稿」（FR-E3 manual_save） -->
-        <a-button
-          :disabled="!copy || !store.editor || !store.canEdit || savingDraft || store.editor.saving"
-          :loading="savingDraft || store.editor?.saving"
-          @click="onSaveDraft"
-        >
-          <template #icon><icon-save /></template>
-          保存草稿
-        </a-button>
-        <a-button
-          v-if="copy && copy.status === 'in_review'"
-          type="text"
-          @click="onWithdraw"
-        >
-          <template #icon><icon-undo /></template>
-          撤回提交
-        </a-button>
-        <a-button
-          v-if="copy && (copy.status === 'draft' || copy.status === 'rejected')"
-          type="primary"
-          :disabled="!store.editor"
-          @click="submitVisible = true"
-        >
-          <template #icon><icon-send /></template>
-          提交审核
-        </a-button>
-        <a-button v-else-if="copy && copy.status === 'approved'" type="primary" @click="onGoVideo">
-          <template #icon><icon-video-camera /></template>
-          去视频创作
+          文案任务
         </a-button>
       </template>
     </PageHead>
-
-    <!-- 步骤条 -->
-    <div v-if="copy" class="copy-workflow">
-      <div class="mw-step" :class="stepClass(1)"><span class="mw-step-index">1</span>写文案</div>
-      <div class="mw-step-line" :class="{ done: stepDone(1) }"></div>
-      <div class="mw-step" :class="stepClass(2)">
-        <span class="mw-step-index">2</span>自动预检<template v-if="stepState.rejected && stepState.current === 2"> · 已退回</template>
-      </div>
-      <div class="mw-step-line" :class="{ done: stepDone(2) }"></div>
-      <div class="mw-step" :class="stepClass(3)">
-        <span class="mw-step-index">3</span>人工复核<template v-if="stepState.rejected && stepState.current === 3"> · 已退回</template>
-      </div>
-      <div class="mw-step-line" :class="{ done: stepDone(3) }"></div>
-      <div class="mw-step" :class="stepClass(4)"><span class="mw-step-index">4</span>视频创作</div>
-    </div>
 
     <!-- 加载 -->
     <div v-if="store.loading" class="copy-layout">
@@ -85,23 +40,45 @@
     </div>
 
     <!-- 空态：还没有选中文案 -->
-    <div v-else-if="!copy" class="mw-card py-24 text-center">
-      <icon-file style="font-size: 44px; color: #d5dce7" />
-      <div class="text-[15px] font-medium text-[#3c4a63] mt-3">还没有打开任何文案</div>
-      <div class="mw-subtle mt-1.5">可以从文案列表中选择，或新建一条</div>
-      <a-button type="primary" class="mt-5" @click="listVisible = true">打开文案列表</a-button>
-    </div>
+    <div v-else-if="!copy" class="flow-card"><SourceIntake @created="onSourcesCreated" /></div>
 
     <!-- 主体 -->
-    <div v-else class="copy-layout">
-      <div class="copy-context">
-        <SourcePanel />
-        <SettingsPanel @preview="onPreviewPrompt" />
-      </div>
-      <div class="copy-document">
-        <ReviewPanel v-if="showReview" />
-        <DraftEditor @variant="onVariant" />
-      </div>
+    <div v-else class="creation-flow" aria-label="文案创作流程">
+      <section id="copy-step-source" class="flow-step" aria-labelledby="copy-source-heading">
+        <span class="flow-node" :class="{ complete: sourceConfirmed }">{{ sourceConfirmed ? '✓' : '1' }}</span>
+        <div class="flow-step-body">
+          <div class="flow-step-heading"><h2 id="copy-source-heading" tabindex="-1">准备素材</h2><span class="flow-state" :class="{ complete: sourceConfirmed }">{{ sourceConfirmed ? '已核对' : '待核对' }}</span><a-button type="text" size="small" :aria-expanded="!collapsed.source" aria-controls="copy-source-content" @click="collapsed.source=!collapsed.source">{{ collapsed.source ? '展开' : '收起' }}</a-button></div>
+          <div id="copy-source-content" v-show="!collapsed.source" class="flow-card"><SourcePanel @created="onSourcesCreated" @source-mode="mode=>sourceMode=mode" /><div v-if="sourceMode==='topics'" class="flow-next"><a-button @click="goToStep('settings')">下一步：设置创作要求 <icon-arrow-down /></a-button></div></div>
+        </div>
+      </section>
+      <section id="copy-step-settings" class="flow-step" aria-labelledby="copy-settings-heading">
+        <span class="flow-node">2</span>
+        <div class="flow-step-body">
+          <div class="flow-step-heading"><h2 id="copy-settings-heading" tabindex="-1">设置创作要求</h2><span class="flow-state">{{ store.settingsSaving ? '保存中' : store.settingsError ? '保存失败' : store.settingsDirty ? '有改动' : '已保存' }}</span><a-button type="text" size="small" :aria-expanded="!collapsed.settings" aria-controls="copy-settings-content" @click="collapsed.settings=!collapsed.settings">{{ collapsed.settings ? '展开' : '收起' }}</a-button></div>
+          <div id="copy-settings-content" v-show="!collapsed.settings" class="flow-card"><SettingsPanel @preview="onPreviewPrompt" /><div class="flow-next"><a-button type="text" @click="goToStep('write')">编辑已有文案 <icon-arrow-down /></a-button></div></div>
+        </div>
+      </section>
+      <section id="copy-step-write" class="flow-step" aria-labelledby="copy-write-heading">
+        <span class="flow-node" :class="{ complete: currentFinal }">{{ currentFinal ? '✓' : '3' }}</span>
+        <div class="flow-step-body">
+          <div class="flow-step-heading"><h2 id="copy-write-heading" tabindex="-1">改写与定稿</h2><span class="flow-state" :class="{complete:currentFinal}">{{ currentFinal ? '已定稿' : '可编辑' }}</span><div class="flow-heading-actions"><a-button size="small" @click="versionVisible=true">本稿历史</a-button><a-button size="small" :disabled="!store.editor || !store.canEdit || savingDraft || store.editor.saving" :loading="savingDraft || store.editor?.saving" @click="onSaveDraft">保存版本</a-button></div></div>
+          <div role="region" aria-label="文案编辑区"><CandidateShelf @open="(id) => draftEditorRef?.selectDraft(id)" /><DraftEditor ref="draftEditorRef" @variant="onVariant" /></div>
+          <div class="flow-next"><a-button @click="goToStep('review')">下一步：检查与审核 <icon-arrow-down /></a-button></div>
+        </div>
+      </section>
+      <section id="copy-step-review" class="flow-step" aria-labelledby="copy-review-heading">
+        <span class="flow-node" :class="{complete:copy.status==='approved'}">{{ copy.status==='approved' ? '✓' : '4' }}</span>
+        <div class="flow-step-body">
+          <div class="flow-step-heading"><h2 id="copy-review-heading" tabindex="-1">检查与审核</h2><span class="flow-state" :class="{complete:copy.status==='approved'}">{{ reviewStatusLabel }}</span></div>
+          <ReviewPanel v-if="showReview" />
+          <div class="flow-card flow-submit">
+            <div><strong>{{ copy.status==='approved' ? '文案已通过审核' : copy.status==='in_review' ? '文案正在审核中' : '检查文案，提交审核' }}</strong><p>{{ copy.status==='approved' ? '可查看通过稿，准备制作视频。' : copy.status==='in_review' ? '审核完成后可在此查看结果。' : '提交前将检查字数、时长、用词和定稿内容。' }}</p></div>
+            <a-button v-if="copy.status==='draft' || copy.status==='rejected'" type="primary" :disabled="!store.editor || store.generating" @click="submitVisible=true">检查并提交审核</a-button>
+            <a-button v-else-if="copy.status==='in_review' && ['submitted','gate1','gate2','gate3'].includes(store.detail?.review?.status ?? '')" @click="onWithdraw">撤回提交</a-button>
+            <a-button v-else-if="copy.status==='approved'" type="primary" @click="onGoVideo">去视频创作</a-button>
+          </div>
+        </div>
+      </section>
     </div>
 
     <!-- 弹层 -->
@@ -111,22 +88,18 @@
       @picked="(id) => router.replace({ query: { id } })"
     />
     <VersionDrawer v-model:visible="versionVisible" />
-    <SubmitDialog v-model:visible="submitVisible" @submitted="onSubmitted" />
+    <SubmitDialog v-model:visible="submitVisible" @submitted="onSubmitted" @navigate="onPrecheckNavigate" />
     <VariantPanel v-model:visible="variantVisible" :section-index="variantIndex" />
     <TemplateEditor v-model:visible="configVisible" />
 
     <!-- 提示词预览 -->
-    <a-modal v-model:visible="promptVisible" title="提示词预览" :width="720" :footer="false" unmount-on-close>
+    <a-modal v-model:visible="promptVisible" title="本次创作任务预览" :width="720" :footer="false" unmount-on-close>
       <a-spin :loading="promptLoading">
         <div v-if="promptData">
           <div class="flex items-center gap-3 mb-3">
             <span class="mw-subtle">字数区间 {{ promptData.wordRange.min }}–{{ promptData.wordRange.max }} 字</span>
-            <span class="mw-subtle">哈希 {{ promptData.promptHash.slice(0, 12) }}</span>
           </div>
-          <div class="mw-subtle mb-1">系统规则（合规与防注入，代码内置不可编辑）</div>
-          <pre class="prompt-box mb-3">{{ promptData.system }}</pre>
-          <div class="mw-subtle mb-1">本次任务（人物 · 模板 · 风格 · 时长 · 来源材料）</div>
-          <pre class="prompt-box">{{ promptData.user }}</pre>
+          <div class="task-preview-summary"><strong>{{ store.options?.templates.find(t=>t.id===store.creativeSettings.templateId)?.name }} · {{ store.availableStyles.find(s=>s.id===store.creativeSettings.styleId)?.name }}</strong><p>目标：{{ store.options?.durationTiers.find(d=>d.key===store.creativeSettings.durationTier)?.name }}<template v-if="store.creativeSettings.durationTier==='custom'"> {{ store.creativeSettings.durationSeconds }} 秒</template> · {{ store.creativeSettings.count }} 篇</p><p>{{ store.creativeSettings.instructions || '按所选人物、模板和风格创作' }}</p><p class="mw-subtle">使用素材：{{ store.copy?.settings?.sourceReview ? '已保存的校对稿' : '原始素材' }}</p></div>
         </div>
       </a-spin>
     </a-modal>
@@ -134,13 +107,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { Message, Modal } from '@arco-design/web-vue'
 import PageHead from '@/components/PageHead.vue'
 import { useCopyStore } from '@/stores/copy'
-import { copyApi, type DurationTier } from '@/api/copy'
-import SourcePanel from './components/SourcePanel.vue'
+import { copyApi, type DurationTier, type CreativeSettings, type SourceReview } from '@/api/copy'
+import SourcePanel from './components/SourceWorkbench.vue'
+import SourceIntake from './components/SourceIntake.vue'
+import CandidateShelf from './components/CandidateShelf.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import DraftEditor from './components/DraftEditor.vue'
 import ReviewPanel from './components/ReviewPanel.vue'
@@ -149,12 +124,31 @@ import VersionDrawer from './components/VersionDrawer.vue'
 import SubmitDialog from './components/SubmitDialog.vue'
 import VariantPanel from './components/VariantPanel.vue'
 import TemplateEditor from './components/TemplateEditor.vue'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 const route = useRoute()
 const router = useRouter()
 const store = useCopyStore()
+const draftEditorRef = ref<InstanceType<typeof DraftEditor> | null>(null)
+const workspace = useWorkspaceStore()
+const collapsed = reactive({source:false,settings:false})
+const sourceMode=ref('topics')
+type FlowStep = 'source' | 'settings' | 'write' | 'review'
+function goToStep(step:FlowStep) {
+  if (step==='source' || step==='settings') collapsed[step]=false
+  void nextTick(()=>{const heading=document.getElementById(`copy-${step}-heading`);heading?.scrollIntoView({block:'start',behavior:'auto'});heading?.focus({preventScroll:true})})
+}
+function toggleWritingFocus() {workspace.focusWriting=!workspace.focusWriting;if(workspace.focusWriting)goToStep('write')}
+const createdTargetId=ref<string|null>(null)
+function onSourcesCreated(ids:string[]) {if(ids.length){createdTargetId.value=ids.length===1?ids[0]:null;void router.push({path:'/copy',query:ids.length===1?{id:ids[0]}:{ids:ids.join(',')}})}}
+function onPrecheckNavigate(step:'source'|'settings'|'write') {submitVisible.value=false;goToStep(step)}
+onBeforeUnmount(()=>{workspace.focusWriting=false})
 
 const copy = computed(() => store.copy)
+const sourceConfirmed = computed(()=>(store.copy?.settings?.sourceReview as SourceReview | undefined)?.confirmed===true)
+const currentFinal = computed(()=>!!store.drafts.find(d=>d.id===store.editor?.draftId && d.isFinal) && !store.isDirty)
+const reviewStatusLabel = computed(()=>({draft:'待提交',in_review:'审核中',approved:'已通过',rejected:'待修改',archived:'已归档'}[copy.value?.status ?? 'draft']))
+watch(()=>store.activeGeneration?.status,(status,previous)=>{if((status==='done'||status==='partial')&&(previous==='pending'||previous==='running'))goToStep('write')})
 /** 人物名取自详情顶层 `persona`（copy 自身没有 persona 字段） */
 const personaName = computed(() => store.detail?.persona?.name ?? '')
 const showReview = computed(
@@ -224,6 +218,7 @@ async function loadByRoute(): Promise<void> {
   if (pid) {
     await store.loadOptions(pid)
   }
+  if(store.copy?.id===target && createdTargetId.value===target){createdTargetId.value=null;collapsed.source=true;goToStep('settings')}
 }
 
 watch(() => route.query, loadByRoute, { immediate: false })
@@ -242,7 +237,7 @@ onBeforeUnmount(() => {
 /* ── P0-5：离开拦截（未保存内容不能静默丢失）──────────────���─────── */
 
 function onBeforeUnload(e: BeforeUnloadEvent): void {
-  if (!store.isDirty) return
+  if (!store.isDirty && !store.settingsDirty) return
   e.preventDefault()
   // 部分浏览器需要设置 returnValue 才会弹确认
   e.returnValue = ''
@@ -251,6 +246,7 @@ function onBeforeUnload(e: BeforeUnloadEvent): void {
 onMounted(() => window.addEventListener('beforeunload', onBeforeUnload))
 
 onBeforeRouteLeave(async () => {
+  if (!(await store.saveCreativeSettings())) { Message.error(store.settingsError || '创作设置尚未保存'); return false }
   if (!store.isDirty) return true
   // 先尝试自动保存一次，成功就放行
   const r = await store.save()
@@ -273,6 +269,7 @@ const savingDraft = ref(false)
 
 async function onSaveDraft(): Promise<void> {
   if (!copy.value || !store.editor) return
+  if (!(await store.saveCreativeSettings())) { Message.error(store.settingsError); return }
   savingDraft.value = true
   try {
     // 先落盘，再生成版本，保证版本内容就是屏幕上看到的内容
@@ -285,7 +282,7 @@ async function onSaveDraft(): Promise<void> {
     // P1-21：生成 manual_save 版本（后端按内容 hash 去重，内容没变时 created=false）
     const v = await copyApi.saveVersion(copy.value.id, store.editor.draftId)
     await store.load(copy.value.id)
-    Message.success(v.created ? `已保存草稿 v${v.versionNo}` : `内容未变化，已是 v${v.versionNo}`)
+    Message.success(v.created ? `已保存第 ${v.versionNo} 版` : '当前内容已保存')
   } catch (e) {
     Message.error((e as Error).message)
   } finally {
@@ -312,34 +309,6 @@ function reload(): void {
   void loadByRoute()
 }
 
-/* ── 步骤条 ── */
-
-/**
- * 步骤条按审核关卡映射（P2-24）：
- *  - 已提交 / 第 1~3 关 → 第 2 步「自动预检」；待人工复核 → 第 3 步；
- *  - 退回时按退回关卡落在第 2 步（gate1~3）或第 3 步（人工），并标红「已退回」。
- * copy.reviewGate 在审核中是当前关卡，退回后是退回关卡（onReviewResult 写入）。
- */
-const AUTO_GATES = ['submitted', 'gate1', 'gate2', 'gate3']
-const stepState = computed<{ current: number; rejected: boolean }>(() => {
-  const c = copy.value
-  if (!c) return { current: 1, rejected: false }
-  const gate = c.reviewGate ?? ''
-  if (c.status === 'approved') return { current: 4, rejected: false }
-  if (c.status === 'in_review') return { current: AUTO_GATES.includes(gate) ? 2 : 3, rejected: false }
-  if (c.status === 'rejected') return { current: AUTO_GATES.includes(gate) ? 2 : 3, rejected: true }
-  return { current: 1, rejected: false }
-})
-
-function stepClass(n: number): Record<string, boolean> {
-  const { current, rejected } = stepState.value
-  return { active: n === current && !rejected, rejected: n === current && rejected, done: n < current }
-}
-
-function stepDone(n: number): boolean {
-  return n < stepState.value.current
-}
-
 /* ── 变体 ── */
 
 function onVariant(sectionIndex: number): void {
@@ -359,13 +328,13 @@ const promptVisible = ref(false)
 const promptLoading = ref(false)
 const promptData = ref<{ system: string; user: string; promptHash: string; wordRange: { min: number; max: number } } | null>(null)
 
-async function onPreviewPrompt(): Promise<void> {
+async function onPreviewPrompt(settings: CreativeSettings): Promise<void> {
   if (!copy.value) return
-  const s = (copy.value.settings ?? {}) as Record<string, unknown>
+  const s = { ...settings } as unknown as Record<string, unknown>
   const templateId = (s.templateId as string) || store.options?.templates[0]?.id
   const styleId = (s.styleId as string) || store.availableStyles[0]?.id
   if (!templateId || !styleId) {
-    Message.warning('请先在左侧选择模板与风格')
+    Message.warning('请先选择内容模板与表达风格')
     return
   }
   promptVisible.value = true
@@ -378,6 +347,7 @@ async function onPreviewPrompt(): Promise<void> {
       durationTier: (s.durationTier as DurationTier) || 'medium',
       durationSeconds: (s.durationSeconds as number) ?? null,
       instructions: (s.instructions as string) ?? undefined,
+      count: Number(s.count) || 1,
     })
   } catch (e) {
     Message.error((e as Error).message)
@@ -389,20 +359,50 @@ async function onPreviewPrompt(): Promise<void> {
 </script>
 
 <style scoped>
-.prompt-box {
-  max-height: 480px;
-  overflow: auto;
-  padding: 14px 16px;
-  border-radius: 9px;
-  background: #fbfcfe;
-  border: 1px solid #eef2f8;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  line-height: 1.75;
-  color: #3c4a63;
-  white-space: pre-wrap;
-  word-break: break-word;
-  margin: 0;
-}
+.task-preview-summary{padding:18px;background:#f1f7f3;border:1px solid #dce9df;border-radius:10px;font-size:13px;line-height:1.9}.task-preview-summary p{margin:8px 0 0}
+:global(.copy-compare-modal .arco-modal),:global(.source-review-modal .arco-modal){max-width:calc(100vw - 32px)}
+:global(.copy-compare-modal .arco-modal-body),:global(.source-review-modal .arco-modal-body){max-height:calc(100dvh - 180px);overflow:auto}
+:global(.settings-save-state){display:flex;justify-content:space-between;gap:6px;font-size:11px;color:#7c8880;margin-bottom:6px}
+:global(.copy-page.copy-flow-page){height:auto;min-height:100%;overflow:visible;display:block;padding:26px 32px 60px;max-width:1300px;margin:0 auto}
+:global(.copy-flow-page .mw-page-head){margin-bottom:30px;flex-wrap:wrap}
+:global(.copy-flow-page .mw-page-actions){flex-wrap:wrap}
+.creation-flow{max-width:1080px;margin:0 auto}
+.flow-step{position:relative;display:grid;grid-template-columns:36px minmax(0,1fr);column-gap:20px;padding-bottom:32px;scroll-margin-top:24px}
+.flow-step:not(:last-child)::before{content:'';position:absolute;left:17px;top:36px;bottom:0;border-left:1px solid var(--mw-border)}
+.flow-node{position:relative;display:flex;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid #becbd1;border-radius:50%;color:var(--mw-primary);font-size:14px;font-weight:600;background:var(--mw-bg)}
+.flow-node.complete{background:#edf5ef;border-color:#c8ddcd;color:#33704a}
+.flow-step-body{min-width:0}
+.flow-step-heading{display:flex;align-items:center;gap:12px;min-height:36px;margin-bottom:16px;flex-wrap:wrap}
+.flow-step-heading h2{font-size:17px;font-weight:600;color:var(--mw-text);line-height:1.5;scroll-margin-top:24px}
+.flow-step-heading h2:focus{outline:none}
+.flow-step-heading>.arco-btn,.flow-heading-actions{margin-left:auto}
+.flow-heading-actions{display:flex;gap:8px}
+.flow-state{font-size:12px;color:var(--mw-text3)}
+.flow-state.complete{color:#33704a}
+.flow-card{padding:24px;border:1px solid var(--mw-border);border-radius:8px;background:#fff}
+.flow-next{display:flex;justify-content:flex-end;margin-top:18px}
+.flow-submit{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.flow-submit strong{font-size:15px;font-weight:500}
+.flow-submit p{font-size:13px;color:var(--mw-text3);margin-top:8px;line-height:1.8}
+:global(.copy-flow-page .copy-settings){height:auto;display:block}
+:global(.copy-flow-page .copy-settings-fields){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 28px;overflow:visible;padding:0}
+:global(.copy-flow-page .copy-settings-fields>.creative-requirements),:global(.copy-flow-page .copy-settings-fields>.gen-panel){grid-column:1 / -1}
+:global(.copy-flow-page .copy-settings .mw-form-row){display:block;margin:0}
+:global(.copy-flow-page .copy-settings .mw-form-label){display:block;width:auto;font-size:13px;padding:0;margin-bottom:9px}
+:global(.copy-flow-page .copy-settings .duration-setting .arco-radio-group-button){display:flex;width:fit-content;max-width:100%;flex-wrap:wrap}
+:global(.copy-flow-page .copy-settings .duration-setting .arco-radio-button){width:auto;padding:0 14px}
+:global(.copy-flow-page .copy-settings .copy-generation-count){display:block}
+:global(.copy-flow-page .copy-settings .copy-generation-count>.mw-subtle){margin-left:10px}
+:global(.copy-flow-page .copy-settings .copy-generate-actions){margin-top:24px;padding-top:18px;border-top:1px solid var(--mw-border-light);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+:global(.copy-flow-page .copy-generate-actions>.settings-save-state){display:none}
+:global(.copy-flow-page .copy-generate-actions>.arco-btn){width:auto;min-width:180px;margin-left:auto}
+:global(.copy-flow-page .copy-editor){min-height:0;border-radius:8px}
+:global(.copy-flow-page .copy-editor-toolbar){position:static}
+:global(.copy-flow-page .copy-editor.is-continuous .section-item){padding:0;border-bottom:0}
+:global(.copy-flow-page .copy-editor.is-continuous .section-item .arco-textarea){padding:3px 0;font-size:16px;line-height:2}
+:global(.copy-flow-page .copy-editor.is-continuous .section-item.has-violation),:global(.copy-flow-page .copy-editor.is-continuous .section-item.has-soft-warning){padding-left:10px}
+@media(max-width:900px){:global(.copy-page.copy-flow-page){padding:20px 20px 40px}.flow-step{column-gap:14px}.flow-card{padding:20px}}
+@media(max-width:600px){:global(.copy-page.copy-flow-page){padding:18px 12px 32px}.flow-step{grid-template-columns:28px minmax(0,1fr);column-gap:10px;padding-bottom:26px}.flow-node{width:28px;height:28px;font-size:12px}.flow-step:not(:last-child)::before{left:13px;top:30px}.flow-step-heading{min-height:28px;gap:8px;margin-bottom:12px}.flow-step-heading h2{font-size:16px}.flow-heading-actions{width:100%;margin:0}.flow-card{padding:16px}.flow-submit>.arco-btn{width:100%}:global(.copy-flow-page .copy-settings-fields){grid-template-columns:minmax(0,1fr);gap:20px}:global(.copy-flow-page .copy-generate-actions>.arco-btn){width:100%;margin:0}:global(.copy-flow-page .copy-editor-toolbar>div:first-child){gap:8px}}
+@media(prefers-reduced-motion:reduce){.creation-flow{scroll-behavior:auto}}
 </style>
 

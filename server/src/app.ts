@@ -9,6 +9,7 @@ import { getDb } from './db/index.js'
 import { redis, queueStats, getQueueBackend } from './queue/index.js'
 import { registerRoutes } from './routes.js'
 import { toDb, utcNow } from './lib/time.js'
+import { UPLOAD_LIMITS } from './modules/personas/types.js'
 
 /** 统一成功响应结构：{ ok: true, data } */
 export function ok<T>(data: T): { ok: true; data: T } {
@@ -38,8 +39,16 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(cors, { origin: true, credentials: false })
 
   // P0-3：文章上传走 multipart；单文件 + 大小上限由各路由用 limits 覆盖
+  // 注意：@fastify/multipart 的插件级 limits 会覆盖每次调用的 limits（deepmergeAll 后者胜），
+  // 且 req.parts() 与 req.file() 各自新建 busboy 挂同一 raw 流、不能混用——
+  // 因此这里按「全模块最大上传上限」设置全局 fileSize（分身素材 200MB），
+  // 各素材类型的细分上限由路由在读流过程中自行判定（见 personas/routes.ts readMultipart）。
+  const multipartMaxBytes = Math.max(
+    config.copy.articleMaxBytes,
+    ...Object.values(UPLOAD_LIMITS).map((l) => l.maxBytes),
+  )
   await app.register(multipart, {
-    limits: { fileSize: config.copy.articleMaxBytes, files: 1, fields: 20 },
+    limits: { fileSize: multipartMaxBytes, files: 1, fields: 20 },
     throwFileSizeLimit: false,
   })
 
