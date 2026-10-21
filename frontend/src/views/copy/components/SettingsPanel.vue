@@ -1,14 +1,28 @@
 <template>
   <div class="copy-settings">
-    <div class="flex items-center justify-between mb-3">
-      <div class="mw-card-title">创作设置</div>
-      <a-link v-if="!readonly" @click="emit('preview')">
-        <template #icon><icon-code /></template>
-        查看提示词
+    <div class="flex items-center justify-end mb-3">
+      <a-link v-if="!readonly" @click="emit('preview', { ...model })">
+        <template #icon><icon-eye /></template>
+        确认创作要求
       </a-link>
     </div>
 
-    <a-spin :loading="store.optionsLoading" class="w-full">
+    <a-spin :loading="store.optionsLoading" class="copy-settings-fields w-full">
+      <!-- 补充要求 -->
+      <div class="creative-requirements">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-[13px] text-[#4a5872]">本次创作要求</span>
+          <span class="mw-subtle tabular-nums">{{ (model.instructions ?? '').length }}/{{ limits.maxInstructions }}</span>
+        </div>
+        <a-textarea
+          v-model="model.instructions"
+          :max-length="limits.maxInstructions"
+          :auto-size="{ minRows: 2, maxRows: 4 }"
+          :disabled="readonly"
+          placeholder="写给谁？这次讲什么角度？必须保留什么？不要出现什么？"
+        />
+      </div>
+
       <div class="mw-form-row items-start">
         <label class="mw-form-label pt-1" for="copy-template">内容模板</label>
         <div class="flex-1 min-w-0">
@@ -33,7 +47,7 @@
               <span class="text-[11px] text-[#9aa6ba] ml-1">{{ s.description }}</span>
             </a-option>
           </a-select>
-          <div v-if="!styles.length" class="mw-subtle mt-1">当前人物所属线暂无可用风格</div>
+          <div v-if="!styles.length" class="mw-subtle mt-1">暂无适合当前人物的风格</div>
         </div>
       </div>
 
@@ -66,7 +80,7 @@
       </div>
 
       <!-- 份数 -->
-      <div class="mw-form-row">
+      <div class="mw-form-row copy-generation-count">
         <span class="mw-form-label">生成份数</span>
         <a-input-number
           v-model="model.count"
@@ -79,32 +93,7 @@
         <span class="mw-subtle">最多 {{ limits.maxBatchCount }} 份 / 次</span>
       </div>
 
-      <!-- 补充要求 -->
-      <div class="mt-2">
-        <div class="flex items-center justify-between mb-1">
-          <span class="text-[13px] text-[#4a5872]">补充要求（可选）</span>
-          <span class="mw-subtle tabular-nums">{{ (model.instructions ?? '').length }}/{{ limits.maxInstructions }}</span>
-        </div>
-        <a-textarea
-          v-model="model.instructions"
-          :max-length="limits.maxInstructions"
-          :auto-size="{ minRows: 2, maxRows: 4 }"
-          :disabled="readonly"
-          placeholder="例如：开头用提问切入；不要提到具体产品名称；面向 30 岁左右上班族"
-        />
-      </div>
-
       <!-- 操作 -->
-      <div class="mt-4 flex items-center gap-2">
-        <a-button type="outline" long :loading="store.generating" :disabled="!canGenerate" @click="onGenerate">
-          <template #icon><icon-edit /></template>
-          生成文案
-        </a-button>
-        <a-tooltip content="草稿已达上限，请先删除不需要的稿">
-          <span v-if="draftLimitReached" class="mw-subtle">稿件已达 {{ limits.maxDrafts }} 份上限</span>
-        </a-tooltip>
-      </div>
-      <div v-if="readonly" class="mt-2 text-[12px] text-[#a26a08]">审核中不可生成新稿</div>
 
       <!-- 生成进度：可感知的实时进度（真实模型单份 40–60 秒，静止的「正在生成…」会让用户以为卡住） -->
       <div
@@ -167,6 +156,13 @@
         </div>
       </div>
     </a-spin>
+    <div class="copy-generate-actions">
+      <div v-if="store.settingsError" role="alert" class="settings-error"><span>{{ store.settingsError }}</span><a-link @click="store.saveCreativeSettings()">重试</a-link></div>
+      <div v-if="model.count > 1" class="mw-subtle">按误区、场景、问答等不同方向生成 {{ model.count }} 篇</div>
+      <a-button type="primary" long :loading="store.generating" :disabled="!canGenerate" @click="onGenerate"><template #icon><icon-edit /></template>生成文案</a-button>
+      <span v-if="draftLimitReached" class="mw-subtle">已有 {{ store.drafts.length }} 篇，本次最多可生成 {{ Math.max(0, limits.maxDrafts-store.drafts.length) }} 篇，请减少份数</span>
+      <span v-if="readonly" class="mw-subtle">审核中不可生成新稿</span>
+    </div>
   </div>
 </template>
 
@@ -174,9 +170,9 @@
 import { computed, reactive, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
-import type { DurationTier } from '@/api/copy'
+import type { DurationTier, CreativeSettings } from '@/api/copy'
 
-const emit = defineEmits<{ (e: 'preview'): void }>()
+const emit = defineEmits<{ (e: 'preview', settings: CreativeSettings): void }>()
 const store = useCopyStore()
 
 const readonly = computed(() => !store.canEdit)
@@ -199,21 +195,7 @@ const limits = computed(
     },
 )
 
-const model = reactive<{
-  templateId: string
-  styleId: string
-  durationTier: DurationTier
-  durationSeconds: number | null
-  count: number
-  instructions: string
-}>({
-  templateId: '',
-  styleId: '',
-  durationTier: 'medium',
-  durationSeconds: 60,
-  count: 1,
-  instructions: '',
-})
+const model = store.creativeSettings
 
 const currentTemplate = computed(() => templates.value.find((t) => t.id === model.templateId) ?? null)
 
@@ -283,7 +265,7 @@ const genStatusText = computed(() => {
     case 'running': {
       const total = g?.count ?? 0
       if (doneCount.value > 0 && doneCount.value < total) return `正在生成… 已完成 ${doneCount.value}/${total} 份`
-      return '模型正在写作…'
+      return '正在创作…'
     }
     case 'done':
       return `生成完成 · ${g?.succeeded ?? 0} 份新稿已就绪`
@@ -311,11 +293,11 @@ const remainText = computed(() => {
 const progressHint = computed(() => {
   const g = store.activeGeneration
   if (!g) return ''
-  if (g.status === 'pending') return '任务已入队，正在等待空闲名额'
-  if (genStatus.value === 'done') return `共 ${g.count} 份，本次花费 $${(g.cost ?? 0).toFixed(4)}`
+  if (g.status === 'pending') return '正在排队，请稍候'
+  if (genStatus.value === 'done') return '新稿已添加，可打开查看'
   if (genStatus.value === 'partial' || genStatus.value === 'failed') return '可查看失败原因后重试'
   if (doneCount.value > 0) return `已产出 ${doneCount.value} 份，剩余 ${Math.max(0, (g.count ?? 0) - doneCount.value)} 份正在写`
-  return '模型正在理解素材与模板结构，首份通常需要 40–60 秒'
+  return '正在整理素材并撰写文案，请稍候'
 })
 
 function fmtDuration(ms: number): string {
@@ -324,21 +306,6 @@ function fmtDuration(ms: number): string {
   const r = s % 60
   return m > 0 ? `${m}:${String(r).padStart(2, '0')}` : `${r} 秒`
 }
-
-/** 打开文案时用上次的创作设置回填（FR-G1），无则用默认值 */
-watch(
-  () => store.copy?.id,
-  () => {
-    const s = (store.copy?.settings ?? {}) as Record<string, unknown>
-    model.templateId = (s.templateId as string) || templates.value[0]?.id || ''
-    model.styleId = (s.styleId as string) || ''
-    model.durationTier = (s.durationTier as DurationTier) || 'medium'
-    model.durationSeconds = (s.durationSeconds as number) ?? 60
-    model.instructions = ''
-    model.count = 1
-  },
-  { immediate: true },
-)
 
 // 模板/风格选项异步到达后补默认值
 watch(
@@ -355,6 +322,7 @@ watch(
 )
 
 async function onGenerate(): Promise<void> {
+  if (!(await store.saveCreativeSettings())) { Message.error(store.settingsError || '请补全创作设置'); return }
   if (model.durationTier === 'custom' && !model.durationSeconds) {
     Message.warning('请填写自定义时长（秒）')
     return

@@ -70,6 +70,10 @@ export interface CopyListItem {
   topicId: string | null
 }
 
+export interface CreativeSettings { templateId: string; styleId: string; durationTier: DurationTier; durationSeconds: number | null; count: number; instructions: string }
+export interface SourceReview { correctedText: string; note: string; confirmed: boolean; reviewedAt?: string }
+export interface SourceMaterial { type: string; title?: string; text: string | null; videoId?: string; coverUrl?: string; author?: string; shareUrl?: string; contentUrl?: string; publishedAt?: string; duration?: number; sentences?: Array<{ text: string; startTime: number; endTime: number }> }
+
 export interface Draft {
   id: string
   copyId: string
@@ -82,6 +86,8 @@ export interface Draft {
   latestVersionNo: number
   hasSubmitted: boolean
   origin: DraftOrigin
+  isFinal?: boolean
+  generationId?: string | null
   updatedAt: string
 }
 
@@ -89,6 +95,7 @@ export interface CopyVersion {
   id: string
   copyId: string
   draftId: string
+  draftName?: string
   versionNo: number
   title: string | null
   wordCount: number
@@ -114,7 +121,7 @@ export interface SimilarityResult {
   threshold: number
   blocked: boolean
   longest: string
-  fragments: string[]
+  fragments: Array<string | {text:string;length:number}>
 }
 
 export interface Generation {
@@ -176,6 +183,7 @@ export interface GateResult {
 }
 
 export interface Submission {
+  isStub?: boolean
   id: string
   copyId: string
   copyVersionId: string
@@ -280,24 +288,26 @@ export interface OutlineNode {
   index: number
   level: number
   title: string
-  paragraphs: string[]
+  paragraphs: number
   chars: number
 }
 
 export interface ArticleDetail {
   id: string
   filename: string | null
-  ext: string
-  charCount: number
+  mime: string | null
+  size: number
+  plainText: string
+  wordCount: number
+  charCount?: number
+  status: string
   outline: OutlineNode[]
   createdAt: string
 }
 
 export interface ArticleCreated {
   articleId: string
-  filename: string | null
-  ext: string
-  charCount: number
+  wordCount: number
   outline: OutlineNode[]
 }
 
@@ -308,7 +318,8 @@ export interface PrecheckCheck {
   label: string
   level: 'hard' | 'soft'
   pass: boolean
-  hint: string | null
+  message: string
+  hint?: string | null
 }
 
 export interface PrecheckResult {
@@ -323,6 +334,10 @@ export interface PrecheckResult {
   similarity: SimilarityResult | null
   checks: PrecheckCheck[]
   canSubmit: boolean
+  durationRange: { min: number; max: number }
+  durationOk: boolean
+  warnings: number
+  riskHintMode: string
 }
 
 /* ── 接口方法 ────────────────────────────────────────────────────── */
@@ -373,8 +388,11 @@ export const copyApi = {
     return apiPost<{ ok: true }>(`/copy/${copyId}/archive`)
   },
 
+  saveSettings(copyId: string, body: CreativeSettings) { return apiPut<{ settings: Record<string, unknown> }>(`/copy/${copyId}/settings`, body) },
+  saveSourceReview(copyId: string, body: SourceReview) { return apiPut<{ sourceReview: SourceReview }>(`/copy/${copyId}/source-review`, body) },
+  finalize(copyId: string, body: { draftId: string; rev: number }) { return apiPost<{ finalSelection: { draftId: string; versionId: string; versionNo: number } }>(`/copy/${copyId}/finalize`, body) },
   source(copyId: string) {
-    return apiGet<{ label: string; text: string; outline?: OutlineNode[] }>(`/copy/${copyId}/source`)
+    return apiGet<SourceMaterial>(`/copy/${copyId}/source`)
   },
 
   /* 稿 */
@@ -497,8 +515,8 @@ export const copyApi = {
   scanCompliance(body: { copyId?: string; title?: string | null; sections: Section[] }) {
     return apiPost<{ hits: ComplianceHit[] }>('/copy/compliance/scan', body)
   },
-  promptPreview(copyId: string, body: { templateId: string; styleId: string; durationTier: DurationTier; durationSeconds?: number | null; instructions?: string }) {
-    return apiPost<{ system: string; user: string; prompt: string; promptHash: string; wordRange: { min: number; max: number } }>(
+  promptPreview(copyId: string, body: { templateId: string; styleId: string; durationTier: DurationTier; durationSeconds?: number | null; instructions?: string; count?: number }) {
+    return apiPost<{ candidates?: Array<{direction: string; user: string}>; system: string; user: string; prompt: string; promptHash: string; wordRange: { min: number; max: number } }>(
       `/copy/${copyId}/prompt-preview`,
       body,
     )

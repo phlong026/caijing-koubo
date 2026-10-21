@@ -1,10 +1,11 @@
 <template>
   <div v-if="review || copy?.status === 'approved' || copy?.status === 'rejected'" class="mw-card p-5">
     <div class="flex items-center justify-between mb-3">
-      <div class="mw-card-title">审核进度</div>
+      <div class="mw-card-title">审核进度 <a-tag v-if="review?.isStub" color="orange" size="small">测试流程</a-tag></div>
       <a-tag :color="statusColor" size="small">{{ statusText }}</a-tag>
     </div>
 
+    <p v-if="review?.isStub" class="mw-subtle mb-3">当前为模拟审核，结果仅供测试，尚未完成人工审核。</p>
     <!-- 三关进度 -->
     <div v-if="review" class="space-y-1.5 mb-3">
       <div v-for="(g, gi) in review.gates" :key="gi" class="gate-row">
@@ -31,7 +32,7 @@
       <a-button v-if="canWithdraw" size="small" :loading="withdrawing" @click="onWithdraw">撤回审核</a-button>
       <a-button v-if="copy?.status === 'approved'" size="small" type="primary" @click="onFetchApproved">
         <template #icon><icon-download /></template>
-        取已通过稿
+        查看通过稿
       </a-button>
       <span v-if="copy?.status === 'in_review'" class="mw-subtle">
         送审后可撤回；进入人工复核后不可撤回。
@@ -43,12 +44,12 @@
       <a-spin :loading="approvedLoading">
         <div v-if="approved">
           <div class="flex items-center gap-2 mb-3">
-            <a-tag color="green" size="small">v{{ approved.versionNo }}</a-tag>
+            <a-tag color="green" size="small">第 {{ approved.versionNo }} 版</a-tag>
             <span class="text-[14px] font-semibold text-[#131f38]">{{ approved.title || '（无标题）' }}</span>
           </div>
           <div class="space-y-2.5 mb-4">
             <div v-for="(s, i) in approved.sections" :key="i" class="text-[13px] leading-[1.85] text-[#3c4a63]">
-              <span class="text-[#9aa6ba] mr-1.5">{{ s.label }}</span>{{ s.text }}
+              {{ s.text }}
             </div>
           </div>
           <div class="px-3 py-2 rounded-lg bg-[#f8fafd] text-[12px] leading-[1.75] text-[#7c8798]">

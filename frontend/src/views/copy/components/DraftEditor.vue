@@ -1,5 +1,5 @@
 <template>
-  <div class="mw-card copy-editor">
+  <div class="mw-card copy-editor" :class="{ 'is-continuous': !showParagraphTools }">
     <!-- 生成完成后自动切稿的提示：内容被静默替换最容易让人以为丢了东西 -->
     <div v-if="store.switchedNotice" class="switch-notice">
       <icon-swap class="text-[#1d4ed8]" />
@@ -12,21 +12,21 @@
     </div>
 
     <!-- 头部：稿切换 + 操作 -->
-    <div class="px-5 pt-4 pb-3 border-b border-[#f0f3f8]">
+    <div class="copy-editor-toolbar px-5 pt-4 pb-3 border-b border-[#f0f3f8]">
       <div class="flex items-center justify-between gap-3">
         <div class="flex items-center gap-2 min-w-0">
           <!-- 稿 tab（效果图「稿 1 / 稿 2 / 稿 3」），稿多时横向滚动 -->
-          <div class="draft-tabs">
+          <div ref="draftTabs" class="draft-tabs">
             <button
               v-for="d in store.drafts"
               :key="d.id"
               type="button"
               class="draft-tab"
               :class="{ active: d.id === editor?.draftId }"
-              :title="`${d.origin === 'ai' ? 'AI 生成' : '手写'} · ${d.wordCount} 字`"
+              :title="`${d.title || d.name} · ${d.wordCount} 字`"
               @click="onSwitchDraft(d.id)"
             >
-              <span v-if="d.origin === 'ai'" class="ai-mark">AI</span>{{ d.name }}
+              {{ d.isFinal ? '✓ ' : '' }}{{ d.name }}
             </button>
           </div>
 
@@ -50,13 +50,6 @@
         </div>
       </div>
 
-      <!-- 当前稿信息行（效果图「当前稿：小林科普 · 草稿 v2 · 已保存」） -->
-      <div v-if="editor && currentDraft" class="mt-2 text-[12px] text-[#6b7688]">
-        当前稿：{{ store.detail?.persona?.name ?? store.copy?.persona?.name ?? '未绑定人物' }} · {{ currentDraft.name }} ·
-        {{ currentDraft.latestVersionNo ? `v${currentDraft.latestVersionNo}` : '未存版本' }} ·
-        <span :class="store.saveState === 'error' ? 'text-[#c2410c]' : ''">{{ saveStateLabel }}</span>
-      </div>
-
       <!-- 冲突提示 -->
       <div v-if="editor?.conflict" class="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-[#fdf4e3]">
         <icon-exclamation-circle-fill style="color: #a26a08" />
@@ -75,14 +68,16 @@
 
     <template v-else>
       <!-- 精简工具栏（W4）：撤销 / 重做；段落的增删移动在各段右上角 -->
-      <div v-if="!readonly" class="px-5 pt-3 flex items-center gap-1">
+      <div class="px-5 pt-3 flex items-center gap-1">
+        <a-button size="mini" type="text" :disabled="!editor.sections.some(s => s.text.trim())" @click="onCopyBody">复制正文</a-button>
+        <a-button size="mini" type="text" :aria-pressed="showParagraphTools" @click="showParagraphTools=!showParagraphTools">{{ showParagraphTools ? '收起段落工具' : '段落工具' }}</a-button>
         <a-tooltip content="撤销">
-          <a-button size="mini" type="text" :disabled="!store.canUndo" @click="store.undo()">
+          <a-button aria-label="撤销" size="mini" type="text" :disabled="!store.canUndo" @click="store.undo()">
             <template #icon><icon-undo /></template>
           </a-button>
         </a-tooltip>
         <a-tooltip content="重做">
-          <a-button size="mini" type="text" :disabled="!store.canRedo" @click="store.redo()">
+          <a-button aria-label="重做" size="mini" type="text" :disabled="!store.canRedo" @click="store.redo()">
             <template #icon><icon-redo /></template>
           </a-button>
         </a-tooltip>
@@ -90,11 +85,13 @@
 
       <!-- 标题 -->
       <div class="px-5 pt-2">
-        <a-input
+        <a-textarea
           v-model="editor.title"
           :max-length="store.options?.limits.maxTitle ?? 60"
           :disabled="readonly"
           placeholder="文案标题"
+          :auto-size="{ minRows: 1 }"
+          aria-label="文案标题" id="copy-draft-title"
           class="title-input"
           @input="store.markDirty()"
         />
@@ -105,33 +102,25 @@
         <div
           v-for="(s, i) in editor.sections"
           :key="i"
-          class="section-item"
-          :class="{ 'has-violation': violations.has(i) }"
+          class="section-item" :id="`copy-section-${i}`"
+          :class="{ 'has-violation': hardViolations.has(i), 'has-soft-warning': violations.has(i) && !hardViolations.has(i) }"
         >
-          <div class="flex items-center gap-2 mb-1.5">
-            <a-input
-              v-model="s.label"
-              size="mini"
-              :disabled="readonly"
-              placeholder="段落名"
-              class="!w-[150px] section-label"
-              @input="store.markDirty()"
-            />
-            <span class="mw-subtle tabular-nums">{{ countText(s.text) }} 字</span>
+          <div v-if="showParagraphTools" class="section-actions flex items-center gap-2 mb-1.5">
             <span v-if="s.sourceRefs?.length" class="mw-subtle">原文 {{ s.sourceRefs.join('、') }} 段</span>
             <span class="flex-1" />
             <a-tooltip content="生成这一段的其他写法">
-              <a-button size="mini" type="text" :disabled="readonly" @click="emit('variant', i)">
+              <a-button aria-label="生成本段其他写法" size="mini" type="text" :disabled="readonly" @click="emit('variant', i)">
                 <template #icon><icon-swap /></template>
               </a-button>
             </a-tooltip>
             <a-tooltip content="上移">
-              <a-button size="mini" type="text" :disabled="readonly || i === 0" @click="store.moveSection(i, -1)">
+              <a-button aria-label="上移段落" size="mini" type="text" :disabled="readonly || i === 0" @click="store.moveSection(i, -1)">
                 <template #icon><icon-arrow-up /></template>
               </a-button>
             </a-tooltip>
             <a-tooltip content="下移">
               <a-button
+                aria-label="下移段落"
                 size="mini"
                 type="text"
                 :disabled="readonly || i === editor.sections.length - 1"
@@ -141,7 +130,7 @@
               </a-button>
             </a-tooltip>
             <a-tooltip content="删除本段">
-              <a-button size="mini" type="text" :disabled="readonly" @click="onRemoveSection(i)">
+              <a-button aria-label="删除段落" size="mini" type="text" :disabled="readonly" @click="onRemoveSection(i)">
                 <template #icon><icon-delete /></template>
               </a-button>
             </a-tooltip>
@@ -150,8 +139,9 @@
           <a-textarea
             v-model="s.text"
             :disabled="readonly"
-            :auto-size="{ minRows: 2, maxRows: 10 }"
-            placeholder="这一段的口播内容"
+            :auto-size="{ minRows: 1 }"
+            :aria-label="`第 ${i + 1} 段正文`"
+            placeholder="输入文案正文"
             @input="onSectionInput(i)"
           />
 
@@ -168,51 +158,61 @@
           </div>
         </div>
 
-        <a-button v-if="!readonly" long type="dashed" size="small" @click="onAddSection">
+        <a-button v-if="showParagraphTools && !readonly" long type="dashed" size="small" @click="onAddSection">
           <template #icon><icon-plus /></template>
           添加段落
         </a-button>
       </div>
 
       <!-- 只读风险提示块（W4，不计字数） -->
-      <div class="mx-5 mb-4 px-3.5 py-2.5 rounded-lg bg-[#f8fafd] border border-[#eef2f8]">
-        <div class="flex items-center gap-1.5 mb-1">
-          <icon-safe class="text-[#8b98ad]" :size="13" />
-          <span class="text-[12px] font-medium text-[#6b7688]">风险提示（自动附加，不计入字数）</span>
-        </div>
-        <div class="text-[12px] leading-[1.8] text-[#7c8798]">{{ riskHint }}</div>
-      </div>
+      <details class="risk-caption mx-5 mb-4 px-3.5 py-2.5 rounded-lg bg-[#f8fafd] border border-[#eef2f8]">
+        <summary>风险提示字幕</summary>
+        <div class="mt-2 text-[12px] leading-[1.8] text-[#7c8798]">{{ riskHint }}</div>
+      </details>
 
       <!-- 底部统计 -->
       <div class="copy-editor-status">
-        <span>正文 <b class="text-[#131f38] tabular-nums">{{ totalWords }}</b> 字</span>
+        <span>正文 <b class="text-[#131f38] tabular-nums">{{ bodyWords }}</b> 字</span>
         <span>预计 <b class="text-[#131f38] tabular-nums">{{ estSeconds }}</b> 秒</span>
-        <a-tooltip content="汉字计1字，连续英文或数字计1字，标点、空白与风险提示不计入。"><span class="mw-subtle cursor-help">字数规则 <icon-info-circle :size="12" /></span></a-tooltip>
         <span class="flex-1" />
         <span v-if="wordOffsetHint" :class="wordOffsetHint.cls">{{ wordOffsetHint.text }}</span>
       </div>
     </template>
+    <a-modal :visible="!!pendingDraft" title="当前稿有未保存改动" @cancel="cancelSwitch"><p>可以先保存再切换，也可以留在当前稿继续编辑。</p><template #footer><a-button @click="cancelSwitch">继续编辑</a-button><a-button status="danger" @click="confirmSwitch(true)">放弃并切换</a-button><a-button type="primary" :loading="editor?.saving" @click="confirmSwitch(false)">保存并切换</a-button></template></a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
 import { copyApi, type ComplianceHit } from '@/api/copy'
 
 const emit = defineEmits<{ (e: 'variant', sectionIndex: number): void }>()
 const store = useCopyStore()
+const showParagraphTools = ref(false)
+const draftTabs = ref<HTMLElement | null>(null)
+let tabsObserver: ResizeObserver | undefined
+function revealCurrentTab() {
+  const strip=draftTabs.value, active=strip?.querySelector<HTMLElement>('.draft-tab.active')
+  if(!strip || !active)return
+  const box=strip.getBoundingClientRect(), tab=active.getBoundingClientRect()
+  if(tab.right>box.right)strip.scrollLeft+=tab.right-box.right+4
+  else if(tab.left<box.left)strip.scrollLeft+=tab.left-box.left-4
+}
+onMounted(()=>{tabsObserver=new ResizeObserver(revealCurrentTab);if(draftTabs.value)tabsObserver.observe(draftTabs.value)})
+onBeforeUnmount(()=>tabsObserver?.disconnect())
+const pendingDraft = ref<string | null>(null)
+let resolveSwitch: ((v:boolean)=>void) | null = null
+defineExpose({ selectDraft: onSwitchDraft })
+function locateHit(e:Event) { const h=(e as CustomEvent).detail as ComplianceHit; void nextTick(()=>{ const el=document.querySelector<HTMLTextAreaElement>(h.sectionIndex < 0 ? '#copy-draft-title textarea, textarea#copy-draft-title' : `#copy-section-${h.sectionIndex} textarea`);el?.scrollIntoView({block:'center',behavior:'smooth'});el?.focus();el?.setSelectionRange(h.start,h.end) }) }
+onMounted(()=>window.addEventListener('copy-focus-hit',locateHit))
+onBeforeUnmount(()=>{window.removeEventListener('copy-focus-hit',locateHit);resolveSwitch?.(false)})
 
 const editor = computed(() => store.editor)
 const readonly = computed(() => !store.canEdit || store.locked)
 
-const currentDraft = computed(() => store.drafts.find((x) => x.id === editor.value?.draftId) ?? null)
-
-const saveStateLabel = computed(() => {
-  const st = store.saveState
-  return st === 'saving' ? '保存中' : st === 'dirty' ? '有未保存改动' : st === 'error' ? '保存失败' : '已保存'
-})
+watch(()=>[editor.value?.draftId,store.drafts.length],()=>{void nextTick(revealCurrentTab)},{immediate:true,flush:'post'})
 
 const riskHint = computed(() => {
   const tpl = store.options?.templates.find((t) => t.id === (store.copy?.settings as Record<string, unknown>)?.templateId)
@@ -264,11 +264,12 @@ const totalWords = computed(() => {
   const title = editor.value.title?.trim()
   return (title ? countText(title) : 0) + editor.value.sections.reduce((sum, s) => sum + countText(s.text), 0)
 })
+const bodyWords = computed(() => editor.value?.sections.reduce((sum, s) => sum + countText(s.text), 0) ?? 0)
 
 /** 与后端 estimateSeconds 一致：保留 1 位小数（÷3.5），避免与预检口径不一致 */
 const estSeconds = computed(() => {
   const cps = store.options?.limits.charsPerSec ?? 3.5
-  return Math.round((totalWords.value / cps) * 10) / 10
+  return Math.round((bodyWords.value / cps) * 10) / 10
 })
 
 /** 字数偏离提示（软性，不阻断） */
@@ -277,7 +278,11 @@ const wordOffsetHint = computed(() => {
     (d) => d.key === ((store.copy?.settings as Record<string, unknown>)?.durationTier ?? 'medium'),
   )
   if (!tier) return null
-  if (tier.custom) return null
+  const max = tier.custom ? Number(store.creativeSettings.durationSeconds) : tier.maxSeconds
+  const min = tier.custom ? max : tier.minSeconds
+  if (estSeconds.value > max) return { text: `预计超时 ${(estSeconds.value-max).toFixed(1)} 秒`, cls: 'text-[#b95f1d]' }
+  if (estSeconds.value < min) return { text: `预计少于目标 ${(min-estSeconds.value).toFixed(1)} 秒`, cls: 'text-[#b95f1d]' }
+  if (tier.custom) return { text: '预计时长符合目标', cls: 'text-[#12805c]' }
   if (totalWords.value < tier.minWords)
     return { text: `低于建议下限 ${tier.minWords} 字`, cls: 'text-[#b95f1d]' }
   if (totalWords.value > tier.maxWords)
@@ -360,6 +365,7 @@ onBeforeUnmount(() => {
 })
 
 const violations = computed(() => new Set(hits.value.map((h) => h.sectionIndex)))
+const hardViolations = computed(() => new Set(hits.value.filter(h => h.level === 'hard').map(h => h.sectionIndex)))
 
 function hitsOfSection(index: number): ComplianceHit[] {
   return hits.value.filter((h) => h.sectionIndex === index)
@@ -370,6 +376,17 @@ const titleHits = computed(() => hits.value.filter((h) => h.sectionIndex === -1)
 
 function onSectionInput(_index: number): void {
   store.markDirty()
+}
+
+async function onCopyBody(): Promise<void> {
+  const text = editor.value?.sections.map(s => s.text.trim()).filter(Boolean).join('\n\n')
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    Message.success('已复制正文')
+  } catch {
+    Message.error('复制失败，请手动选择正文复制')
+  }
 }
 
 function onAddSection(): void {
@@ -415,27 +432,22 @@ async function onSaveAsNew(): Promise<void> {
   Message.success('已另存为新稿')
 }
 
-async function onSwitchDraft(draftId: string): Promise<void> {
-  if (draftId === editor.value?.draftId) return
+async function onSwitchDraft(draftId: string): Promise<boolean> {
+  if (draftId === editor.value?.draftId) return true
   if (store.isDirty) {
-    Modal.confirm({
-      title: '当前稿有未保存改动',
-      content: '切换稿件会丢失这些改动，是否先保存？',
-      okText: '保存并切换',
-      cancelText: '放弃改动',
-      onOk: async () => {
-        const r = await store.save()
-        if (r === 'ok') await store.switchDraft(draftId)
-      },
-      onCancel: async () => {
-        // 放弃改动：丢掉本地暂存并让 store 认为无脏数据
-        store.acceptServerState()
-        await store.switchDraft(draftId)
-      },
-    })
-    return
+    if (pendingDraft.value) return false
+    store.cancelAutosave()
+    pendingDraft.value=draftId
+    return new Promise(resolve=>{resolveSwitch=resolve})
   }
-  await store.switchDraft(draftId)
+  return await store.switchDraft(draftId)
+}
+function cancelSwitch() { pendingDraft.value=null;resolveSwitch?.(false);resolveSwitch=null;if(store.isDirty)void store.autosave() }
+async function confirmSwitch(discard:boolean) {
+  const id=pendingDraft.value;if(!id)return
+  if(discard)store.acceptServerState()
+  else if(await store.save()!=='ok'){Message.error(store.error || '保存未完成，请继续编辑');return}
+  const ok=await store.switchDraft(id);pendingDraft.value=null;resolveSwitch?.(ok);resolveSwitch=null
 }
 
 async function onNewDraft(): Promise<void> {
@@ -458,6 +470,13 @@ async function onDuplicate(): Promise<void> {
 </script>
 
 <style scoped>
+.is-continuous .section-item{background:transparent;padding:0;border-radius:0}
+.is-continuous .section-item :deep(.arco-textarea-wrapper){background:transparent;border-color:transparent}
+.section-item :deep(.arco-textarea){font-size:16px;line-height:2}
+.is-continuous .section-item :deep(.arco-textarea){padding:0}
+.is-continuous .section-item :deep(.arco-textarea-wrapper:focus-within){border-color:#dbe6df}
+.risk-caption summary{font-size:12px;color:#6b7688;cursor:pointer}
+
 .switch-notice {
   display: flex;
   align-items: center;
@@ -515,15 +534,6 @@ async function onDuplicate(): Promise<void> {
   color: #1d4ed8;
   font-weight: 500;
 }
-.ai-mark {
-  font-size: 10px;
-  line-height: 14px;
-  padding: 0 3px;
-  border-radius: 3px;
-  background: #e8efff;
-  color: #3b63d8;
-}
-
 .title-input :deep(.arco-input) {
   font-size: 16px;
   font-weight: 600;
@@ -555,14 +565,4 @@ async function onDuplicate(): Promise<void> {
   background: #fefafa;
 }
 
-.section-label :deep(.arco-input) {
-  background: transparent;
-  border-color: transparent;
-  font-weight: 500;
-  color: #4a5872;
-  padding-left: 0;
-}
-.section-label :deep(.arco-input:hover) {
-  border-color: #e6ecf5;
-}
 </style>

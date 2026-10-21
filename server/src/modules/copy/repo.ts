@@ -2,6 +2,7 @@ import { getDb, isDuplicateKey, type Db, type Row } from '../../db/index.js'
 import { jdec, jenc, likeContains } from '../../lib/util.js'
 import { fromDb, toDb, utcNow } from '../../lib/time.js'
 import type { Section } from './constants.js'
+import { toPlainText } from './text.js'
 
 /**
  * 文案工坊数据访问层。
@@ -222,14 +223,15 @@ export interface DraftRow {
 }
 
 export function mapDraft(r: Row): DraftRow {
+  const sections = jdec<Section[]>(r.sections, [])
   return {
     id: r.id,
     copyId: r.copy_id,
     draftNo: Number(r.draft_no ?? 1),
     name: r.name ?? `稿 ${r.draft_no ?? 1}`,
     title: r.title ?? null,
-    sections: jdec<Section[]>(r.sections, []),
-    plainText: r.plain_text ?? '',
+    sections,
+    plainText: toPlainText(r.title, sections),
     wordCount: Number(r.word_count ?? 0),
     rev: Number(r.rev ?? 0),
     latestVersionNo: Number(r.latest_version_no ?? 0),
@@ -371,14 +373,15 @@ export interface VersionRow {
 }
 
 export function mapVersion(r: Row): VersionRow {
+  const sections = jdec<Section[]>(r.sections, [])
   return {
     id: r.id,
     copyId: r.copy_id,
     draftId: r.draft_id,
     versionNo: Number(r.version_no ?? 0),
     title: r.title ?? null,
-    sections: jdec<Section[]>(r.sections, []),
-    plainText: r.plain_text ?? '',
+    sections,
+    plainText: toPlainText(r.title, sections),
     wordCount: Number(r.word_count ?? 0),
     contentHash: r.content_hash ?? null,
     origin: r.origin,
@@ -525,6 +528,8 @@ export interface GenerationRow {
   instructions: string | null
   targetSection: number | null
   personaSnapshot: Record<string, unknown> | null
+  /** FR-X3：生成时的人物版本 id（回显版本号用） */
+  personaVersionId: string | null
   promptText: string | null
   promptSystem: string | null
   promptHash: string | null
@@ -557,6 +562,7 @@ export function mapGeneration(r: Row): GenerationRow {
     instructions: r.instructions ?? null,
     targetSection: r.target_section === null || r.target_section === undefined ? null : Number(r.target_section),
     personaSnapshot: jdec<Record<string, unknown> | null>(r.persona_snapshot, null),
+    personaVersionId: r.persona_version_id ?? null,
     promptText: r.prompt_text ?? null,
     promptSystem: r.prompt_system ?? null,
     promptHash: r.prompt_hash ?? null,
@@ -620,9 +626,9 @@ export async function insertGeneration(
     `INSERT INTO \`copy_generation\`
       (\`id\`, \`copy_id\`, \`draft_id\`, \`kind\`, \`mode\`, \`template_id\`, \`template_rev\`, \`style_id\`, \`style_rev\`,
        \`duration_tier\`, \`duration_seconds\`, \`count\`, \`instructions\`, \`target_section\`, \`target_section_text\`,
-       \`persona_snapshot\`, \`prompt_text\`, \`prompt_system\`, \`prompt_hash\`, \`model\`, \`status\`, \`succeeded\`, \`failed\`, \`error\`, \`cost\`,
+       \`persona_snapshot\`, \`persona_version_id\`, \`prompt_text\`, \`prompt_system\`, \`prompt_hash\`, \`model\`, \`status\`, \`succeeded\`, \`failed\`, \`error\`, \`cost\`,
        \`idempotency_key\`, \`created_by\`, \`created_at\`, \`finished_at\`)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       row.copy_id,
@@ -640,6 +646,7 @@ export async function insertGeneration(
       row.target_section ?? null,
       row.target_section_text ?? null,
       jenc(row.persona_snapshot ?? null),
+      row.persona_version_id ?? null,
       row.prompt_text ?? null,
       row.prompt_system ?? null,
       row.prompt_hash ?? null,
