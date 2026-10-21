@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { config, hasOss, paths } from '../../config.js'
 import { logger } from '../../log.js'
@@ -116,28 +117,32 @@ export async function getObjectStream(key: string, range?: string): Promise<Obje
     const total = stat.size
     let start = 0
     let end = total - 1
-    if (range) {
-      const m = /bytes=(\d*)-(\d*)/.exec(range)
-      if (m) {
-        if (m[1]) start = Number(m[1])
+    // P2-4：只认单段范围；支持 bytes=a-b、bytes=a- 与末尾范围 bytes=-N，其余按整份返回
+    const m = range ? /^bytes=(\d*)-(\d*)$/.exec(range.trim()) : null
+    if (m && (m[1] || m[2])) {
+      if (!m[1]) {
+        start = Math.max(0, total - Number(m[2]))
+      } else {
+        start = Number(m[1])
         if (m[2]) end = Math.min(Number(m[2]), total - 1)
-        if (start > end || start >= total) {
-          return {
-            stream: fs.createReadStream(local, { start: 0, end: 0 }),
-            contentType: null,
-            contentLength: 0,
-            contentRange: null,
-            status: 416,
-          }
+      }
+      if (start > end || start >= total) {
+        return {
+          stream: Readable.from([]),
+          contentType: null,
+          contentLength: 0,
+          contentRange: `bytes */${total}`,
+          status: 416,
         }
       }
     }
+    const partial = !!m && (!!m[1] || !!m[2])
     return {
       stream: fs.createReadStream(local, { start, end }),
       contentType: guessContentType(local),
       contentLength: end - start + 1,
-      contentRange: range ? `bytes ${start}-${end}/${total}` : null,
-      status: range ? 206 : 200,
+      contentRange: partial ? `bytes ${start}-${end}/${total}` : null,
+      status: partial ? 206 : 200,
     }
   }
   try {

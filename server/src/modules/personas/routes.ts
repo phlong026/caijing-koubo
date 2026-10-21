@@ -209,7 +209,7 @@ async function streamStorage(
   filename: string,
   range: string | undefined,
   audit: { action: string; targetType: string; targetId: string; operator: string; detail?: Record<string, unknown> } | null,
-): Promise<void> {
+): Promise<import('fastify').FastifyReply> {
   const res = await getObjectStream(storageKey, range)
   if (!res) throw err.notFound('文件不存在或已被清理')
   if (audit) {
@@ -221,6 +221,10 @@ async function streamStorage(
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'private, max-age=300',
   }
+  // P2-4：按存储层给出的状态码回写（416 范围无效时不带正文，只回 Content-Range: bytes */总长）
+  if (res.status === 416) {
+    return reply.status(416).headers({ 'Content-Range': res.contentRange ?? '', 'Accept-Ranges': 'bytes' }).send()
+  }
   if (res.contentRange) {
     headers['Content-Range'] = res.contentRange
     headers['Content-Length'] = String(res.contentLength ?? 0)
@@ -229,7 +233,9 @@ async function streamStorage(
     if (res.contentLength != null) headers['Content-Length'] = String(res.contentLength)
     reply.headers(headers)
   }
-  reply.send(res.stream as any)
+  // 必须把 reply 返回给 async 处理函数：流式响应的响应头要等管道开始写才发出，
+  // 处理函数若 resolve undefined，Fastify 会认为尚未响应并补发一个空正文（Content-Length: 0）
+  return reply.send(res.stream as any)
 }
 
 /* ── 工具 ──────────────────────────────────────────────────────── */
@@ -697,7 +703,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
             operator: req.operator,
             detail: { assetId: id, kind: asset.kind, variant },
           }
-    await streamStorage(reply, target.storageKey, target.filename, range, audit)
+    return streamStorage(reply, target.storageKey, target.filename, range, audit)
   })
 
   /* ── 授权与 consent ─────────────────────────────────────────── */
@@ -759,7 +765,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
     const auth = await getAuthorizationById(id)
     if (!auth) throw err.notFound('授权记录不存在')
     const target = authorizationFileTarget(auth)
-    await streamStorage(reply, target.storageKey, target.filename, req.headers.range, {
+    return streamStorage(reply, target.storageKey, target.filename, req.headers.range, {
       action: 'persona.sensitive_access',
       targetType: 'persona',
       targetId: auth.personaId,
@@ -986,7 +992,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
     const preview = await getVoicePreview(id)
     if (!preview) throw err.notFound('试听记录不存在')
     const target = previewAudioTarget(preview)
-    await streamStorage(reply, target.storageKey, target.filename, req.headers.range, null)
+    return streamStorage(reply, target.storageKey, target.filename, req.headers.range, null)
   })
 
   app.get('/persona-voices/:id/demo', async (req, reply) => {
@@ -994,7 +1000,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
     const voice = await getVoiceById(id)
     if (!voice) throw err.notFound('声音不存在')
     if (!voice.demoKey) throw err.notFound('试听音频尚未归档')
-    await streamStorage(reply, voice.demoKey, `${voice.name || '试听'}.mp3`, req.headers.range, null)
+    return streamStorage(reply, voice.demoKey, `${voice.name || '试听'}.mp3`, req.headers.range, null)
   })
 
   app.patch('/persona-voices/:id', async (req) => {

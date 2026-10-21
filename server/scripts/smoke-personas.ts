@@ -306,7 +306,13 @@ async function main(): Promise<void> {
   check('设置封面 200', setCover.status === 200, setCover.raw)
 
   const thumb = await fetch(`${BASE}/persona-assets/${photoId}/file?variant=thumb`, { headers: authHeader('GET', '/') })
-  check('缩略图可流式读取（200 + 图片类型）', thumb.status === 200 && (thumb.headers.get('content-type') ?? '').startsWith('image/'), thumb.status)
+  const thumbBytes = (await thumb.arrayBuffer()).byteLength
+  check('缩略图可流式读取（200 + 图片类型 + 非空正文）', thumb.status === 200 && (thumb.headers.get('content-type') ?? '').startsWith('image/') && thumbBytes > 0, { status: thumb.status, bytes: thumbBytes })
+  // P2-4：Range（含末尾范围）与越界 416
+  const tail = await fetch(`${BASE}/persona-assets/${photoId}/file?variant=thumb`, { headers: { ...authHeader('GET', '/'), Range: 'bytes=-16' } })
+  check('末尾范围 bytes=-16 返回 206 且 16 字节', tail.status === 206 && (await tail.arrayBuffer()).byteLength === 16, tail.status)
+  const beyond = await fetch(`${BASE}/persona-assets/${photoId}/file?variant=thumb`, { headers: { ...authHeader('GET', '/'), Range: 'bytes=999999999-' } })
+  check('越界范围返回 416', beyond.status === 416, beyond.status)
 
   const dupAsset = await reqMultipart(`/personas/${idA}/assets`, { kind: 'photo' }, {
     buf: photo,
