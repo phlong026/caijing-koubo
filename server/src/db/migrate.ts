@@ -27,6 +27,8 @@ async function syncSchema(db: Db): Promise<void> {
   }
   // 补列必须在建索引之前：索引可能引用新增列
   await addMissingColumns(db)
+  // 唯一索引建立前清理存量重复（否则 SQLite 建索引报错导致启动失败，MySQL 会跳过建索引）
+  await dedupeBeforeUniqueIndexes(db)
   for (const t of TABLES) {
     for (const i of t.indexes ?? []) {
       if (db.kind === 'sqlite') {
@@ -121,6 +123,30 @@ async function existingColumns(db: Db, table: string): Promise<Set<string>> {
   } catch {
     return new Set()
   }
+}
+
+/**
+ * P2-13b：news_category_rule 原先没有 (category, keyword) 唯一约束，种子用随机 id + INSERT IGNORE，
+ * 「已存在则更新优先级」分支永远走不到，重复启动 / 手工添加会留下重复规则。
+ * 建唯一索引前保留每组优先级最高（同优先级取 id 最小）的一条，其余删除。
+ */
+async function dedupeBeforeUniqueIndexes(db: Db): Promise<void> {
+  if (!(await db.tableExists('news_category_rule'))) return
+  const dups = await db.all<{ category: string; keyword: string; c: number }>(
+    'SELECT `category`, `keyword`, COUNT(*) AS c FROM `news_category_rule` GROUP BY `category`, `keyword` HAVING COUNT(*) > 1',
+  )
+  let removed = 0
+  for (const d of dups) {
+    const rows = await db.all<{ id: string }>(
+      'SELECT `id` FROM `news_category_rule` WHERE `category` = ? AND `keyword` = ? ORDER BY `priority` DESC, `id` ASC',
+      [d.category, d.keyword],
+    )
+    for (const r of rows.slice(1)) {
+      await db.run('DELETE FROM `news_category_rule` WHERE `id` = ?', [r.id])
+      removed += 1
+    }
+  }
+  if (removed) logger.warn({ removed }, 'db.news_category_rule_deduped')
 }
 
 /** 种子：人物桩（D13）、提示词模板（FR-C2）、分类规则（FR-N2） */

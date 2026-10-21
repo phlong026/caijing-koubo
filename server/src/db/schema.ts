@@ -87,7 +87,11 @@ export const TABLES: TableDef[] = [
       tint('enabled', 1),
       dt('created_at'),
     ],
-    indexes: [{ name: 'idx_rule_enabled', cols: ['enabled', 'priority'] }],
+    indexes: [
+      { name: 'idx_rule_enabled', cols: ['enabled', 'priority'] },
+      // P2-13b：同一分类同一关键词只保留一条（建索引前 dedupeBeforeUniqueIndexes 会清理存量重复）
+      { name: 'uq_rule_category_keyword', cols: ['category', 'keyword'], unique: true },
+    ],
     comment: 'FR-N2 分类关键词规则（配置表维护）',
   },
 

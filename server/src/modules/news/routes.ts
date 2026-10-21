@@ -4,7 +4,7 @@ import { getNewsById, listNews, newsCategories } from './repo.js'
 import { runFetchExclusive, runFetchQueued } from './service.js'
 import { nextFetchAt } from './jobs.js'
 import { recordOperation } from '../audit/repo.js'
-import { getDb } from '../../db/index.js'
+import { getDb, isDuplicateKey } from '../../db/index.js'
 import { newId } from '../../lib/util.js'
 import { toDb, utcNow } from '../../lib/time.js'
 import { invalidateRules, loadRules } from './classify.js'
@@ -87,10 +87,16 @@ export function registerNewsRoutes(app: FastifyInstance): void {
     const body = (req.body ?? {}) as { category?: string; keyword?: string; priority?: number }
     if (!body.category || !body.keyword) throw err.badRequest('category 与 keyword 必填')
     const db = getDb()
-    await db.run(
-      'INSERT INTO `news_category_rule` (`id`, `category`, `keyword`, `priority`, `enabled`, `created_at`) VALUES (?, ?, ?, ?, 1, ?)',
-      [newId('rule'), String(body.category), String(body.keyword), Number(body.priority ?? 10), toDb(utcNow())],
-    )
+    try {
+      await db.run(
+        'INSERT INTO `news_category_rule` (`id`, `category`, `keyword`, `priority`, `enabled`, `created_at`) VALUES (?, ?, ?, ?, 1, ?)',
+        [newId('rule'), String(body.category), String(body.keyword), Number(body.priority ?? 10), toDb(utcNow())],
+      )
+    } catch (e) {
+      // P2-13b：(category, keyword) 唯一
+      if (isDuplicateKey(e)) throw err.conflict('该分类下已有相同关键词的规则', { category: body.category, keyword: body.keyword })
+      throw e
+    }
     invalidateRules()
     await recordOperation({
       operator: req.operator,
