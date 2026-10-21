@@ -690,6 +690,8 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
     if (!['thumb', 'compat', 'original'].includes(variant)) throw err.badRequest('variant 仅支持 thumb / compat / original')
     const asset = await getAssetById(id)
     if (!asset) throw err.notFound('素材不存在')
+    // P2-5：已删除素材不再对外提供；管理员审计需要时仍可查看（照常记敏感访问日志）
+    if (asset.deletedAt && req.user?.role !== 'admin') throw err.notFound('素材已删除')
     const target = assetFileTarget(asset, variant)
     const range = req.headers.range
     // 敏感访问审计：原件与兼容版本（FR-U6）；缩略图不记

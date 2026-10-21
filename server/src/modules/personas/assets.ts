@@ -369,6 +369,9 @@ export async function setCoverAsset(personaId: string, assetId: string, operator
   const db = getDb()
   const asset = await getAssetById(assetId)
   if (!asset || asset.personaId !== personaId) throw err.notFound('素材不存在')
+  // P2-5：归档人物不可再修改封面
+  const persona = await getPersonaById(personaId, true)
+  if (persona?.archivedAt) throw err.personaArchived()
   if (asset.kind !== 'photo') throw err.badRequest('仅形象照片可设为封面')
   if (asset.status !== 'approved' || asset.deletedAt) throw err.assetNotApproved('照片尚未审核通过，不能设为封面')
   await db.run('UPDATE `persona` SET `cover_asset_id` = ?, `updated_at` = ?, `updated_by` = ? WHERE `id` = ?', [

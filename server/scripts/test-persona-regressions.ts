@@ -16,11 +16,11 @@ process.env.MOCK_FALLBACK = 'true'
 process.env.LOG_LEVEL = 'silent'
 const { initDb, closeAll } = await import('../src/db/index.js')
 const { runMigrations } = await import('../src/db/migrate.js')
-const { createPersona, getPersonaById, updatePersona } = await import('../src/modules/personas/repo.js')
+const { createPersona, getPersonaById, updatePersona, archivePersona } = await import('../src/modules/personas/repo.js')
 const { getProductionProfile, checkReadiness } = await import('../src/modules/personas/readiness.js')
 const { deriveStatus } = await import('../src/modules/personas/policy.js')
 const { toDb, utcNow } = await import('../src/lib/time.js')
-const { uploadAsset } = await import('../src/modules/personas/assets.js')
+const { uploadAsset, setCoverAsset } = await import('../src/modules/personas/assets.js')
 const { config } = await import('../src/config.js')
 const db = await initDb()
 // 用进程内队列：不能把任务投进本机 Redis（会被正在运行的开发实例消费）
@@ -175,6 +175,20 @@ try {
     assert.notEqual(again.asset.id, first.asset.id)
     const old = await db.get<{ deleted_at: string | null }>('SELECT deleted_at FROM persona_asset WHERE id = ?', [first.asset.id])
     assert.ok(old?.deleted_at)
+  })
+
+  await test('P2-5 归档人物不能再设置封面', async () => {
+    const p = await createPersona({ name: '回归己', line: 'kos', operator: 'test' })
+    const now = toDb(utcNow())
+    const photo = uid('pa')
+    await db.run(
+      `INSERT INTO persona_asset (id, persona_id, kind, name, status, storage_key, mime, size_bytes, sha256, created_at, updated_at)
+       VALUES (?, ?, 'photo', '照片', 'approved', 'k', 'image/jpeg', 1, 'x', ?, ?)`,
+      [photo, p.id, now, now],
+    )
+    await setCoverAsset(p.id, photo, 'test')
+    await archivePersona(p.id, 'test')
+    await assert.rejects(setCoverAsset(p.id, photo, 'test'), (e: any) => e?.code === 'PERSONA_ARCHIVED')
   })
 
   console.log(`${passed} persona regression groups passed`)
