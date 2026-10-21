@@ -594,13 +594,14 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
       const k = f.kind as AssetKind | undefined
       return k && ASSET_KINDS.includes(k) ? UPLOAD_LIMITS[k].maxBytes : undefined
     })
-    const kind = (fields.kind ?? 'photo') as AssetKind
-    if (!ASSET_KINDS.includes(kind)) throw err.badRequest(`不支持的素材类型：${kind}`, { allowed: ASSET_KINDS })
-    const maxBytes = UPLOAD_LIMITS[kind].maxBytes
-    if (file.size > maxBytes) {
-      throw err.assetTooLarge(`${ASSET_KIND_LABELS[kind]}超过 ${Math.round(maxBytes / 1024 / 1024)}MB 上限`, { max: maxBytes, size: file.size })
-    }
+    // P1-2：所有校验都放在 try 内，任何分支报错都由 finally 删除临时文件
     try {
+      const kind = (fields.kind ?? 'photo') as AssetKind
+      if (!ASSET_KINDS.includes(kind)) throw err.badRequest(`不支持的素材类型：${kind}`, { allowed: ASSET_KINDS })
+      const maxBytes = UPLOAD_LIMITS[kind].maxBytes
+      if (file.size > maxBytes) {
+        throw err.assetTooLarge(`${ASSET_KIND_LABELS[kind]}超过 ${Math.round(maxBytes / 1024 / 1024)}MB 上限`, { max: maxBytes, size: file.size })
+      }
       const tags = fields.tags ? String(fields.tags).split(',').map((t) => t.trim()).filter(Boolean) : []
       const r = await uploadAsset({
         personaId: id,
