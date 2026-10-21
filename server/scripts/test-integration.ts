@@ -40,6 +40,19 @@ if (realBackend) {
   console.log(`Real backend: MySQL database ${realDbName}, Redis prefix ${realPrefix}`)
 }
 
+// --oss：启动本地 OSS 协议仿真并让服务端按「已配置 OSS」运行，人物库素材走 put / getStream / 签名 URL 全链路
+const withOss = process.argv.includes('--oss')
+let ossEmu: Awaited<ReturnType<typeof import('./lib/oss-emulator.js').startOssEmulator>> | null = null
+if (withOss) {
+  const { startOssEmulator } = await import('./lib/oss-emulator.js')
+  ossEmu = await startOssEmulator()
+  Object.assign(process.env, {
+    OSS_BUCKET: ossEmu.bucket, OSS_ACCESS_KEY_ID: ossEmu.accessKeyId, OSS_ACCESS_KEY_SECRET: ossEmu.accessKeySecret,
+    OSS_ENDPOINT: ossEmu.endpoint, OSS_CNAME: 'true',
+  })
+  console.log(`OSS emulator: ${ossEmu.endpoint} (bucket ${ossEmu.bucket})`)
+}
+
 const { initDb, closeAll } = await import('../src/db/index.js')
 const { runMigrations } = await import('../src/db/migrate.js')
 const { redis, setQueueBackend, closeQueues, queueStats } = await import('../src/queue/index.js')
@@ -115,7 +128,14 @@ try {
     await runSmoke('smoke-topics.ts', base)
     await runSmoke('smoke-copy.ts', base)
     await runSmoke('smoke-personas.ts', base)
-    console.log(`All four isolated HTTP smoke suites passed (${realBackend ? 'MySQL + Redis/BullMQ' : 'SQLite + memory queue'})`)
+    if (ossEmu) {
+      const stored = ossEmu.objects.size
+      assert.ok(stored > 0, 'persona assets were stored in the OSS emulator')
+      assert.ok(ossEmu.requests.some((r) => r.method === 'GET' && r.status === 200), 'assets were read back through OSS')
+      assert.equal(ossEmu.requests.filter((r) => r.status === 403).length, 0, 'no OSS request was rejected')
+      console.log(`OSS emulator: ${stored} objects, ${ossEmu.requests.length} requests, 0 rejected`)
+    }
+    console.log(`All four isolated HTTP smoke suites passed (${realBackend ? 'MySQL + Redis/BullMQ' : 'SQLite + memory queue'}${ossEmu ? ' + OSS' : ''})`)
   }
 } finally {
   await app.close()
@@ -137,6 +157,7 @@ try {
   }
   redis.disconnect()
   await closeAll()
+  await ossEmu?.close()
   if (realBackend) {
     const mysql = (await import('mysql2/promise')).default
     const conn = await mysql.createConnection({

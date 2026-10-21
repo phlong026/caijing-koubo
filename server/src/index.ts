@@ -1,7 +1,7 @@
 import { buildApp } from './app.js'
 import { closeAll, initDb } from './db/index.js'
 import { runMigrations } from './db/migrate.js'
-import { config } from './config.js'
+import { config, hasOss, ossConfigIssues } from './config.js'
 import { logger } from './log.js'
 import { closeQueues, setQueueBackend, warnIfQueuePrefixShared } from './queue/index.js'
 import { registerNewsJobs, triggerFetch } from './modules/news/jobs.js'
@@ -59,6 +59,15 @@ async function main(): Promise<void> {
   installGlobalHandlers()
   const db = await initDb()
   await runMigrations(db)
+
+  // OSS：半配置 / 内网签名等问题在启动时就暴露，而不是等到飞影拉取失败
+  for (const issue of ossConfigIssues()) logger.warn({ issue }, 'oss.config_issue')
+  logger.info(
+    hasOss()
+      ? { bucket: config.oss.bucket, region: config.oss.region, internal: config.oss.internal, endpoint: config.oss.endpoint || null }
+      : { mode: 'local-fallback' },
+    hasOss() ? 'oss.enabled' : 'oss.disabled_using_local_storage',
+  )
 
   // D9：server 进程须具备 ffmpeg 与可写临时目录
   const ffmpeg = await checkFfmpeg()

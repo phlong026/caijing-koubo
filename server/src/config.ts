@@ -87,6 +87,14 @@ export const config = {
     accessKeyId: str('OSS_ACCESS_KEY_ID', ''),
     accessKeySecret: str('OSS_ACCESS_KEY_SECRET', ''),
     internal: bool('OSS_INTERNAL', false),
+    /** 数据面自定义端点（私有域名 / VPC 专线 / 本地仿真）；留空用 region 推导的官方域名 */
+    endpoint: str('OSS_ENDPOINT', ''),
+    /** 端点是绑定到 Bucket 的自定义域名（CNAME）时置 true：此时 URL 不再拼 bucket 前缀 */
+    cname: bool('OSS_CNAME', false),
+    /** 签名 URL 专用公网端点：飞影等外部服务必须能访问，OSS_INTERNAL=true 时不得走内网域名；留空 = 官方公网域名 */
+    signEndpoint: str('OSS_SIGN_ENDPOINT', ''),
+    /** 超过该大小改走分片上传（MB），避免把大视频整个读进内存 */
+    multipartThresholdMb: num('OSS_MULTIPART_THRESHOLD_MB', 50),
     prefix: str('OSS_PREFIX', 'benchmark-audio/'),
     signedUrlTtl: num('OSS_SIGNED_URL_TTL', 7200),
   },
@@ -276,6 +284,27 @@ export function hasCopyLlm(): boolean {
 }
 export function hasOss(): boolean {
   return !!(config.oss.bucket && config.oss.accessKeyId && config.oss.accessKeySecret)
+}
+/** OSS 配置自检：返回问题清单（半配置、内网域名无法被外部访问等），启动时打印 */
+export function ossConfigIssues(): string[] {
+  const o = config.oss
+  const issues: string[] = []
+  const set = [o.bucket, o.accessKeyId, o.accessKeySecret].filter(Boolean).length
+  if (set > 0 && set < 3) {
+    issues.push('OSS 配置不完整：OSS_BUCKET / OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET 需同时填写，当前按「未配置」处理（回落本地存储）')
+  }
+  if (set === 3) {
+    if (!/^oss-[a-z0-9-]+$/.test(o.region) && !o.endpoint) {
+      issues.push(`OSS_REGION「${o.region}」格式应为 oss-cn-shanghai 这类，或改填 OSS_ENDPOINT`)
+    }
+    if (o.internal && !o.signEndpoint) {
+      issues.push('OSS_INTERNAL=true：数据面走内网，签名 URL 已强制改用公网域名；如需自定义公网域名请设置 OSS_SIGN_ENDPOINT')
+    }
+    if (o.signEndpoint && !/^https:\/\//i.test(o.signEndpoint)) {
+      issues.push('OSS_SIGN_ENDPOINT 必须是 https:// 开头，否则飞影自取会被判不可用并回落自上传')
+    }
+  }
+  return issues
 }
 /** FinStep 资讯接口是否可用（无 Key 时该源整体不启用，不影响其它资讯源） */
 export function hasFinStep(): boolean {
