@@ -7,11 +7,8 @@ import type { TikPost, TikPostPage, TikShareParse, TikUser, TikVideoDetail } fro
 
 /**
  * TikHub 客户端（D4）。
- * 接口路径以 env 可配，缺省为官方 douyin/web 路径（T3 已按文档核对）：
- *   user info     /api/v1/douyin/web/fetch_user_info            ?sec_user_id
- *   user posts    /api/v1/douyin/web/fetch_user_post_videos     ?sec_user_id&max_cursor&count
- *   video detail  /api/v1/douyin/web/fetch_video_detail         ?aweme_id
- *   share parse   /api/v1/douyin/web/fetch_video_by_share_url   ?share_url
+ * 官方 APP v3 路径；2026-10-18 按 OpenAPI 核对并实测。
+ * 用户、作品列表用 sec_user_id；详情用 aweme_id；分享解析用 share_url。
  * 响应信封：{ code, message, data, request_id }，非 200 视为失败。
  */
 
@@ -29,7 +26,8 @@ function num(v: unknown): number {
 function msToSec(d: unknown): number | null {
   const n = num(d)
   if (!n) return null
-  return n > 10_000 ? Math.round(n / 1000) : Math.round(n)
+  // TikHub 原始视频时长单位是毫秒，包括不足 10 秒的视频。
+  return Math.max(1, Math.round(n / 1000))
 }
 
 function tsToDate(t: unknown): Date | null {
@@ -38,9 +36,13 @@ function tsToDate(t: unknown): Date | null {
   return new Date(n > 1e12 ? n : n * 1000)
 }
 
-function firstUrl(v: unknown): string | null {
+function firstUrl(v: unknown, image = false): string | null {
   const list = (v as { url_list?: unknown[] } | undefined)?.url_list
-  if (Array.isArray(list) && list.length) return String(list[0])
+  if (Array.isArray(list) && list.length) {
+    // APP v3 优先返回 HEIC，Chrome 无法显示；使用上游自带签名的 JPEG/WebP 备选。
+    const compatible = image ? list.find(u => typeof u === 'string' && /\.(?:jpe?g|png|webp)(?:\?|$)/i.test(u)) : null
+    return String(compatible ?? list[0])
+  }
   if (typeof v === 'string') return v
   return null
 }
@@ -49,8 +51,12 @@ function parseAweme(a: any): TikPost {
   const st = a?.statistics ?? {}
   return {
     videoId: String(a?.aweme_id ?? ''),
+    width: num(a?.video?.width),
+    height: num(a?.video?.height),
+    authorNickname: a?.author?.nickname ?? null,
+    authorSecUid: a?.author?.sec_uid ?? null,
     title: String(a?.desc ?? a?.title ?? '').trim() || '(无标题)',
-    coverUrl: firstUrl(a?.video?.cover ?? a?.video?.origin_cover ?? a?.cover),
+    coverUrl: firstUrl(a?.video?.cover ?? a?.video?.origin_cover ?? a?.cover, true),
     duration: msToSec(a?.duration ?? a?.video?.duration),
     playCount: num(st.play_count ?? a?.play_count),
     diggCount: num(st.digg_count ?? a?.digg_count),
@@ -110,11 +116,17 @@ async function request(
         params,
         headers: { Authorization: `Bearer ${config.tikhub.apiKey}` },
         timeout: config.tikhub.timeoutMs,
+        maxRedirects: 0,
+        maxContentLength: 8 * 1024 * 1024,
       })
       const body = res.data
       const code = body?.code ?? 200
       if (code !== 200) {
-        throw new Error(`TikHub code=${code} ${body?.message ?? ''}`.trim())
+        throw new Error(`TikHub code=${code} ${body?.message_zh ?? body?.message ?? ''}`.trim())
+      }
+      const data = unwrap(body)
+      if (!data || (data.status_code !== undefined && Number(data.status_code) !== 0)) {
+        throw new Error(`TikHub 数据不可用：${data?.status_msg || '未返回有效数据'}`)
       }
       await logApiCall({
         provider: 'tikhub',
@@ -127,9 +139,11 @@ async function request(
         cost: config.tikhub.unitPrice,
         requestId: body?.request_id ? String(body.request_id) : null,
       })
-      return unwrap(body)
+      return data
     } catch (e: any) {
-      lastErr = e?.response?.data?.message ?? e?.message ?? '请求失败'
+      const detail = e?.response?.data?.detail ?? e?.response?.data
+      lastErr = String(detail?.message_zh ?? detail?.message ?? e?.message ?? '请求失败')
+        .split(config.tikhub.apiKey).join('[已隐藏]')
       const status = e?.response?.status ?? null
       const retryable = status === null || status >= 500 || e?.code === 'ECONNABORTED'
       if (attempt === config.tikhub.retry || !retryable) {
@@ -159,12 +173,13 @@ export async function fetchUserInfo(secUid: string): Promise<TikUser> {
   const data = await request(config.tikhub.paths.userInfo, { sec_user_id: secUid }, { type: 'account', id: secUid })
   if (data === null) return mockUser(secUid)
   const u = data?.user ?? data?.user_info ?? data
+  if (!u?.nickname) throw new Error('TikHub 未返回有效账号信息，请检查主页链接')
   return {
     secUid: String(u?.sec_uid ?? secUid),
     uid: String(u?.uid ?? ''),
     nickname: String(u?.nickname ?? ''),
     fansCount: num(u?.follower_count ?? u?.fans_count),
-    avatarUrl: firstUrl(u?.avatar_larger ?? u?.avatar_thumb ?? u?.avatar),
+    avatarUrl: firstUrl(u?.avatar_larger ?? u?.avatar_thumb ?? u?.avatar, true),
   }
 }
 
@@ -180,7 +195,8 @@ export async function fetchUserPosts(
     ref ? { ...ref } : { type: 'account', id: secUid },
   )
   if (data === null) return mockUserPosts(secUid, cursor, count)
-  const list: any[] = data?.aweme_list ?? data?.awemeList ?? data?.list ?? []
+  const list: any[] = data?.aweme_list ?? data?.awemeList ?? data?.list
+  if (!Array.isArray(list)) throw new Error('TikHub 未返回作品列表，账号可能私密或接口暂不可用')
   const posts = list.filter((a) => a?.aweme_id).map(parseAweme)
   const nextCursor = num(data?.max_cursor) || null
   return { posts, nextCursor, hasMore: data?.has_more === 1 || data?.has_more === true }

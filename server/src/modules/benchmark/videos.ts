@@ -11,6 +11,8 @@ export type VideoOrigin = 'monitor' | 'adhoc'
 export type ExtractStatus = 'none' | 'pending' | 'submitting' | 'running' | 'done' | 'failed' | 'uncertain'
 
 export interface VideoRow {
+  width: number
+  height: number
   id: string
   accountId: string | null
   origin: VideoOrigin
@@ -47,6 +49,8 @@ export interface BenchVideoOut extends VideoRow {
 function mapVideo(r: Record<string, any>): VideoRow {
   return {
     id: r.id,
+    width: Number(r.video_width || 0),
+    height: Number(r.video_height || 0),
     accountId: r.account_id ?? null,
     origin: r.origin ?? 'monitor',
     platform: r.platform,
@@ -117,6 +121,9 @@ export async function upsertVideoFromPost(input: UpsertVideoInput): Promise<{ vi
 
   const existing = await getVideoByPlatformId(input.platform, post.videoId, db)
   if (existing) {
+    if (post.width && post.height) {
+      await db.run('UPDATE `benchmark_video` SET `video_width` = ?, `video_height` = ? WHERE `id` = ?', [post.width, post.height, existing.id])
+    }
     await db.run(
       `UPDATE \`benchmark_video\` SET
         \`title\` = ?, \`cover_url\` = ?, \`duration\` = ?, \`is_top\` = ?,
@@ -164,6 +171,8 @@ export async function upsertVideoFromPost(input: UpsertVideoInput): Promise<{ vi
     video_id: post.videoId,
     title: post.title.slice(0, 1000),
     cover_url: post.coverUrl,
+    video_width: post.width || 0,
+    video_height: post.height || 0,
     duration: post.duration ?? 0,
     share_url: post.shareUrl,
     author_nickname: input.authorNickname ?? null,
@@ -244,6 +253,9 @@ export async function evaluateHot(
     judgedAt: toDb(utcNow()),
   }
 
+  // 普通作品也保留判定依据，供页面解释，而非只存爆款快照。
+  await db.run('UPDATE `benchmark_video` SET `hot_baseline` = ? WHERE `id` = ?', [JSON.stringify(snapshot), video.id])
+
   if (video.interactTotal > threshold) {
     await db.run('UPDATE `benchmark_video` SET `is_hot` = 1, `hot_baseline` = ? WHERE `id` = ?', [
       JSON.stringify(snapshot),
@@ -270,6 +282,16 @@ export async function listVideos(
   const p = parsePaging(q, 20, 100)
   const where: string[] = []
   const params: unknown[] = []
+  const formatConditions: Record<string, string> = {
+    landscape: 'v.`video_width` > v.`video_height` AND v.`video_height` > 0',
+    portrait: 'v.`video_height` > v.`video_width` AND v.`video_width` > 0',
+    square: 'v.`video_width` = v.`video_height` AND v.`video_width` > 0',
+  }
+  if (formatConditions[String(q.format)]) where.push(formatConditions[String(q.format)])
+  if (q.dataSource === 'real') {
+    where.push("NOT EXISTS (SELECT 1 FROM `benchmark_account` demo WHERE demo.`id` = v.`account_id` AND demo.`added_by` = 'smoke' AND demo.`nickname` LIKE '示例账号_%')")
+    where.push("COALESCE(v.`author_nickname`, '') NOT LIKE '示例账号_%'")
+  }
   if (q.accountId) {
     where.push('v.`account_id` = ?')
     params.push(String(q.accountId))
@@ -306,7 +328,7 @@ export async function listVideos(
      LEFT JOIN \`benchmark_account\` a ON a.\`id\` = v.\`account_id\`
      LEFT JOIN \`script_extract_cache\` c ON c.\`platform\` = v.\`platform\` AND c.\`video_id\` = v.\`video_id\`
      ${whereSql}
-     ORDER BY v.\`published_at\` DESC
+     ORDER BY ${q.sort === 'interaction' ? 'v.`interact_total` DESC,' : ''} v.\`published_at\` DESC
      LIMIT ? OFFSET ?`,
     [...params, p.limit, p.offset],
   )

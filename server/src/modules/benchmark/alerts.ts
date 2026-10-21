@@ -58,6 +58,9 @@ export async function listAlerts(q: Record<string, unknown>): Promise<PageResult
   const p = parsePaging(q, 20, 100)
   const where: string[] = []
   const params: unknown[] = []
+  if (q.dataSource === 'real') {
+    where.push("NOT EXISTS (SELECT 1 FROM `benchmark_account` demo WHERE demo.`id` = `benchmark_alert`.`account_id` AND demo.`added_by` = 'smoke' AND demo.`nickname` LIKE '示例账号_%')")
+  }
   if (q.type) {
     where.push('`type` = ?')
     params.push(String(q.type))
@@ -76,9 +79,10 @@ export async function listAlerts(q: Record<string, unknown>): Promise<PageResult
   return pageResult(rows.map(mapAlert), total, p)
 }
 
-export async function unreadCount(): Promise<number> {
+export async function unreadCount(realOnly = false): Promise<number> {
   const db = getDb()
-  return (await db.get<{ c: number }>('SELECT COUNT(*) AS c FROM `benchmark_alert` WHERE `is_read` = 0'))?.c ?? 0
+  const realFilter = realOnly ? " AND NOT EXISTS (SELECT 1 FROM `benchmark_account` demo WHERE demo.`id` = `benchmark_alert`.`account_id` AND demo.`added_by` = 'smoke' AND demo.`nickname` LIKE '示例账号_%')" : ''
+  return (await db.get<{ c: number }>('SELECT COUNT(*) AS c FROM `benchmark_alert` WHERE `is_read` = 0' + realFilter))?.c ?? 0
 }
 
 export async function markRead(id: string): Promise<void> {

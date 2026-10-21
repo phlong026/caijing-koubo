@@ -60,10 +60,10 @@ export const config = {
     apiKey: str('TIKHUB_API_KEY', ''),
     baseUrl: str('TIKHUB_BASE_URL', 'https://api.tikhub.io'),
     paths: {
-      userInfo: str('TIKHUB_PATH_USER_INFO', '/api/v1/douyin/web/fetch_user_info'),
-      userPosts: str('TIKHUB_PATH_USER_POSTS', '/api/v1/douyin/web/fetch_user_post_videos'),
-      videoDetail: str('TIKHUB_PATH_VIDEO_DETAIL', '/api/v1/douyin/web/fetch_video_detail'),
-      shareParse: str('TIKHUB_PATH_SHARE_PARSE', '/api/v1/douyin/web/fetch_video_share_info'),
+      userInfo: str('TIKHUB_PATH_USER_INFO', '/api/v1/douyin/app/v3/handler_user_profile'),
+      userPosts: str('TIKHUB_PATH_USER_POSTS', '/api/v1/douyin/app/v3/fetch_user_post_videos'),
+      videoDetail: str('TIKHUB_PATH_VIDEO_DETAIL', '/api/v1/douyin/app/v3/fetch_one_video'),
+      shareParse: str('TIKHUB_PATH_SHARE_PARSE', '/api/v1/douyin/app/v3/fetch_one_video_by_share_url'),
     },
     timeoutMs: num('TIKHUB_TIMEOUT_MS', 15000),
     retry: num('TIKHUB_RETRY', 1), // FR-N/B3：超时与一次自动重试

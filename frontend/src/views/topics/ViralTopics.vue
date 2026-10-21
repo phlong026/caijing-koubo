@@ -7,6 +7,7 @@
         <button type="button" :aria-pressed="tab === 'bench'" :class="{ active: tab === 'bench' }" @click="tab = 'bench'">对标账号视频</button>
       </div>
       <div class="topics-toolbar-actions">
+        <a-button type="text" @click="methodologyVisible = true"><template #icon><icon-book /></template>选题方法论</a-button>
         <template v-if="tab === 'news'">
           <a-input-search v-model="news.keyword" placeholder="搜索资讯关键词" allow-clear aria-label="搜索资讯关键词" @search="(v: string) => news.setKeyword(v)" @press-enter="news.setKeyword(news.keyword)" @clear="news.setKeyword('')" />
           <a-button :loading="news.refreshing" @click="onRefreshNews"><template #icon><icon-refresh /></template>采集资讯</a-button>
@@ -112,11 +113,17 @@
       <!-- ============ 对标账号视频 ============ -->
       <section v-show="tab === 'bench'" class="topics-bench">
         <div class="mt-1 flex flex-col gap-4">
+          <section class="research-overview" aria-label="真实对标数据概览">
+            <div class="research-overview-head"><div><span class="research-eyebrow">BENCHMARK RESEARCH</span><h2>从真实作品，找到值得做的选题。</h2><p>先验证表现，再拆解表达，让内容创作有据可依。</p></div><span class="research-source-badge" :class="{ 'is-demo': overview?.provider.mode !== 'live' }"><i />{{ overview?.provider.mode === 'live' ? 'TikHub 真实数据' : overview?.provider.mode === 'demo' ? '演示数据模式' : '数据源待配置' }}</span></div>
+            <div class="research-overview-metrics"><div><span>对标账号</span><strong>{{ overview?.accounts ?? '—' }}<small>个</small></strong><p>{{ overview?.monitoring ?? 0 }} 个账号监控中</p></div><div><span>已采集作品</span><strong>{{ overview?.videos ?? '—' }}<small>条</small></strong><p>视频来源与数据均可追溯</p></div><div><span>已识别爆款</span><strong>{{ overview?.hotVideos ?? '—' }}<small>条</small></strong><p>同账号基线 ×{{ overview?.methodology.multiplier || 3 }}</p></div><div><span>累计赞评转</span><strong>{{ overview ? fmtNum(overview.interactions) : '—' }}</strong><p>{{ overview?.lastFetchedAt ? '最近采集 ' + fmtTime(overview.lastFetchedAt) : '等待首次真实采集' }}</p></div></div>
+            <div class="research-overview-foot"><span>① 采集对标作品</span><i>→</i><span>② 比较互动表现</span><i>→</i><span>③ 提取与拆解</span><i>→</i><span>④ 送文案工坊</span><button @click="methodologyVisible = true">查看完整方法论 ↗</button></div>
+            <p v-if="overviewError" class="research-error" role="alert">{{ overviewError }}</p>
+          </section>
           <!-- 账号管理条 -->
-          <div class="mw-card p-5">
+          <div class="mw-card p-5 research-accounts">
             <div class="flex items-center gap-3 flex-wrap">
               <span class="text-[15px] font-semibold">对标账号</span>
-              <span class="mw-tag mw-tag-gray">{{ bench.accounts.length }} 个</span>
+              <span class="mw-tag mw-tag-gray">{{ bench.realAccounts.length }} 个</span>
               <div class="flex-1"></div>
               <a-tooltip v-if="bench.quota" :content="quotaTip">
                 <span class="mw-subtle cursor-help">
@@ -127,11 +134,11 @@
               </a-tooltip>
             </div>
 
-            <div v-if="bench.accounts.length" class="mt-3 grid grid-cols-2 gap-3">
+            <div v-if="bench.realAccounts.length" class="mt-3 research-account-grid">
               <div
-                v-for="a in bench.accounts"
+                v-for="a in bench.realAccounts"
                 :key="a.id"
-                class="p-3 rounded-[10px] border flex items-center gap-3"
+                class="research-account-card p-3 rounded-[10px] border flex items-center gap-3"
                 :class="isAbnormal(a)
                   ? 'border-[color:var(--mw-danger,#c03e35)] bg-[#fdeeee]'
                   : 'border-[var(--mw-border-light)] bg-[#fafbfc]'"
@@ -141,7 +148,7 @@
                 </a-avatar>
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2">
-                    <span class="text-[13.5px] font-semibold truncate">{{ a.nickname }}</span>
+                    <button class="research-account-name text-[13.5px] font-semibold truncate" :aria-label="`查看${a.nickname}的视频`" @click="onAccountFilter(a.id)">{{ a.nickname }}</button>
                     <a-tag v-if="a.monitorStatus === 'paused'" size="small" color="gray">已暂停</a-tag>
                     <a-tag v-else-if="isAbnormal(a)" size="small" color="red">异常</a-tag>
                     <a-tag v-else size="small" color="green">监控中</a-tag>
@@ -156,7 +163,7 @@
                 </div>
                 <div class="flex items-center gap-1 flex-shrink-0">
                   <a-tooltip content="立即检查一次">
-                    <a-button size="mini" type="text" @click="onFetchNow(a)">
+                    <a-button size="mini" type="text" :loading="!!pendingFetch[a.id]" :aria-label="`立即同步${a.nickname}`" @click="onFetchNow(a)">
                       <template #icon><icon-refresh /></template>
                     </a-button>
                   </a-tooltip>
@@ -179,20 +186,21 @@
           </div>
 
           <!-- 告警 -->
-          <div class="mw-card p-5">
+          <div class="mw-card p-4">
             <div class="flex items-center gap-3">
               <span class="text-[15px] font-semibold">监控告警</span>
               <a-badge :count="bench.unread" :max-count="99">
                 <span class="mw-tag mw-tag-yellow">未读</span>
               </a-badge>
               <div class="flex-1"></div>
+              <a-button size="small" type="text" @click="showBenchAlerts = !showBenchAlerts">{{ showBenchAlerts ? '收起告警' : '展开告警' }}</a-button>
               <a-button size="small" type="text" :disabled="!bench.unread" @click="onReadAll">全部标为已读</a-button>
               <a-button size="small" type="text" @click="refreshAlerts">
                 <template #icon><icon-refresh /></template>
               </a-button>
             </div>
 
-            <div v-if="bench.alerts.length" class="mt-3 flex flex-col gap-2">
+            <div v-if="showBenchAlerts && bench.alerts.length" class="mt-3 flex flex-col gap-2 research-alert-list">
               <div
                 v-for="al in bench.alerts"
                 :key="al.id"
@@ -214,11 +222,11 @@
                 <a-button v-if="!al.isRead" size="mini" type="text" @click="() => bench.markRead(al.id)">标为已读</a-button>
               </div>
             </div>
-            <div v-else class="mt-2 mw-subtle">暂无告警。账号按周期检查时，出现新作品或爆款会自动产生告警。</div>
+            <div v-else-if="showBenchAlerts" class="mt-2 mw-subtle">暂无告警。首次回填不产生告警，后续新作品或新爆款会出现在这里。</div>
           </div>
 
           <!-- 视频筛选 -->
-          <div class="flex items-center gap-2 flex-wrap">
+          <div class="research-filters flex items-center gap-2 flex-wrap">
             <a-select
               :model-value="bench.videoFilter.accountId || ''"
               :style="{ width: '200px' }"
@@ -227,7 +235,7 @@
               @change="onAccountFilter"
             >
               <a-option value="">全部账号</a-option>
-              <a-option v-for="a in bench.accounts" :key="a.id" :value="a.id">{{ a.nickname }}</a-option>
+              <a-option v-for="a in bench.realAccounts" :key="a.id" :value="a.id">{{ a.nickname }}</a-option>
             </a-select>
             <a-select
               :model-value="bench.videoFilter.extractStatus || ''"
@@ -243,6 +251,8 @@
             <a-checkbox :model-value="bench.videoFilter.origin === 'adhoc'" @change="onOnlyAdhoc"
               >只看直接提取</a-checkbox
             >
+            <a-select :model-value="bench.videoFilter.format || ''" aria-label="视频画幅" :style="{ width: '112px' }" @change="onFormatFilter"><a-option value="">全部画幅</a-option><a-option value="landscape">横屏视频</a-option><a-option value="portrait">竖屏视频</a-option><a-option value="square">方屏视频</a-option></a-select>
+            <a-select :model-value="bench.videoFilter.sort || 'latest'" aria-label="视频排序" :style="{ width: '112px' }" @change="onVideoSort"><a-option value="latest">最新发布</a-option><a-option value="interaction">互动最多</a-option></a-select>
             <div class="flex-1"></div>
             <span class="mw-subtle">共 {{ bench.videoTotal }} 条</span>
             <a-button size="small" type="text" :loading="bench.videosLoading" @click="() => bench.loadVideos()">
@@ -252,86 +262,12 @@
 
           <!-- 视频网格 -->
           <a-spin :loading="bench.videosLoading" class="w-full">
-            <div class="grid grid-cols-3 gap-4">
-              <div
-                v-for="v in bench.videos"
-                :key="v.id"
-                class="mw-card p-4 flex flex-col gap-3"
-                :class="v.isHot ? 'border-[#f0b6b1]' : ''"
-              >
-                <div class="flex gap-3">
-                  <img
-                    v-if="v.coverUrl"
-                    :src="v.coverUrl"
-                    class="mw-thumb w-[104px] h-[70px] flex-shrink-0"
-                    alt=""
-                  />
-                  <ThumbBox v-else :seed="v.videoId" :width="104" :height="70" />
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-1.5 flex-wrap">
-                      <span class="mw-tag mw-tag-gray">{{ platformLabel(v.platform) }}</span>
-                      <span v-if="v.isHot" class="mw-tag mw-tag-red">爆款</span>
-                      <span v-if="v.isTop" class="mw-tag mw-tag-purple">置顶</span>
-                      <span v-if="v.origin === 'adhoc'" class="mw-tag mw-tag-orange">直接提取</span>
-                      <span :class="EXTRACT_TAG[v.extractStatus]">{{ EXTRACT_LABEL[v.extractStatus] }}</span>
-                    </div>
-                    <div class="mt-1.5 text-[14px] font-semibold leading-5 line-clamp-2">{{ v.title || '（无标题）' }}</div>
-                    <div class="mt-1 text-[12px] text-[var(--mw-text3)] truncate">
-                      {{ v.authorNickname || v.accountNickname || '—' }} · {{ fmtTime(v.publishedAt) }}
-                      <template v-if="v.duration"> · {{ fmtDuration(v.duration) }}</template>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="flex items-center gap-3 text-[12px] text-[var(--mw-text3)]">
-                  <span>赞 {{ fmtNum(v.diggCount) }}</span>
-                  <span>评 {{ fmtNum(v.commentCount) }}</span>
-                  <span>转 {{ fmtNum(v.shareCount) }}</span>
-                  <span class="flex-1"></span>
-                  <span class="text-[var(--mw-text2)]">互动 {{ fmtNum(v.interactTotal) }}</span>
-                </div>
-                <div v-if="v.extractStatus === 'failed' && v.extractError" class="text-[12px] text-[#c03e35] leading-4">
-                  {{ v.extractError }}
-                </div>
-                <div v-else-if="v.extractStatus === 'uncertain'" class="text-[12px] text-[#a26a08] leading-4">
-                  结果不确定，需人工确认后重试（避免重复计费）。
-                </div>
-
-                <div class="flex items-center gap-2 pt-1 border-t border-[var(--mw-border-light)]">
-                  <a-button
-                    v-if="v.extractStatus === 'done'"
-                    size="mini"
-                    type="text"
-                    class="!text-[color:var(--mw-primary)]"
-                    @click="openScript(v)"
-                  >
-                    <template #icon><icon-file /></template>查看文案
-                  </a-button>
-                  <a-button
-                    v-else
-                    size="mini"
-                    type="text"
-                    :loading="EXTRACTING.includes(v.extractStatus)"
-                    @click="onExtract(v)"
-                  >
-                    <template #icon><icon-download /></template>
-                    {{ v.extractStatus === 'none' ? '提取文案' : v.extractStatus === 'failed' || v.extractStatus === 'uncertain' ? '重试提取' : '提取中' }}
-                  </a-button>
-                  <div class="flex-1"></div>
-                  <a-button
-                    size="mini"
-                    type="outline"
-                    :disabled="v.extractStatus !== 'done'"
-                    @click="openSendCopy(v)"
-                  >
-                    送文案工坊<icon-right class="ml-0.5" :size="12" />
-                  </a-button>
-                </div>
-                <div v-if="v.sentCopyCount" class="mw-subtle">已送工坊 {{ v.sentCopyCount }} 次</div>
-              </div>
+            <div class="research-video-grid">
+              <BenchmarkVideoCard v-for="v in bench.videos" :key="v.id" :video="v" :active="activeVideoId === v.id" :extraction-ready="overview?.extractionReady" @play="activeVideoId = $event" @detail="activeVideoId = null; detailVideo = $event" @extract="onDetailExtract" @send="openSendCopy" />
             </div>
             <a-empty v-if="!bench.videosLoading && !bench.videos.length" description="暂无视频，添加一个对标账号吧" />
           </a-spin>
+          <p v-if="overview?.extractionReady === false" class="research-notice">视频与互动数据已接入。提取口播全文还需配置真实 ASR 和音频中转服务，配置完成后开放提取。</p>
 
           <div v-if="bench.videoTotal > bench.videoPageSize" class="flex justify-center">
             <a-pagination
@@ -430,12 +366,13 @@
     </a-modal>
 
     <!-- ============ 弹窗：查看文案 ============ -->
-    <a-modal v-model:visible="scriptModal.visible" :title="`文案提取结果 · ${scriptModal.title}`" width="720px" footer>
+    <a-modal v-model:visible="scriptModal.visible" title="文案提取结果" class="benchmark-script-modal" width="720px" footer>
       <template #footer>
         <a-button type="primary" @click="scriptModal.visible = false">关闭</a-button>
       </template>
       <a-spin :loading="scriptModal.loading">
         <div v-if="scriptModal.data">
+          <h3 class="research-section-title !mt-0">{{ scriptModal.title }}</h3>
           <div class="mw-subtle">
             引擎 {{ scriptModal.data.engine || '—' }} · 时长
             {{ scriptModal.data.duration ? fmtDuration(scriptModal.data.duration) : '—' }}
@@ -548,6 +485,8 @@
         </template>
       </a-spin>
     </a-drawer>
+    <TopicMethodology :visible="methodologyVisible" :templates="topics.templates" :overview="overview" @close="methodologyVisible = false" @use="useMethodology" />
+    <BenchmarkVideoDrawer :video="detailVideo" :overview="overview" @close="detailVideo = null" @extract="onDetailExtract" @send="onDetailSend" />
   </div>
 </template>
 
@@ -555,7 +494,10 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Message, Modal } from '@arco-design/web-vue'
-import ThumbBox from '@/components/ThumbBox.vue'
+import BenchmarkVideoCard from './BenchmarkVideoCard.vue'
+import TopicMethodology from './TopicMethodology.vue'
+import BenchmarkVideoDrawer from './BenchmarkVideoDrawer.vue'
+import { getResearchOverview, type ResearchOverview } from '@/api/benchmark'
 import { ApiError } from '@/api/client'
 import { getNewsDetail, type NewsItem } from '@/api/news'
 import type { Account, AccountPreview, BenchVideo, ExtractStatus, VideoScript } from '@/api/benchmark'
@@ -572,6 +514,22 @@ const news = useNewsStore()
 const topics = useTopicStore()
 const personas = usePersonaStore()
 const bench = useBenchmarkStore()
+const methodologyVisible = ref(false)
+const showBenchAlerts = ref(false)
+const detailVideo = ref<BenchVideo | null>(null)
+const activeVideoId = ref<string | null>(null)
+const overview = ref<ResearchOverview | null>(null)
+const overviewError = ref('')
+const pendingFetch = ref<Record<string, { lastChecked: string | null; started: number }>>({})
+async function loadOverview() {
+  try { overview.value = await getResearchOverview(); overviewError.value = '' }
+  catch (e) { overviewError.value = errOf(e) }
+}
+function useMethodology(id: string) { templateId.value = id; tab.value = 'news'; methodologyVisible.value = false }
+function onDetailExtract(v: BenchVideo) { activeVideoId.value = null; detailVideo.value = null; if (v.extractStatus === 'done') void openScript(v); else void onExtract(v) }
+function onDetailSend(v: BenchVideo) { detailVideo.value = null; openSendCopy(v) }
+function onCoverError(e: Event) { const img = e.target as HTMLImageElement; img.style.visibility = 'hidden'; img.parentElement?.classList.add('has-cover-error') }
+function onCoverLoad(e: Event) { const img = e.target as HTMLImageElement; img.style.visibility = ''; img.parentElement?.classList.remove('has-cover-error') }
 
 const todayText = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
 
@@ -790,6 +748,7 @@ async function onAddAccount() {
   accModal.submitting = true
   try {
     const a = await bench.add(accModal.url.trim(), accModal.intervalHours)
+    pendingFetch.value[a.id] = { lastChecked: a.lastCheckedAt, started: Date.now() }
     Message.success(`已添加「${a.nickname}」，正在后台回填最近作品`)
     resetAccModal()
     void bench.loadVideos()
@@ -813,8 +772,10 @@ const quotaTip = computed(() => {
 })
 
 async function onFetchNow(a: Account) {
+  if (pendingFetch.value[a.id]) return
   try {
     await bench.fetchNow(a.id)
+    pendingFetch.value[a.id] = { lastChecked: a.lastCheckedAt, started: Date.now() }
     Message.success(`已触发「${a.nickname}」立即检查`)
   } catch (e) {
     Message.error(errOf(e))
@@ -846,6 +807,8 @@ function onOnlyHot(v: unknown) {
 function onOnlyAdhoc(v: unknown) {
   void bench.loadVideos({ origin: v ? 'adhoc' : undefined })
 }
+function onFormatFilter(v: unknown) { void bench.loadVideos({ format: v ? String(v) as 'landscape' | 'portrait' | 'square' : undefined }) }
+function onVideoSort(v: unknown) { void bench.loadVideos({ sort: String(v) as 'latest' | 'interaction' }) }
 
 async function onExtract(v: BenchVideo) {
   // P1-3①：uncertain 意味着上一次提取可能已提交但结果未知，重试会再次计费，必须先人工确认
@@ -878,6 +841,7 @@ const scriptModal = reactive({
 })
 
 async function openScript(v: BenchVideo) {
+  activeVideoId.value = null
   scriptModal.visible = true
   scriptModal.loading = true
   scriptModal.title = v.title || '（无标题）'
@@ -901,6 +865,7 @@ const sendModal = reactive({
 })
 
 function openSendCopy(v: BenchVideo) {
+  activeVideoId.value = null
   sendModal.videoId = v.id
   sendModal.title = v.title || '（无标题）'
   sendModal.personaIds = []
@@ -1006,6 +971,7 @@ let extractTimer: number | undefined
 let alertTimer: number | undefined
 
 onMounted(() => {
+  void loadOverview()
   void personas.load()
   void news.loadCategories()
   void news.load()
@@ -1022,7 +988,8 @@ onMounted(() => {
   void bench.loadUnread()
 
   extractTimer = window.setInterval(() => {
-    if (tab.value === 'bench' && bench.hasExtracting) void bench.loadVideos()
+    if (tab.value === 'bench' && bench.hasExtracting) void bench.loadVideos().catch(() => {})
+    if (Object.keys(pendingFetch.value).length) void pollAccountFetch()
   }, 3000)
   alertTimer = window.setInterval(() => {
     if (tab.value === 'bench') void bench.loadUnread()
@@ -1033,4 +1000,26 @@ onUnmounted(() => {
   if (extractTimer) window.clearInterval(extractTimer)
   if (alertTimer) window.clearInterval(alertTimer)
 })
+
+let checkingFetch = false
+async function pollAccountFetch() {
+  if (checkingFetch) return
+  checkingFetch = true
+  try {
+    await bench.loadAccounts()
+    for (const [id, pending] of Object.entries(pendingFetch.value)) {
+      const a = bench.accounts.find(x => x.id === id)
+      if (!a || (a.lastCheckedAt && a.lastCheckedAt !== pending.lastChecked)) {
+        delete pendingFetch.value[id]
+        if (a?.lastError) Message.error(a.lastError)
+        else if (a) Message.success(`「${a.nickname}」视频同步完成`)
+      } else if (Date.now() - pending.started > 120_000) {
+        delete pendingFetch.value[id]
+        Message.warning('同步仍在后台进行，可稍后刷新查看账号状态')
+      }
+    }
+    await Promise.all([bench.loadVideos(), loadOverview(), bench.loadQuota()])
+  } catch (e) { overviewError.value = errOf(e) }
+  finally { checkingFetch = false }
+}
 </script>

@@ -8,6 +8,10 @@ export interface TikUser {
 }
 
 export interface TikPost {
+  width?: number
+  height?: number
+  authorNickname?: string | null
+  authorSecUid?: string | null
   videoId: string
   title: string
   coverUrl: string | null

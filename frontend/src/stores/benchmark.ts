@@ -63,7 +63,9 @@ export const useBenchmarkStore = defineStore('benchmark', () => {
   const videoPageSize = ref(24)
   const videosLoading = ref(false)
   const showPlayCount = ref(false)
-  const videoFilter = ref<BenchmarkVideoQuery>({})
+  const videoFilter = ref<BenchmarkVideoQuery>({ dataSource: 'real' })
+  let videoRequest = 0
+  const realAccounts = computed(() => accounts.value.filter((a) => !(a.addedBy === 'smoke' && a.nickname?.startsWith('示例账号_'))))
 
   /* ── 告警 ─────────────────────────────── */
   const alerts = ref<Alert[]>([])
@@ -120,16 +122,18 @@ export const useBenchmarkStore = defineStore('benchmark', () => {
 
   /* ── 视频 ─────────────────────────────── */
   async function loadVideos(partial?: BenchmarkVideoQuery): Promise<void> {
-    if (partial) videoFilter.value = { ...videoFilter.value, ...partial }
+    if (partial) { videoFilter.value = { ...videoFilter.value, ...partial }; videoPage.value = 1 }
+    const request = ++videoRequest
     videosLoading.value = true
     try {
       const res = await getBenchmarkVideos({ ...videoFilter.value, page: videoPage.value, pageSize: videoPageSize.value })
+      if (request !== videoRequest) return
       videos.value = res.items
       videoTotal.value = res.total
       videoPage.value = res.page
       showPlayCount.value = res.meta?.showPlayCount ?? false
     } finally {
-      videosLoading.value = false
+      if (request === videoRequest) videosLoading.value = false
     }
   }
 
@@ -166,7 +170,7 @@ export const useBenchmarkStore = defineStore('benchmark', () => {
   async function loadAlerts(): Promise<void> {
     alertsLoading.value = true
     try {
-      const res = await getAlerts({ pageSize: 20 })
+      const res = await getAlerts({ pageSize: 20, dataSource: 'real' })
       alerts.value = res.items
       alertTotal.value = res.total
     } finally {
@@ -195,6 +199,7 @@ export const useBenchmarkStore = defineStore('benchmark', () => {
 
   return {
     accounts,
+    realAccounts,
     accountsLoading,
     quota,
     abnormalAccounts,

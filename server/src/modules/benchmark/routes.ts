@@ -27,8 +27,13 @@ import { getVideoById, listVideos, upsertVideoFromPost } from './videos.js'
 import { fetchVideoDetail, parseShareLink } from '../../integrations/tikhub/client.js'
 import { logger } from '../../log.js'
 import { utcNow } from '../../lib/time.js'
+import { getResearchOverview } from './research.js'
+import { registerBenchmarkMedia } from './media.js'
 
 export function registerBenchmarkRoutes(app: FastifyInstance): void {
+  app.get('/benchmark/research', async () => ok(await getResearchOverview()))
+
+  registerBenchmarkMedia(app)
   /* ── 账号（FR-B1/B2） ─────────────────────────────────────────── */
   app.post('/benchmark/accounts/preview', async (req) => {
     const body = (req.body ?? {}) as { url?: string }
@@ -216,7 +221,7 @@ export function registerBenchmarkRoutes(app: FastifyInstance): void {
 
   /* ── 告警（FR-B9） ───────────────────────────────────────────── */
   app.get('/benchmark/alerts', async (req) => ok(await listAlerts((req.query ?? {}) as Record<string, unknown>)))
-  app.get('/benchmark/alerts/unread-count', async () => ok({ count: await unreadCount() }))
+  app.get('/benchmark/alerts/unread-count', async (req) => ok({ count: await unreadCount((req.query as { dataSource?: string }).dataSource === 'real') }))
   app.patch('/benchmark/alerts/:id/read', async (req) => {
     const { id } = req.params as { id: string }
     await markRead(id)

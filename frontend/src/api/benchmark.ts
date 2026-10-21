@@ -6,6 +6,7 @@ export type ExtractStatus = 'none' | 'pending' | 'submitting' | 'running' | 'don
 export type AlertType = 'new_publish' | 'hot'
 
 export interface Account {
+  addedBy?: string | null
   id: string
   platform: string
   platformUid: string
@@ -41,6 +42,9 @@ export interface DailyQuota {
 }
 
 export interface BenchVideo {
+  width?: number
+  height?: number
+  statsUpdatedAt?: string | null
   id: string
   accountId: string | null
   origin: VideoOrigin
@@ -70,12 +74,35 @@ export interface BenchVideo {
 }
 
 export interface BenchmarkVideoQuery {
+  format?: 'landscape' | 'portrait' | 'square'
+  sort?: 'latest' | 'interaction'
+  dataSource?: 'real'
   accountId?: string
   onlyHot?: boolean
   extractStatus?: ExtractStatus
   origin?: VideoOrigin
   page?: number
   pageSize?: number
+}
+
+export interface ResearchOverview {
+  provider: { name: string; mode: 'live' | 'demo' | 'unconfigured' }
+  accounts: number
+  monitoring: number
+  videos: number
+  hotVideos: number
+  interactions: number
+  lastFetchedAt: string | null
+  extractionReady: boolean
+  methodology: { interactionFields: string[]; multiplier: number; sampleSize: number; minSample: number; refreshDays: number; formula: string }
+}
+
+export function getResearchOverview() {
+  return apiGet<ResearchOverview>('/benchmark/research')
+}
+
+export function getVideoPlayback(id: string) {
+  return apiGet<{ playUrl: string; title: string }>(`/benchmark/videos/${encodeURIComponent(id)}/playback`)
 }
 
 export type BenchmarkVideoPage = PageResult<BenchVideo> & {
@@ -118,6 +145,7 @@ export interface Alert {
 }
 
 export interface AlertQuery {
+  dataSource?: 'real'
   type?: AlertType
   isRead?: boolean
   page?: number
@@ -182,7 +210,7 @@ export function getAlerts(query: AlertQuery) {
 }
 
 export function getUnreadAlertCount() {
-  return apiGet<{ count: number }>('/benchmark/alerts/unread-count')
+  return apiGet<{ count: number }>('/benchmark/alerts/unread-count', { dataSource: 'real' })
 }
 
 export function markAlertRead(id: string) {
