@@ -14,8 +14,8 @@ process.env.MOCK_FALLBACK = 'true'
 process.env.LOG_LEVEL = 'silent'
 const { initDb, closeAll } = await import('../src/db/index.js')
 const { runMigrations } = await import('../src/db/migrate.js')
-const { createPersona, getPersonaById } = await import('../src/modules/personas/repo.js')
-const { getProductionProfile } = await import('../src/modules/personas/readiness.js')
+const { createPersona, getPersonaById, updatePersona } = await import('../src/modules/personas/repo.js')
+const { getProductionProfile, checkReadiness } = await import('../src/modules/personas/readiness.js')
 const { deriveStatus } = await import('../src/modules/personas/policy.js')
 const { toDb, utcNow } = await import('../src/lib/time.js')
 const db = await initDb()
@@ -108,6 +108,42 @@ try {
     assert.equal(deriveStatus({ ...persona, enabled: false }, [auth('verified')], extra).status, 'disabled')
     assert.equal(deriveStatus({ ...persona, archivedAt: '2026-01-01' }, [auth('verified')], extra).status, 'archived')
     assert.equal(deriveStatus({ ...persona, line: 'persona', authRequired: false }, [], extra).status, 'active')
+  })
+
+  await test('P2-1 改为共享前须有「允许共享」声音授权；readiness 校验共享授权', async () => {
+    const k = await readyPersona('回归丙', { line: 'kos', scopes: ['portrait', 'voice'] })
+    const p0 = (await getPersonaById(k.personaId, true))!
+    // createPersona 对 KOS 缺省共享；先切到一对一再验证切回共享被拒
+    const exclusive = p0.bindingMode === 'shared' ? await updatePersona(k.personaId, { bindingMode: 'exclusive', rev: p0.rev, operator: 't' }) : p0
+    await assert.rejects(
+      updatePersona(k.personaId, { bindingMode: 'shared', rev: exclusive.rev, operator: 't' }),
+      (e: any) => e?.code === 'PERSONA_BINDING_RULE',
+    )
+    await db.run("UPDATE persona_authorization SET scopes = ? WHERE id = ?", [JSON.stringify(['portrait', 'voice', 'share']), k.authId])
+    const shared = await updatePersona(k.personaId, { bindingMode: 'shared', rev: exclusive.rev, operator: 't' })
+    assert.equal(shared.bindingMode, 'shared')
+    assert.equal((await checkReadiness(k.personaId, 'avatar_video')).pass, true)
+    await db.run("UPDATE persona_authorization SET scopes = ? WHERE id = ?", [JSON.stringify(['portrait', 'voice']), k.authId])
+    const r = await checkReadiness(k.personaId, 'avatar_video')
+    assert.equal(r.pass, false)
+    assert.equal(r.checks.find((c) => c.key === 'voice_share_auth')?.pass, false)
+  })
+
+  await test('P2-1 绑定多个账号时不能改回一对一', async () => {
+    const k = await readyPersona('回归丁', { line: 'kos', scopes: ['portrait', 'voice', 'share'] })
+    const now = toDb(utcNow())
+    for (const key of ['acc1', 'acc2']) {
+      await db.run(
+        'INSERT INTO persona_account_binding (id, persona_id, platform, account_key, display_name, created_at, active_key) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [uid('bind'), k.personaId, 'douyin', `${k.personaId}-${key}`, key, now, `douyin:${k.personaId}-${key}`],
+      )
+    }
+    const p = (await getPersonaById(k.personaId, true))!
+    assert.equal(p.bindingMode, 'shared')
+    await assert.rejects(
+      updatePersona(k.personaId, { bindingMode: 'exclusive', rev: p.rev, operator: 't' }),
+      (e: any) => e?.code === 'PERSONA_BINDING_RULE',
+    )
   })
 
   console.log(`${passed} persona regression groups passed`)

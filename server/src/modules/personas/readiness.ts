@@ -109,6 +109,11 @@ export async function checkReadiness(
       const auths = await validAuthorizationsOf(personaId, db)
       const authOk = auths.some((a) => a.id === voice.authorization_id && a.scopes.includes('voice'))
       checks.push(hard('voice_auth', authOk, authOk ? '声音授权有效' : '声音授权缺失或已失效'))
+      // P2-1：共享人物的声音用于多个账号即构成声音共享（FR-V9），授权还须含「允许共享」
+      if (persona.bindingMode === 'shared') {
+        const shareOk = auths.some((a) => a.id === voice.authorization_id && a.scopes.includes('share'))
+        checks.push(hard('voice_share_auth', shareOk, shareOk ? '声音共享授权有效' : '共享人物的声音授权须包含「允许共享」'))
+      }
     }
     // 飞影已配置（或 mock）
     const hiflyOk = hasHifly() || config.mockFallback

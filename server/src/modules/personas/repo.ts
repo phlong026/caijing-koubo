@@ -282,6 +282,7 @@ export async function updatePersona(id: string, input: UpdatePersonaInput): Prom
         allowed: rule.bindingModes,
       })
     }
+    if (input.bindingMode !== current.bindingMode) await assertBindingModeSwitchable(current, input.bindingMode, db)
     sets.push('`binding_mode` = ?')
     params.push(input.bindingMode)
   }
@@ -301,6 +302,38 @@ export async function updatePersona(id: string, input: UpdatePersonaInput): Prom
     throw e
   }
   return (await getPersonaById(id, true))!
+}
+
+/**
+ * P2-1：切换绑定方式前复核约束，否则可绕过 FR-V9 / FR-U5：
+ *  - 一对一 → 共享：默认声音的授权须含「允许共享」；
+ *  - 共享 → 一对一：已绑定账号不能超过 1 个。
+ */
+async function assertBindingModeSwitchable(current: Persona, next: BindingMode, db: Db): Promise<void> {
+  if (next === 'shared' && current.defaultVoiceId) {
+    const row = await db.get<{ scopes: string | null; status: string; expires_at: string | null }>(
+      `SELECT a.\`scopes\`, a.\`status\`, a.\`expires_at\`
+         FROM \`persona_voice\` v JOIN \`persona_authorization\` a ON a.\`id\` = v.\`authorization_id\`
+        WHERE v.\`id\` = ?`,
+      [current.defaultVoiceId],
+    )
+    const scopes = jdec<AuthorizationScope[]>(row?.scopes, [])
+    const valid = !!row && isAuthorizationValid({ status: row.status, expiresAt: fromDb(row.expires_at) })
+    if (!valid || !scopes.includes('share')) {
+      throw err.bindingRule('改为共享前，默认声音的授权须包含「允许共享」：请先补充授权或更换默认声音', {
+        defaultVoiceId: current.defaultVoiceId,
+      })
+    }
+  }
+  if (next === 'exclusive') {
+    const r = await db.get<{ c: number }>(
+      'SELECT COUNT(*) AS c FROM `persona_account_binding` WHERE `persona_id` = ? AND `released_at` IS NULL',
+      [current.id],
+    )
+    if (Number(r?.c ?? 0) > 1) {
+      throw err.bindingRule(`当前绑定了 ${r!.c} 个账号，改为一对一前请先解绑多余账号`, { bindings: Number(r!.c) })
+    }
+  }
 }
 
 /** 保存 IP 定位（FR-I5）：hash 未变不升 revision；变化则 revision+1 并由调用方产生版本 */
