@@ -756,11 +756,8 @@ export async function pollPreview(previewId: string): Promise<void> {
       await db.run('UPDATE `persona_voice_preview` SET `status` = ?, `error` = ? WHERE `id` = ?', ['failed', message, previewId])
     } else {
       const attempts = Number(row.attempts ?? 0) + 1
-      await db.run('UPDATE `persona_voice_preview` SET `attempts` = ?, `updated_at` = ? WHERE `id` = ?', [
-        attempts,
-        toDb(utcNow()),
-        previewId,
-      ])
+      // P1-3：persona_voice_preview 没有 updated_at 列，原 UPDATE 每次报错导致 attempts 不增长、退避失效
+      await db.run('UPDATE `persona_voice_preview` SET `attempts` = ? WHERE `id` = ?', [attempts, previewId])
       await schedulePoll('preview', previewId, pollDelayOf(attempts))
     }
   } catch (e) {
