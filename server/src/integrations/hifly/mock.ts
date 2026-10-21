@@ -3,7 +3,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { config } from '../../config.js'
 import { err } from '../../errors.js'
+import { logApiCall } from '../../modules/metrics/call-log.js'
 import {
+  PATHS,
   HiflyQueryError,
   HiflySubmissionUncertain,
   HiflyVendorError,
@@ -299,9 +301,51 @@ class MockHiflyClient implements HiflyClient {
   }
 }
 
-let mockClient: MockHiflyClient | null = null
+/**
+ * 与真实客户端一致的调用留痕（AC-C7）：每次飞影调用写 api_call_log(provider=hifly, ref_type=…)，
+ * 端点路径沿用真实 PATHS，便于断言「创建类调用只发出一次」。上传 / 下载与真实客户端一样不记。
+ */
+const TRACED: Record<string, { path: string; refType: string | null }> = {
+  createAvatarByVideo: { path: PATHS.avatarCreateByVideo, refType: 'persona_avatar' },
+  createAvatarByImage: { path: PATHS.avatarCreateByImage, refType: 'persona_avatar' },
+  avatarTask: { path: PATHS.avatarTask, refType: 'persona_avatar' },
+  avatarList: { path: PATHS.avatarList, refType: 'persona_avatar' },
+  createVoice: { path: PATHS.voiceCreate, refType: 'persona_voice' },
+  editVoice: { path: PATHS.voiceEdit, refType: 'persona_voice' },
+  voiceTask: { path: PATHS.voiceTask, refType: 'persona_voice' },
+  voiceList: { path: PATHS.voiceList, refType: 'persona_voice' },
+  createVideoByTts: { path: PATHS.videoCreateByTts, refType: 'persona_avatar' },
+  createVideoByAudio: { path: PATHS.videoCreateByAudio, refType: 'persona_avatar' },
+  videoTask: { path: PATHS.videoTask, refType: 'persona_avatar' },
+  createAudioByTts: { path: PATHS.audioCreateByTts, refType: 'persona_voice' },
+  createUploadUrl: { path: PATHS.toolCreateUploadUrl, refType: null },
+  credit: { path: PATHS.accountCredit, refType: null },
+}
+
+function withCallLog(target: MockHiflyClient): HiflyClient {
+  return new Proxy(target, {
+    get(obj, prop, receiver) {
+      const value = Reflect.get(obj, prop, receiver)
+      const meta = typeof prop === 'string' ? TRACED[prop] : undefined
+      if (!meta || typeof value !== 'function') return value
+      return async (...args: unknown[]) => {
+        const started = Date.now()
+        try {
+          const result = await value.apply(obj, args)
+          await logApiCall({ provider: 'hifly', endpoint: meta.path, refType: meta.refType, ok: true, httpStatus: 200, durationMs: Date.now() - started })
+          return result
+        } catch (e) {
+          await logApiCall({ provider: 'hifly', endpoint: meta.path, refType: meta.refType, ok: false, durationMs: Date.now() - started, error: (e as Error).message })
+          throw e
+        }
+      }
+    },
+  }) as unknown as HiflyClient
+}
+
+let mockClient: HiflyClient | null = null
 
 export function getMockHiflyClient(): HiflyClient {
-  if (!mockClient) mockClient = new MockHiflyClient()
+  if (!mockClient) mockClient = withCallLog(new MockHiflyClient())
   return mockClient
 }

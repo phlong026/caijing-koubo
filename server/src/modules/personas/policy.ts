@@ -115,7 +115,8 @@ export function deriveStatus(
 
   const live = auths.filter((a) => a.status !== 'revoked' && a.status !== 'rejected')
   const valid = live.filter((a) => isAuthorizationValid(a, now))
-  const revoked = live.filter((a) => a.status === 'revoked')
+  // 撤销的授权不在 live 里：必须从全量里取，否则 auth_revoked 永远派生不出来（§3.2：撤销优于过期）
+  const revoked = auths.filter((a) => a.status === 'revoked')
   const expired = live.filter((a) => authorizationEffectiveStatus(a, now) === 'expired')
   const pending = live.filter((a) => a.status === 'pending')
 
