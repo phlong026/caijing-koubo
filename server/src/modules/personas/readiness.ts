@@ -170,12 +170,27 @@ export async function getProductionProfile(personaId: string, avatarId?: string,
   }
   const persona = (await getPersonaById(personaId, true))!
   const targetAvatarId = avatarId || persona.defaultAvatarId!
+  // P1-4：指定分身必须属于该人物，且绑定的肖像授权当前有效——
+  // 否则可用 B 人物的声音配 A 人物的分身生成视频（冒用肖像）
   const avatar = await db.get<Record<string, any>>(
-    'SELECT * FROM `persona_avatar` WHERE `id` = ? AND `deleted_at` IS NULL',
-    [targetAvatarId],
+    'SELECT * FROM `persona_avatar` WHERE `id` = ? AND `persona_id` = ? AND `deleted_at` IS NULL',
+    [targetAvatarId, personaId],
   )
   if (!avatar || avatar.status !== 'ready' || !avatar.vendor_avatar_id) {
-    throw err.personaNotReady('指定分身不可用（非 ready 或缺少厂商标识）', { avatarId: targetAvatarId, status: avatar?.status ?? null })
+    throw err.personaNotReady('指定分身不可用（不属于该人物、非 ready 或缺少厂商标识）', {
+      avatarId: targetAvatarId,
+      status: avatar?.status ?? null,
+    })
+  }
+  if (avatarId && avatarId !== persona.defaultAvatarId) {
+    const auths = await validAuthorizationsOf(personaId, db)
+    const authOk = auths.some((a) => a.id === avatar.authorization_id && a.scopes.includes('portrait'))
+    if (!authOk) {
+      throw err.authorizationRequired('指定分身的肖像授权已失效，不能用于视频生成', {
+        avatarId: targetAvatarId,
+        authorizationId: avatar.authorization_id,
+      })
+    }
   }
   const voice = await db.get<Record<string, any>>(
     'SELECT * FROM `persona_voice` WHERE `id` = ? AND `is_sample` = 0 AND `deleted_at` IS NULL',
