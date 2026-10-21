@@ -132,6 +132,11 @@ async function main(): Promise<void> {
   // 审核桩在进程内推进，重启后续推未走完三关的桩审核单（P2-19）
   await resumeStubSubmissions().catch((e) => logger.error({ err: (e as Error).message }, 'review.stub.resume_scan_failed'))
 
+  // P2-13c：临时文件每日清理（启动时先跑一次）
+  const { cleanupTempFiles } = await import('./modules/copy/article.js')
+  await cleanupTempFiles().catch((e) => logger.warn({ err: (e as Error).message }, 'temp.clean_failed'))
+  setInterval(() => void cleanupTempFiles().catch(() => undefined), 24 * 3600 * 1000).unref()
+
   const app = await buildApp()
   await app.listen({ port: config.port, host: config.host })
   logger.info({ url: `http://${config.host}:${config.port}/api`, health: `http://${config.host}:${config.port}/health` }, 'server.ready')

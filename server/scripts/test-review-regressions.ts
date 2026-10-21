@@ -8,6 +8,7 @@ import { mock } from 'node:test'
 const temp = mkdtempSync(join(tmpdir(), 'koubo-review-'))
 process.env.DB_DRIVER = 'sqlite'
 process.env.DB_SQLITE_PATH = join(temp, 'test.db')
+process.env.TEMP_DIR = join(temp, 'tmp')
 process.env.DASHSCOPE_API_KEY = ''
 process.env.MOCK_FALLBACK = 'true'
 process.env.LOG_LEVEL = 'silent'
@@ -132,6 +133,34 @@ try {
     await stop(); mock.timers.tick(60_000); await turn()
     assert.equal(sets, 33); assert.equal(deletes, 1)
     mock.timers.reset()
+  })
+  await test('article text decoding (P2-13c): UTF-8, BOM, UTF-16 and GBK', async () => {
+    const { decodeText } = await import('../src/modules/copy/article.js')
+    const text = '定投的三个误区'
+    assert.equal(decodeText(Buffer.from(text, 'utf8')), text)
+    assert.equal(decodeText(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(text, 'utf8')])), text)
+    assert.equal(decodeText(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')])), text)
+    // 「定投」的 GBK 编码
+    assert.equal(decodeText(Buffer.from([0xb6, 0xa8, 0xcd, 0xb6])), '定投')
+  })
+  await test('temp cleanup (P2-13c): only own files past retention; clears article storage_path', async () => {
+    const { cleanupTempFiles, writeTempFile } = await import('../src/modules/copy/article.js')
+    const { paths } = await import('../src/config.js')
+    const { mkdirSync, writeFileSync, existsSync, utimesSync } = await import('node:fs')
+    mkdirSync(paths.tempDir, { recursive: true })
+    const oldArticle = writeTempFile('old.txt', Buffer.from('x'))
+    const newArticle = writeTempFile('new.txt', Buffer.from('y'))
+    const stray = join(paths.tempDir, 'up_0123456789abcdef0123.jpg')
+    const foreign = join(paths.tempDir, 'someone-else.txt')
+    writeFileSync(stray, 'z'); writeFileSync(foreign, 'z')
+    const longAgo = (Date.now() - 40 * 86_400_000) / 1000
+    for (const f of [oldArticle, stray, foreign]) utimesSync(f, longAgo, longAgo)
+    await db.run("INSERT INTO article_source (id, filename, mime, size, storage_path, plain_text, outline, word_count, created_by, created_at) VALUES ('art_cleanup', 'old.txt', 'text/plain', 1, ?, 'x', '[]', 1, 't', '2026-01-01 00:00:00')", [oldArticle])
+    const r = await cleanupTempFiles()
+    assert.deepEqual(r, { articles: 1, stray: 1 })
+    assert.equal(existsSync(oldArticle), false); assert.equal(existsSync(newArticle), true)
+    assert.equal(existsSync(stray), false); assert.equal(existsSync(foreign), true)
+    assert.equal((await db.get<{ storage_path: string | null }>("SELECT storage_path FROM article_source WHERE id = 'art_cleanup'"))?.storage_path, null)
   })
   await test('rate limiter (P2-12): bursts up to the per-minute budget, then refills over time', async () => {
     const { takeToken, resetBuckets } = await import('../src/lib/rate-limit.js')
