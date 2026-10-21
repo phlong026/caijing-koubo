@@ -79,6 +79,11 @@ export const config = {
     timeoutMs: num('DASHSCOPE_TIMEOUT_MS', 120000),
     llmUnitPrice: num('LLM_UNIT_PRICE', 0.004),
     asrUnitPrice: num('ASR_UNIT_PRICE', 0.0005),
+    /**
+     * P2-13a：ASR 按音频时长计费的单价（元 / 秒）。配置后提取成本 = 时长 × 单价，
+     * 未配置（0）时沿用按次计价 ASR_UNIT_PRICE。具体单价以百炼账单为准。
+     */
+    asrPricePerSec: num('ASR_PRICE_PER_SEC', 0),
   },
 
   oss: {
