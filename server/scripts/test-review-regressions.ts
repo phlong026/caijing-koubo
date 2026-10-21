@@ -133,6 +133,18 @@ try {
     assert.equal(sets, 33); assert.equal(deletes, 1)
     mock.timers.reset()
   })
+  await test('rate limiter (P2-12): bursts up to the per-minute budget, then refills over time', async () => {
+    const { takeToken, resetBuckets } = await import('../src/lib/rate-limit.js')
+    resetBuckets()
+    const t0 = 1_000_000
+    for (let i = 0; i < 4; i++) assert.equal(takeToken('k', { perMinute: 4 }, t0).ok, true)
+    const denied = takeToken('k', { perMinute: 4 }, t0)
+    assert.equal(denied.ok, false)
+    assert.ok(!denied.ok && denied.retryAfterSec > 0 && denied.retryAfterSec <= 15)
+    assert.equal(takeToken('other', { perMinute: 4 }, t0).ok, true)
+    assert.equal(takeToken('k', { perMinute: 4 }, t0 + 15_000).ok, true)
+    assert.equal(takeToken('k', { perMinute: 4 }, t0 + 15_000).ok, false)
+  })
   console.log(`${passed} regression groups passed`)
 } finally {
   mock.timers.reset()

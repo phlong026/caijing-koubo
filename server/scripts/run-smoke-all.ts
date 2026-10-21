@@ -43,6 +43,8 @@ const env: NodeJS.ProcessEnv = {
   HIFLY_POLL_SWEEP_MS: '2000',
   AUTH_BOOTSTRAP_ADMIN_USER: 'admin',
   AUTH_BOOTSTRAP_ADMIN_PASSWORD: 'admin123',
+  // 冒烟脚本用同一账号在一分钟内连续生成多次，放大限流额度（限流本身由单测覆盖）
+  RATE_LIMIT_SCALE: '20',
   LOG_LEVEL: process.env.LOG_LEVEL ?? 'warn',
 }
 

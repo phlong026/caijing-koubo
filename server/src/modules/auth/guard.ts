@@ -3,6 +3,7 @@ import { config } from '../../config.js'
 import { err } from '../../errors.js'
 import { getUserById, type AppUser } from './repo.js'
 import { verifyToken, type Role } from './tokens.js'
+import { pruneBuckets, takeToken, type RateRule } from '../../lib/rate-limit.js'
 
 /**
  * 鉴权与角色守卫（P0-1）。
@@ -48,6 +49,31 @@ export const ROLE_RULES: Record<string, Role[]> = {
   'DELETE /api/news/rules/:id': ADMINS,
   'POST /api/copy/llm/ping': ADMINS,
 }
+
+/**
+ * P2-12：计费 / 高成本接口按「接口 + 操作人」限流（每分钟次数，允许短时突发）。
+ * 模型生成、视频提取、TikHub 解析、飞影试听与克隆、资讯刷新、文件上传。
+ */
+export const RATE_RULES: Record<string, RateRule> = {
+  'POST /api/copy/:id/generate': { perMinute: 6 },
+  'POST /api/copy/:id/drafts/:draftId/variants': { perMinute: 10 },
+  'POST /api/copy/:id/prompt-preview': { perMinute: 30 },
+  'POST /api/copy/llm/ping': { perMinute: 3 },
+  'POST /api/topics/generate': { perMinute: 6 },
+  'POST /api/benchmark/videos/:id/extract': { perMinute: 10 },
+  'POST /api/benchmark/parse-link': { perMinute: 20 },
+  'POST /api/benchmark/accounts/preview': { perMinute: 20 },
+  'POST /api/benchmark/accounts/:id/fetch-now': { perMinute: 10 },
+  'GET /api/benchmark/videos/:id/playback': { perMinute: 30 },
+  'POST /api/news/refresh': { perMinute: 4 },
+  'POST /api/articles': { perMinute: 20 },
+  'POST /api/persona-voices/:id/preview': { perMinute: 10 },
+  'POST /api/personas/:id/avatars': { perMinute: 10 },
+  'POST /api/personas/:id/voices': { perMinute: 10 },
+  'POST /api/personas/:id/assets': { perMinute: 60 },
+}
+
+let lastPrune = 0
 
 function routeKey(req: FastifyRequest): string {
   const url = req.routeOptions?.url ?? req.url.split('?')[0]
@@ -106,7 +132,7 @@ export function hasRole(user: AppUser | null | undefined, roles: Role[]): boolea
 }
 
 export function registerAuthGuard(app: FastifyInstance): void {
-  app.addHook('onRequest', async (req) => {
+  app.addHook('onRequest', async (req, reply) => {
     req.user = null
     req.operator = 'anonymous'
     if (req.method === 'OPTIONS') return
@@ -121,6 +147,19 @@ export function registerAuthGuard(app: FastifyInstance): void {
     const roles = ROLE_RULES[key]
     if (roles && !roles.includes(user.role)) {
       throw err.forbidden(`当前角色（${user.role}）无权执行该操作`)
+    }
+    const rule = config.rateLimit.enabled ? RATE_RULES[key] : undefined
+    if (rule) {
+      if (Date.now() - lastPrune > 60_000) {
+        lastPrune = Date.now()
+        pruneBuckets()
+      }
+      const perMinute = Math.max(1, Math.round(rule.perMinute * config.rateLimit.scale))
+      const r = takeToken(`${key}|${user.id}`, { perMinute })
+      if (!r.ok) {
+        reply.header('Retry-After', String(r.retryAfterSec))
+        throw err.rateLimited(`操作过于频繁，请 ${r.retryAfterSec} 秒后再试`, { retryAfterSec: r.retryAfterSec, perMinute })
+      }
     }
   })
 }

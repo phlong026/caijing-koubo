@@ -264,6 +264,11 @@ export const config = {
     maxLoginFailures: num('AUTH_MAX_LOGIN_FAILURES', 5),
     lockMinutes: num('AUTH_LOCK_MINUTES', 5),
   },
+  /** P2-12：计费 / 高成本接口按操作人限流；RATE_LIMIT_SCALE 整体放大或缩小各接口的每分钟次数 */
+  rateLimit: {
+    enabled: bool('RATE_LIMIT_ENABLED', true),
+    scale: num('RATE_LIMIT_SCALE', 1),
+  },
   /** 允许跨域的前端来源（逗号分隔）；生产缺省为空 = 只允许同源 */
   corsOrigins: str(
     'CORS_ORIGINS',
