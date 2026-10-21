@@ -11,7 +11,7 @@
 | 集成（SQLite + 内存队列） | `npm run test:integration` | smoke 44 + topics 25 + copy + **personas 99**，全绿 |
 | 集成（**真实 MySQL + Redis/BullMQ**） | `npm run test:integration:real` | 同上四套，全绿；临时库与 Redis 键测完清理 |
 | 集成（OSS 协议路径） | `npm run test:integration -- --oss` | 素材经 put / getStream / 签名 URL 全链路，仿真端 0 次被拒 |
-| 人物库验收（§9 缺口） | `npm run test:personas:acceptance` | **SQLite 与 `--real --oss`（真实 MySQL + Redis + OSS 仿真）各完整跑一遍：B2–B12 共 243 项通过**（含 B10：500 人 `GET /personas` P95 ≈ 30–45ms，原 415ms）；见 §2 |
+| 人物库验收（§9 缺口） | `npm run test:personas:acceptance` | **SQLite 与 `--real --oss`（真实 MySQL + Redis + OSS 仿真）各完整跑一遍（B2–B11：237 项通过 + 1 项我写错的期望值，修正后 B10 单独复跑通过 → 238 项；B12 另跑 5 项通过）**；B10：500 人 `GET /personas` P95 ≈ 30–45ms，原 415ms；见 §2 |
 | 前端构建 | `cd frontend && npm run build` | `vue-tsc` + Vite 通过 |
 | 浏览器实测 | `npm run e2e:people`（Playwright，Chromium，1440 / 1280 / 1024），最新后端上复跑 | 32 项全过，覆盖新建 / 重名 / 定位保存 / 授权 / 照片 / 分身 / 声音向导 / 试听 / 绑定 / 启停 / 搜索 / 素人空态 / 响应式 / 控制台 0 error |
 
