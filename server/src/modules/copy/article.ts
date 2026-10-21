@@ -25,7 +25,7 @@ const MAGIC: Record<string, Array<{ offset: number; bytes: number[] }>> = {
   '.md': [],
 }
 
-const TEXT_EXT = new Set(['.txt', '.md', '.markdown'])
+const TEXT_EXT = new Set(['.txt', '.md'])
 
 export interface ParsedArticle {
   plainText: string
@@ -193,7 +193,7 @@ export function buildOutline(ext: string, raw: string): ParsedArticle {
     throw err.articleNoText('未识别到文字，请粘贴文本后重试（扫描版 PDF 请先转换为可复制文本）')
   }
 
-  const isMd = ext === '.md' || ext === '.markdown' || ext === '.docx'
+  const isMd = ext === '.md' || ext === '.docx'
   const outline: OutlineNode[] = []
   const lines = text.split('\n')
 

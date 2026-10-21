@@ -1,4 +1,3 @@
-import type { FastifyInstance } from 'fastify'
 import { getQueue, QUEUE_NAMES, getQueueBackend, registerWorker } from '../../queue/index.js'
 import { memScheduleRepeatable } from '../../queue/memory.js'
 import { logger } from '../../log.js'
@@ -6,7 +5,6 @@ import { scanAuthExpiry } from './authorizations.js'
 import { registerAssetProcessWorker } from './assets/process.js'
 import { registerCloneWorker, resumeUncertainSubmissions, scheduleCloneSweep } from './clone/worker.js'
 import { cleanExpiredPreviews } from './clone/voices.js'
-import { registerPersonaRoutes } from './routes.js'
 
 /**
  * 人物库模块装配（PL4/PL5）。
@@ -72,8 +70,4 @@ export async function registerPersonaModule(): Promise<void> {
   await resumeUncertainSubmissions()
   // P0-2：克隆 / 试听轮询改为 next_poll_at + 周期扫描
   await scheduleCloneSweep()
-}
-
-export function registerPersonas(app: FastifyInstance): void {
-  registerPersonaRoutes(app)
 }
