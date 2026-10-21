@@ -21,6 +21,7 @@ import {
   archivePersona,
   updatePersona,
   derivePersonaStatus,
+  derivePersonaStatuses,
   type Persona,
 } from './repo.js'
 import { listVersions, getVersion, ensurePersonaVersion } from './versions.js'
@@ -259,47 +260,66 @@ async function mustGetPersona(id: string): Promise<Persona> {
   return p
 }
 
-/** 列表项：人物 + 派生有效状态 + 计数（FR-L1 / FR-X1） */
-async function decoratePersona(p: Persona) {
+/** 列表项：人物 + 派生有效状态 + 计数（FR-L1 / FR-X1）。P2-9：批量查询，避免按人物逐个查库 */
+async function decoratePersonas(list: Persona[]) {
+  if (!list.length) return []
   const db = (await import('../../db/index.js')).getDb()
-  const derived = await derivePersonaStatus(p, db)
-  const [photoCount, avatarCount, voiceCount, bindingCount] = await Promise.all([
-    db.get<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM `persona_asset` WHERE `persona_id` = ? AND `kind` = ? AND `status` = ? AND `deleted_at` IS NULL',
-      [p.id, 'photo', 'approved'],
-    ),
-    db.get<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM `persona_avatar` WHERE `persona_id` = ? AND `status` = ? AND `deleted_at` IS NULL',
-      [p.id, 'ready'],
-    ),
-    db.get<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM `persona_voice` WHERE `persona_id` = ? AND `is_sample` = 0 AND `status` = ? AND `confirmed` = 1 AND `deleted_at` IS NULL',
-      [p.id, 'ready'],
-    ),
-    db.get<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM `persona_account_binding` WHERE `persona_id` = ? AND `released_at` IS NULL',
-      [p.id],
-    ),
-  ])
-  const cover = p.coverAssetId
-    ? await db.get<{ thumb_key: string | null }>('SELECT `thumb_key` FROM `persona_asset` WHERE `id` = ?', [p.coverAssetId])
-    : null
-  return {
-    ...p,
-    status: derived.status,
-    statusLabel: derived.label,
-    usable: derived.usable,
-    statusReasons: derived.reasons,
-    extraTags: derived.extraTags,
-    counts: {
-      photos: Number(photoCount?.c ?? 0),
-      avatars: Number(avatarCount?.c ?? 0),
-      voices: Number(voiceCount?.c ?? 0),
-      bindings: Number(bindingCount?.c ?? 0),
-    },
-    coverUrl: cover?.thumb_key ? `/api/persona-assets/${p.coverAssetId}/file?variant=thumb` : null,
-    currentVersionId: p.currentVersionId,
+  const ids = list.map((p) => p.id)
+  const ph = ids.map(() => '?').join(', ')
+  const countBy = async (sql: string, params: unknown[]) => {
+    const rows = await db.all<{ persona_id: string; c: number }>(sql, params)
+    return new Map(rows.map((r) => [r.persona_id, Number(r.c)]))
   }
+  const coverIds = list.map((p) => p.coverAssetId).filter((x): x is string => !!x)
+  const [derived, photos, avatars, voices, bindings, covers] = await Promise.all([
+    derivePersonaStatuses(list, db),
+    countBy(
+      `SELECT \`persona_id\`, COUNT(*) AS c FROM \`persona_asset\` WHERE \`persona_id\` IN (${ph}) AND \`kind\` = 'photo' AND \`status\` = 'approved' AND \`deleted_at\` IS NULL GROUP BY \`persona_id\``,
+      ids,
+    ),
+    countBy(
+      `SELECT \`persona_id\`, COUNT(*) AS c FROM \`persona_avatar\` WHERE \`persona_id\` IN (${ph}) AND \`status\` = 'ready' AND \`deleted_at\` IS NULL GROUP BY \`persona_id\``,
+      ids,
+    ),
+    countBy(
+      `SELECT \`persona_id\`, COUNT(*) AS c FROM \`persona_voice\` WHERE \`persona_id\` IN (${ph}) AND \`is_sample\` = 0 AND \`status\` = 'ready' AND \`confirmed\` = 1 AND \`deleted_at\` IS NULL GROUP BY \`persona_id\``,
+      ids,
+    ),
+    countBy(
+      `SELECT \`persona_id\`, COUNT(*) AS c FROM \`persona_account_binding\` WHERE \`persona_id\` IN (${ph}) AND \`released_at\` IS NULL GROUP BY \`persona_id\``,
+      ids,
+    ),
+    coverIds.length
+      ? db.all<{ id: string; thumb_key: string | null }>(
+          `SELECT \`id\`, \`thumb_key\` FROM \`persona_asset\` WHERE \`id\` IN (${coverIds.map(() => '?').join(', ')})`,
+          coverIds,
+        )
+      : Promise.resolve([] as Array<{ id: string; thumb_key: string | null }>),
+  ])
+  const coverThumb = new Map(covers.map((c) => [c.id, c.thumb_key]))
+  return list.map((p) => {
+    const d = derived.get(p.id)!
+    return {
+      ...p,
+      status: d.status,
+      statusLabel: d.label,
+      usable: d.usable,
+      statusReasons: d.reasons,
+      extraTags: d.extraTags,
+      counts: {
+        photos: photos.get(p.id) ?? 0,
+        avatars: avatars.get(p.id) ?? 0,
+        voices: voices.get(p.id) ?? 0,
+        bindings: bindings.get(p.id) ?? 0,
+      },
+      coverUrl: p.coverAssetId && coverThumb.get(p.coverAssetId) ? `/api/persona-assets/${p.coverAssetId}/file?variant=thumb` : null,
+      currentVersionId: p.currentVersionId,
+    }
+  })
+}
+
+async function decoratePersona(p: Persona) {
+  return (await decoratePersonas([p]))[0]!
 }
 
 export function registerPersonaRoutes(app: FastifyInstance): void {
@@ -319,8 +339,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
       includeArchived,
     })
     const items = []
-    for (const p of personas) {
-      const d = await decoratePersona(p)
+    for (const d of await decoratePersonas(personas)) {
       // 默认只返回 usable（FR-X1：桩期「enabled only」的等价语义）；
       // includeArchived=1 时放行归档人物（usable 恒 false，否则被 usable 过滤挡掉）
       if (!includeDisabled && !includeArchived && !d.usable) continue

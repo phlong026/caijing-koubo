@@ -428,36 +428,72 @@ export async function derivePersonaStatus(
   db: Db = getDb(),
   now: Date = new Date(),
 ): Promise<DerivedStatus> {
-  const auths = await listAuthorizationsForPolicy(persona.id, db)
-  const [avatars, voices] = await Promise.all([
+  return (await derivePersonaStatuses([persona], db, now)).get(persona.id)!
+}
+
+/**
+ * 批量派生（P2-9）：授权 / 分身 / 声音各一次 IN 查询，列表页不再按人物逐个查库（N+1）。
+ */
+export async function derivePersonaStatuses(
+  personas: Persona[],
+  db: Db = getDb(),
+  now: Date = new Date(),
+): Promise<Map<string, DerivedStatus>> {
+  const out = new Map<string, DerivedStatus>()
+  if (!personas.length) return out
+  const ids = personas.map((p) => p.id)
+  const ph = ids.map(() => '?').join(', ')
+  const [authRows, avatarRows, voiceRows] = await Promise.all([
     db.all<Record<string, any>>(
-      'SELECT `status`, `deleted_at` FROM `persona_avatar` WHERE `persona_id` = ?',
-      [persona.id],
+      `SELECT \`id\`, \`persona_id\`, \`status\`, \`scopes\`, \`expires_at\` FROM \`persona_authorization\` WHERE \`persona_id\` IN (${ph})`,
+      ids,
+    ),
+    db.all<Record<string, any>>(
+      `SELECT \`persona_id\`, \`status\`, \`deleted_at\` FROM \`persona_avatar\` WHERE \`persona_id\` IN (${ph})`,
+      ids,
     ),
     db.all<Record<string, any>>(
       // is_sample=1 的声音样本不参与克隆态派生（FR-V1）
-      'SELECT `status`, `confirmed`, `deleted_at` FROM `persona_voice` WHERE `persona_id` = ? AND `is_sample` = 0',
-      [persona.id],
+      `SELECT \`persona_id\`, \`status\`, \`confirmed\`, \`deleted_at\` FROM \`persona_voice\` WHERE \`persona_id\` IN (${ph}) AND \`is_sample\` = 0`,
+      ids,
     ),
   ])
-  const rule = LINE_RULES[persona.line]
-  return deriveStatus(
-    {
-      line: persona.line,
-      enabled: persona.enabled,
-      archivedAt: persona.archivedAt,
-      authRequired: rule.authRequired,
-    },
-    auths,
-    {
-      avatars: avatars.map((a) => ({ status: a.status, deletedAt: fromDb(a.deleted_at) })),
-      voices: voices.map((v) => ({ status: v.status, confirmed: !!v.confirmed, deletedAt: fromDb(v.deleted_at) })),
-      hasDefaultAvatar: !!persona.defaultAvatarId,
-      hasConfirmedDefaultVoice: !!persona.defaultVoiceId,
-      configured: false, // readiness 维度由 readiness.ts 计算后回填
-    },
-    now,
-  )
+  const group = <T>(rows: Record<string, any>[], map: (r: Record<string, any>) => T) => {
+    const m = new Map<string, T[]>()
+    for (const r of rows) {
+      const list = m.get(r.persona_id) ?? []
+      list.push(map(r))
+      m.set(r.persona_id, list)
+    }
+    return m
+  }
+  const auths = group(authRows, (r) => ({
+    id: r.id as string,
+    status: r.status as string,
+    scopes: jdec<string[]>(r.scopes, []) as AuthorizationScope[],
+    expiresAt: fromDb(r.expires_at),
+  }))
+  const avatars = group(avatarRows, (a) => ({ status: a.status as string, deletedAt: fromDb(a.deleted_at) }))
+  const voices = group(voiceRows, (v) => ({ status: v.status as string, confirmed: !!v.confirmed, deletedAt: fromDb(v.deleted_at) }))
+  for (const persona of personas) {
+    const rule = LINE_RULES[persona.line]
+    out.set(
+      persona.id,
+      deriveStatus(
+        { line: persona.line, enabled: persona.enabled, archivedAt: persona.archivedAt, authRequired: rule.authRequired },
+        auths.get(persona.id) ?? [],
+        {
+          avatars: avatars.get(persona.id) ?? [],
+          voices: voices.get(persona.id) ?? [],
+          hasDefaultAvatar: !!persona.defaultAvatarId,
+          hasConfirmedDefaultVoice: !!persona.defaultVoiceId,
+          configured: false, // readiness 维度由 readiness.ts 计算后回填
+        },
+        now,
+      ),
+    )
+  }
+  return out
 }
 
 /**

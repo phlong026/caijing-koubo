@@ -1,5 +1,5 @@
 import {
-  derivePersonaStatus,
+  derivePersonaStatuses,
   getPersonaById,
   listPersonas,
   type Persona,
@@ -28,8 +28,9 @@ export async function listPersonasForCopy(): Promise<PersonaForCopy[]> {
   const all = await listPersonas({ includeDisabled: true })
   const labels: Record<string, string> = { manager: '经理 IP', kos: '员工 KOS', persona: '素人矩阵' }
   const out: PersonaForCopy[] = []
+  const statuses = await derivePersonaStatuses(all)
   for (const p of all) {
-    const derived = await derivePersonaStatus(p)
+    const derived = statuses.get(p.id)!
     out.push({
       ...p,
       lineLabel: labels[p.line] ?? p.line,
