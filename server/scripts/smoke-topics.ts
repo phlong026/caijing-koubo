@@ -63,11 +63,17 @@ async function main(): Promise<void> {
   console.log(`  ℹ 队列后端：${qBackend}`)
 
   const personas = await req('GET', '/personas')
-  const personaList: any[] = Array.isArray(personas.data) ? personas.data : []
-  const enabledPersona = personaList.find((p) => p.enabled)
+  // FR-X1：GET /personas 返回 {items,total}，默认仅含 usable 人物（兼容旧数组形态）
+  const personaList: any[] = Array.isArray(personas.data?.items)
+    ? personas.data.items
+    : Array.isArray(personas.data)
+      ? personas.data
+      : []
+  const enabledPersona = personaList.find((p) => p.usable ?? p.enabled)
   check('存在可用人物', !!enabledPersona, { count: personaList.length })
   if (!enabledPersona) {
     console.log('\n无可用人物，终止')
+    process.exitCode = 1
     return
   }
 
@@ -129,7 +135,7 @@ async function main(): Promise<void> {
   const ghost = await req('PATCH', `/topics/${t0.id}`, { personaIds: ['ps_ghost_not_exist'] })
   check(
     '分配不存在的人物被拒绝',
-    ghost.status === 400 && ghost.raw?.error?.code === 'bad_request',
+    ghost.status === 404 && ghost.raw?.error?.code === 'PERSONA_NOT_FOUND',
     ghost.raw,
   )
   check('错误信息点明人物不存在', /人物不存在/.test(ghost.raw?.error?.message ?? ''), ghost.raw?.error?.message)

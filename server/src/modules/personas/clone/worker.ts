@@ -42,7 +42,11 @@ type CloneJob =
 
 /* ── 轮询调度（BullMQ delay / 内存队列 setTimeout）──────────────── */
 
-async function scheduleJob(jobName: string, data: CloneJob, dedupId: string, delayMs: number): Promise<void> {
+/**
+ * `step` 并入 BullMQ 的去重键：轮询任务在自己运行期间重新入队时，同一 dedup id 仍被「运行中的自己」占用，
+ * 会被静默丢弃、轮询链断掉；按轮询序号区分后，同一步仍去重，下一步不会被挡住。内存队列用 setTimeout 延后投递，不受影响。
+ */
+async function scheduleJob(jobName: string, data: CloneJob, dedupId: string, delayMs: number, step: number | string): Promise<void> {
   if (getQueueBackend() === 'memory') {
     const timer = setTimeout(() => {
       try {
@@ -54,7 +58,7 @@ async function scheduleJob(jobName: string, data: CloneJob, dedupId: string, del
     timer.unref?.()
     return
   }
-  await enqueue(QUEUE_NAMES.personaClone, jobName, data, { ...dedupOpts(dedupId), delay: Math.max(0, delayMs) })
+  await enqueue(QUEUE_NAMES.personaClone, jobName, data, { ...dedupOpts(`${dedupId}:${step}`), delay: Math.max(0, delayMs) })
 }
 
 /** 轮询退避：15s 起，按 attempts 指数退避，上限 2min（FR-C2） */
@@ -190,7 +194,7 @@ export async function submitAvatar(avatarId: string): Promise<void> {
       detail: { avatarId, vendorTaskId: accept.taskId, mode: handover.mode, attempts },
     })
     logger.info({ avatarId, vendorTaskId: accept.taskId, mode: handover.mode }, 'persona.clone.avatar_submitted')
-    await scheduleJob('avatar_poll', { kind: 'avatar', recordId: avatarId }, `avatar-poll-${avatarId}`, pollDelayOf(attempts))
+    await scheduleJob('avatar_poll', { kind: 'avatar', recordId: avatarId }, `avatar-poll-${avatarId}`, pollDelayOf(attempts), `s${attempts}`)
   } catch (e) {
     if (e instanceof HiflyVendorError) {
       // 明确业务码失败：failed（原因经业务码映射，FR-C2）
@@ -273,7 +277,7 @@ export async function pollAvatar(avatarId: string): Promise<PersonaAvatar> {
         toDb(utcNow()),
         avatarId,
       ])
-      await scheduleJob('avatar_poll', { kind: 'avatar', recordId: avatarId }, `avatar-poll-${avatarId}`, pollDelayOf(attempts))
+      await scheduleJob('avatar_poll', { kind: 'avatar', recordId: avatarId }, `avatar-poll-${avatarId}`, pollDelayOf(attempts), attempts)
     }
   } catch (e) {
     if (e instanceof HiflyVendorError) {
@@ -283,7 +287,7 @@ export async function pollAvatar(avatarId: string): Promise<PersonaAvatar> {
     } else {
       // 查询类网络异常：不判失败，继续等待（R2）
       const attempts = await bumpAttempts('persona_avatar', avatarId)
-      await scheduleJob('avatar_poll', { kind: 'avatar', recordId: avatarId }, `avatar-poll-${avatarId}`, pollDelayOf(attempts))
+      await scheduleJob('avatar_poll', { kind: 'avatar', recordId: avatarId }, `avatar-poll-${avatarId}`, pollDelayOf(attempts), attempts)
       logger.debug({ avatarId, err: (e as Error).message }, 'persona.clone.avatar_poll_retry')
     }
   }
@@ -442,7 +446,7 @@ export async function submitVoice(voiceId: string): Promise<void> {
       detail: { voiceId, vendorTaskId: accept.taskId, mode: handover.mode, attempts },
     })
     logger.info({ voiceId, vendorTaskId: accept.taskId, mode: handover.mode }, 'persona.clone.voice_submitted')
-    await scheduleJob('voice_poll', { kind: 'voice', recordId: voiceId }, `voice-poll-${voiceId}`, pollDelayOf(attempts))
+    await scheduleJob('voice_poll', { kind: 'voice', recordId: voiceId }, `voice-poll-${voiceId}`, pollDelayOf(attempts), `s${attempts}`)
   } catch (e) {
     if (e instanceof HiflyVendorError) {
       await casStatus('persona_voice', voiceId, 'submitting', 'failed', { error: vendorMessage(e) })
@@ -526,7 +530,7 @@ export async function pollVoice(voiceId: string): Promise<PersonaVoice> {
         toDb(utcNow()),
         voiceId,
       ])
-      await scheduleJob('voice_poll', { kind: 'voice', recordId: voiceId }, `voice-poll-${voiceId}`, pollDelayOf(attempts))
+      await scheduleJob('voice_poll', { kind: 'voice', recordId: voiceId }, `voice-poll-${voiceId}`, pollDelayOf(attempts), attempts)
     }
   } catch (e) {
     if (e instanceof HiflyVendorError) {
@@ -535,7 +539,7 @@ export async function pollVoice(voiceId: string): Promise<PersonaVoice> {
       await notifyCloneState(voice.personaId, 'clone_failed', voiceId, `声音「${voice.name}」克隆失败：${message}`)
     } else {
       const attempts = await bumpAttempts('persona_voice', voiceId)
-      await scheduleJob('voice_poll', { kind: 'voice', recordId: voiceId }, `voice-poll-${voiceId}`, pollDelayOf(attempts))
+      await scheduleJob('voice_poll', { kind: 'voice', recordId: voiceId }, `voice-poll-${voiceId}`, pollDelayOf(attempts), attempts)
       logger.debug({ voiceId, err: (e as Error).message }, 'persona.clone.voice_poll_retry')
     }
   } finally {
@@ -582,7 +586,7 @@ export async function reconcileVoice(voiceId: string, operator: string): Promise
       targetId: voice.personaId,
       detail: { ...evidence, result: 'running', vendorVoiceId: matched.id, matchedTitle: matched.title },
     })
-    await scheduleJob('voice_poll', { kind: 'voice', recordId: voiceId }, `voice-poll-${voiceId}`, pollDelayOf(1))
+    await scheduleJob('voice_poll', { kind: 'voice', recordId: voiceId }, `voice-poll-${voiceId}`, pollDelayOf(1), 's1')
     return (await getVoiceById(voiceId, true))!
   }
 
@@ -664,7 +668,7 @@ export async function submitPreview(previewId: string): Promise<void> {
       targetId: voice.personaId,
       detail: { previewId, voiceId: voice.id, vendorTaskId: accept.taskId },
     })
-    await scheduleJob('preview_poll', { kind: 'preview', recordId: previewId }, `preview-poll-${previewId}`, pollDelayOf(1))
+    await scheduleJob('preview_poll', { kind: 'preview', recordId: previewId }, `preview-poll-${previewId}`, pollDelayOf(1), 's1')
   } catch (e) {
     if (e instanceof HiflyVendorError) {
       await db.run('UPDATE `persona_voice_preview` SET `status` = ?, `error` = ? WHERE `id` = ?', [
@@ -719,11 +723,11 @@ export async function pollPreview(previewId: string): Promise<void> {
         toDb(utcNow()),
         previewId,
       ])
-      await scheduleJob('preview_poll', { kind: 'preview', recordId: previewId }, `preview-poll-${previewId}`, pollDelayOf(attempts))
+      await scheduleJob('preview_poll', { kind: 'preview', recordId: previewId }, `preview-poll-${previewId}`, pollDelayOf(attempts), attempts)
     }
   } catch (e) {
     logger.debug({ previewId, err: (e as Error).message }, 'persona.clone.preview_poll_retry')
-    await scheduleJob('preview_poll', { kind: 'preview', recordId: previewId }, `preview-poll-${previewId}`, pollDelayOf(2))
+    await scheduleJob('preview_poll', { kind: 'preview', recordId: previewId }, `preview-poll-${previewId}`, pollDelayOf(2), `r${Date.now()}`)
   } finally {
     await cleanup(tempFiles)
   }

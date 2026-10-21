@@ -14,7 +14,7 @@ import {
 } from './repo.js'
 import { logger } from '../../log.js'
 import { err } from '../../errors.js'
-import { clamp } from '../../lib/util.js'
+import { clamp, jdec } from '../../lib/util.js'
 import { recordOperation } from '../audit/repo.js'
 
 export const MAX_BATCH_TOPICS = 100 // P2-7：单批总量上限
@@ -184,7 +184,7 @@ export async function runGeneration(batchId: string): Promise<void> {
 
   const db = getDb()
   // Rows are the durable checkpoint, including writes made before a worker crash.
-  const existing = await db.all<{ source_id: string; persona_ids: string; title: string }>(
+  const existing = await db.all<{ source_id: string; persona_ids: unknown; title: string }>(
     'SELECT `source_id`, `persona_ids`, `title` FROM `topic` WHERE `batch_id` = ?', [batchId],
   )
   const pairRows = (rows: typeof existing, newsId: string, personaId: string) =>
@@ -243,7 +243,7 @@ export async function runGeneration(batchId: string): Promise<void> {
         await db.tx(async (tx) => {
           await tx.get('SELECT `id` FROM `topic_generation_batch` WHERE `id` = ?' +
             (tx.kind === 'mysql' ? ' FOR UPDATE' : ''), [batchId])
-          const rows = await tx.all<{ source_id: string; persona_ids: string; title: string }>(
+          const rows = await tx.all<{ source_id: string; persona_ids: unknown; title: string }>(
             'SELECT `source_id`, `persona_ids`, `title` FROM `topic` WHERE `batch_id` = ?', [batchId],
           )
           const current = pairRows(rows, news.id, persona.id)
@@ -275,7 +275,7 @@ export async function runGeneration(batchId: string): Promise<void> {
   }
 
   if (cost) await addBatchCost(batchId, cost)
-  const finalRows = await db.all<{ source_id: string; persona_ids: string; title: string }>(
+  const finalRows = await db.all<{ source_id: string; persona_ids: unknown; title: string }>(
     'SELECT `source_id`, `persona_ids`, `title` FROM `topic` WHERE `batch_id` = ?', [batchId],
   )
   const produced = finalRows.length
@@ -290,14 +290,10 @@ export async function runGeneration(batchId: string): Promise<void> {
 }
 
 /** 子任务幂等键：news_id + persona_ids（与 topic 表存储形式一致） */
-function pairKey(newsId: string, personaIdsJson: string): string {
-  let ids: string[] = []
-  try {
-    const parsed = JSON.parse(personaIdsJson)
-    ids = Array.isArray(parsed) ? parsed.map(String) : []
-  } catch {
-    ids = []
-  }
+function pairKey(newsId: string, personaIdsJson: unknown): string {
+  // MySQL 的 JSON 列由驱动解析成数组，SQLite 为文本——统一走 jdec
+  const parsed = jdec<unknown>(personaIdsJson, [])
+  const ids: string[] = Array.isArray(parsed) ? parsed.map(String) : []
   return `${newsId}::${ids.join(',')}`
 }
 

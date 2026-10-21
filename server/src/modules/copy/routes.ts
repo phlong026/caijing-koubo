@@ -4,7 +4,7 @@ import { registerCopyWorkspaceRoutes } from './workspace.js'
 import { err } from '../../errors.js'
 import { config } from '../../config.js'
 import { chat, resolveLlm } from '../../integrations/copy-llm/index.js'
-import { parsePaging, pageResult, toInt } from '../../lib/util.js'
+import { parsePaging, pageResult, toInt, jdec } from '../../lib/util.js'
 import { recordOperation } from '../audit/repo.js'
 import {
   DURATION_TIERS,
@@ -389,12 +389,7 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
             copy.extractCacheId,
           ])
         : null
-      let sentences: unknown = null
-      try {
-        sentences = cache?.sentences ? JSON.parse(cache.sentences) : null
-      } catch {
-        sentences = null
-      }
+      const sentences: unknown = jdec<unknown>(cache?.sentences, null)
       return ok({
         type: 'benchmark',
         videoId: copy.sourceRefId,
