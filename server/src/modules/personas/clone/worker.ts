@@ -79,11 +79,47 @@ async function enqueuePoll(kind: PollKind, recordId: string): Promise<void> {
   await enqueue(QUEUE_NAMES.personaClone, POLL_JOBS[kind], data, dedupOpts(dedupId))
 }
 
-/** 把到期的 running 记录入队轮询；返回入队数 */
+/**
+ * P2-8：提交任务丢失的记录重新入队提交（内存队列降级时进程重启会丢掉未执行的任务）。
+ * 只处理创建超过 2 分钟仍停在 pending 的分身 / 声音，以及还没拿到厂商任务号的试听；
+ * 提交步骤本身有状态守卫（pending → submitting 的 CAS），重复入队不会重复提交。
+ */
+async function resubmitStalePending(): Promise<number> {
+  const db = getDb()
+  const before = toDb(new Date(Date.now() - 2 * 60_000))
+  const jobs: Array<{ name: string; data: CloneJob; dedupId: string }> = []
+  const avatars = await db.all<{ id: string }>(
+    "SELECT `id` FROM `persona_avatar` WHERE `status` = 'pending' AND `deleted_at` IS NULL AND `created_at` < ? LIMIT 50",
+    [before],
+  )
+  for (const r of avatars) jobs.push({ name: 'avatar_submit', data: { kind: 'avatar', recordId: r.id }, dedupId: `avatar-submit-${r.id}` })
+  const voices = await db.all<{ id: string }>(
+    "SELECT `id` FROM `persona_voice` WHERE `status` = 'pending' AND `is_sample` = 0 AND `deleted_at` IS NULL AND `created_at` < ? LIMIT 50",
+    [before],
+  )
+  for (const r of voices) jobs.push({ name: 'voice_submit', data: { kind: 'voice', recordId: r.id }, dedupId: `voice-submit-${r.id}` })
+  // 试听提交结果未知时也停在这个状态；只在 30 分钟内补投，避免对持续失败的请求反复打厂商
+  const previews = await db.all<{ id: string }>(
+    "SELECT `id` FROM `persona_voice_preview` WHERE `status` = 'running' AND `vendor_task_id` IS NULL AND `created_at` < ? AND `created_at` > ? LIMIT 50",
+    [before, toDb(new Date(Date.now() - 30 * 60_000))],
+  )
+  for (const r of previews) jobs.push({ name: 'preview_submit', data: { kind: 'preview', recordId: r.id }, dedupId: `preview-submit-${r.id}` })
+  for (const j of jobs) {
+    if (getQueueBackend() === 'memory') memEnqueue(QUEUE_NAMES.personaClone, j.name, j.data, { deduplication: { id: j.dedupId } })
+    else await enqueue(QUEUE_NAMES.personaClone, j.name, j.data, dedupOpts(j.dedupId))
+  }
+  if (jobs.length) logger.warn({ count: jobs.length }, 'persona.clone.resubmit_stale_pending')
+  return jobs.length
+}
+
+/** 把到期的 running 记录入队轮询，并补投丢失的提交任务；返回入队数 */
 export async function sweepDuePolls(): Promise<number> {
   const db = getDb()
   const now = toDb(utcNow())
-  let enqueued = 0
+  let enqueued = await resubmitStalePending().catch((e) => {
+    logger.warn({ err: (e as Error).message }, 'persona.clone.resubmit_failed')
+    return 0
+  })
   for (const kind of Object.keys(POLL_TABLES) as PollKind[]) {
     const table = POLL_TABLES[kind]
     const scope = kind === 'voice' ? ' AND `is_sample` = 0 AND `deleted_at` IS NULL' : kind === 'avatar' ? ' AND `deleted_at` IS NULL' : ''

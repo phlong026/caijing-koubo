@@ -19,6 +19,8 @@ const { runMigrations } = await import('../src/db/migrate.js')
 const { createPersona, getPersonaById, updatePersona, archivePersona } = await import('../src/modules/personas/repo.js')
 const { getProductionProfile, checkReadiness } = await import('../src/modules/personas/readiness.js')
 const { cleanExpiredPreviews } = await import('../src/modules/personas/clone/voices.js')
+const { sweepDuePolls } = await import('../src/modules/personas/clone/worker.js')
+const { memQueueStats } = await import('../src/queue/memory.js')
 const { paths } = await import('../src/config.js')
 const { deriveStatus } = await import('../src/modules/personas/policy.js')
 const { toDb, utcNow } = await import('../src/lib/time.js')
@@ -241,6 +243,21 @@ try {
     assert.ok((await cleanExpiredPreviews()) >= 1)
     assert.equal(await db.get('SELECT id FROM persona_voice_preview WHERE id = ?', [id]), null)
     assert.equal(fs.existsSync(local), false)
+  })
+
+  await test('P2-8 提交任务丢失（内存队列重启）的 pending 分身由扫描补投', async () => {
+    const k = await readyPersona('回归辛')
+    const id = uid('pav')
+    const old = toDb(new Date(Date.now() - 5 * 60_000))
+    await db.run(
+      `INSERT INTO persona_avatar (id, persona_id, name, source_asset_id, source_kind, vendor_title, short_ref,
+         status, consent_id, authorization_id, idempotency_key, request_hash, created_at, updated_at)
+       VALUES (?, ?, '丢失提交', 'asset', 'video', 't', ?, 'pending', 'c', ?, ?, 'h', ?, ?)`,
+      [id, k.personaId, id.slice(-6), k.authId, id, old, old],
+    )
+    const waitingBefore = memQueueStats()['persona-clone']?.waiting ?? 0
+    assert.ok((await sweepDuePolls()) >= 1)
+    assert.ok((memQueueStats()['persona-clone']?.waiting ?? 0) > waitingBefore)
   })
 
   console.log(`${passed} persona regression groups passed`)
