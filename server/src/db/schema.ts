@@ -529,6 +529,7 @@ export const TABLES: TableDef[] = [
       vc('revoked_by', 64, { nullable: true }),
       dt('revoked_at'),
       dt('remind_sent_at'), // 到期前 30 天提醒已发
+      dt('expired_notified_at'), // P2-6：到期通知只发一次
       vc('note', 255, { nullable: true }),
       vc('created_by', 64, { nullable: true }),
       dt('created_at'),

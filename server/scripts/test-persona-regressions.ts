@@ -22,6 +22,7 @@ const { deriveStatus } = await import('../src/modules/personas/policy.js')
 const { toDb, utcNow } = await import('../src/lib/time.js')
 const { uploadAsset, setCoverAsset } = await import('../src/modules/personas/assets.js')
 const { config } = await import('../src/config.js')
+const { scanAuthExpiry, uploadAuthorization } = await import('../src/modules/personas/authorizations.js')
 const db = await initDb()
 // 用进程内队列：不能把任务投进本机 Redis（会被正在运行的开发实例消费）
 const { setQueueBackend, closeQueues, redis } = await import('../src/queue/index.js')
@@ -189,6 +190,38 @@ try {
     await setCoverAsset(p.id, photo, 'test')
     await archivePersona(p.id, 'test')
     await assert.rejects(setCoverAsset(p.id, photo, 'test'), (e: any) => e?.code === 'PERSONA_ARCHIVED')
+  })
+
+  await test('P2-6 到期日按北京时间当天结束；已到期授权只通知一次', async () => {
+    const p = await createPersona({ name: '回归庚', line: 'manager', operator: 'test' })
+    const pdf = join(temp, 'auth.pdf')
+    ;(await import('node:fs')).writeFileSync(pdf, '%PDF-1.4\n%%EOF\n')
+    const head = Buffer.alloc(16)
+    Buffer.from('%PDF-1.4\n').copy(head)
+    const auth = await uploadAuthorization({
+      personaId: p.id, grantorName: '授权人', scopes: ['portrait'], effectiveFrom: '2026-01-01', expiresAt: '2027-06-30',
+      filePath: pdf, filename: 'auth.pdf', size: statSync(pdf).size, head, operator: 'test',
+    })
+    assert.equal(auth.expiresAt, '2027-06-30T15:59:59.000Z')
+
+    const now = toDb(utcNow())
+    const expiredId = uid('auth')
+    await db.run(
+      `INSERT INTO persona_authorization (id, persona_id, grantor_name, scopes, file_key, file_mime, file_size, file_sha256,
+         effective_from, expires_at, status, created_by, created_at, updated_at)
+       VALUES (?, ?, 'x', '["portrait"]', 'k', 'application/pdf', 1, 'x', '2020-01-01', '2021-01-01 15:59:59', 'verified', 'test', ?, ?)`,
+      [expiredId, p.id, now, now],
+    )
+    await scanAuthExpiry()
+    await db.run('UPDATE persona_reminder SET read_at = ? WHERE ref_id = ?', [now, expiredId])
+    await scanAuthExpiry()
+    const logs = await db.get<{ c: number }>(
+      "SELECT COUNT(*) AS c FROM operation_log WHERE action = 'persona.authorization_expired' AND detail LIKE ?",
+      [`%${expiredId}%`],
+    )
+    assert.equal(Number(logs?.c), 1)
+    const reminders = await db.get<{ c: number }>('SELECT COUNT(*) AS c FROM persona_reminder WHERE ref_id = ?', [expiredId])
+    assert.equal(Number(reminders?.c), 1)
   })
 
   console.log(`${passed} persona regression groups passed`)

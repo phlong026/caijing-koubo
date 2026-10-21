@@ -136,7 +136,8 @@ export async function uploadAuthorization(input: UploadAuthorizationInput): Prom
       input.size,
       sha256,
       effectiveFrom,
-      `${expiresAt} 23:59:59`,
+      // P2-6：到期日按北京时间当天 23:59:59 计（存 UTC），原来按 UTC 存相当于北京时间次日 07:59:59
+      toDb(new Date(`${expiresAt}T23:59:59+08:00`)),
       String(input.note ?? '').trim().slice(0, 255) || null,
       input.operator,
       now,
@@ -256,7 +257,9 @@ export async function scanAuthExpiry(): Promise<{ expiring: number; expired: num
     if (!auth.expiresAt) continue
     const expires = new Date(auth.expiresAt)
     if (expires.getTime() <= now.getTime()) {
-      // 已到期：落 operation_log + 提醒（读时派生已使其失效，这里只做通知）
+      // 已到期：落 operation_log + 提醒（读时派生已使其失效，这里只做通知）。
+      // P2-6：只通知一次，原来每天扫描都会重复写日志，提醒被读过后也会每天重新生成
+      if (r.expired_notified_at) continue
       expired += 1
       await recordOperation({
         operator: 'system',
@@ -272,6 +275,7 @@ export async function scanAuthExpiry(): Promise<{ expiring: number; expired: num
         message: `授权已到期（${auth.expiresAt.slice(0, 10)}），依赖它的分身 / 声音已不可用`,
         operator: 'system',
       }).catch(() => undefined)
+      await db.run('UPDATE `persona_authorization` SET `expired_notified_at` = ? WHERE `id` = ?', [toDb(now), auth.id])
       continue
     }
     const daysLeft = (expires.getTime() - now.getTime()) / 86_400_000
