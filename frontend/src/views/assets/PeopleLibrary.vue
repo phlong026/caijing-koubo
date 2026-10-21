@@ -1,180 +1,299 @@
 <template>
   <div class="p-7 pb-10 max-w-[1440px] mx-auto">
     <PageHead title="人物库">
-      <template #sub>
-        <div>
-          <div>管理人物形象、口播分身与声音绑定</div>
-          <div>演示数据 · 2026年10月12日</div>
-        </div>
-      </template>
+      <template #sub>管理人物 IP 定位、授权材料、形象素材、口播分身与声音；授权核验与素材审核由审核员完成。</template>
       <template #actions>
-        <a-button type="primary"><template #icon><icon-plus /></template>新增人物</a-button>
+        <a-popover trigger="click" position="br" @popup-visible-change="(v) => v && loadReminders()">
+          <a-badge :count="unread" :max-count="99">
+            <a-button><template #icon><icon-notification /></template>提醒</a-button>
+          </a-badge>
+          <template #content>
+            <div class="reminder-pop">
+              <div class="flex items-center justify-between mb-2">
+                <strong>人物库提醒</strong>
+                <a-button size="mini" type="text" :disabled="!unread" @click="readAll">全部已读</a-button>
+              </div>
+              <p v-if="!reminders.length" class="mw-subtle">暂无提醒</p>
+              <ul v-else>
+                <li v-for="r in reminders" :key="r.id" :class="{ unread: !r.readAt }" @click="openPersona(r.personaId)">
+                  <span class="mw-tag" :class="r.kind.startsWith('clone') ? 'mw-tag-red' : 'mw-tag-yellow'">{{ REMINDER_LABELS[r.kind] }}</span>
+                  <span class="reminder-msg">{{ r.message }}</span>
+                  <span class="mw-subtle">{{ fmtTime(r.createdAt) }}</span>
+                </li>
+              </ul>
+            </div>
+          </template>
+        </a-popover>
+        <a-button type="primary" @click="createVisible = true"><template #icon><icon-plus /></template>新增人物</a-button>
       </template>
     </PageHead>
 
-    <div class="flex items-center gap-4 mb-4">
-      <a-tabs v-model:active-key="tab" type="line" class="mw-tabs flex-1">
-        <a-tab-pane key="all"><template #title>全部 <span class="mw-subtle">4</span></template></a-tab-pane>
-        <a-tab-pane key="manager"><template #title>经理 IP <span class="mw-subtle">1</span></template></a-tab-pane>
-        <a-tab-pane key="kos"><template #title>员工 KOS <span class="mw-subtle">3</span></template></a-tab-pane>
-        <a-tab-pane key="persona"><template #title>素人 <span class="mw-subtle">0</span></template></a-tab-pane>
+    <div class="flex items-center gap-4 mb-4 flex-wrap">
+      <a-tabs v-model:active-key="lineTab" type="line" class="mw-tabs flex-1">
+        <a-tab-pane key="all"><template #title>全部 <span class="mw-subtle">{{ stats.total }}</span></template></a-tab-pane>
+        <a-tab-pane v-for="(label, key) in LINES" :key="key"><template #title>{{ label }} <span class="mw-subtle">{{ stats.lines[key] ?? 0 }}</span></template></a-tab-pane>
       </a-tabs>
-      <a-input-search :style="{ width: '220px' }" placeholder="搜索人物名称..." allow-clear />
+      <a-select v-model="statusFilter" :style="{ width: '150px' }" aria-label="状态筛选">
+        <a-option value="all" label="全部状态（含停用）" />
+        <a-option value="usable" label="仅可用" />
+        <a-option value="incomplete" label="可用但待完善" />
+        <a-option value="disabled" label="已停用" />
+        <a-option value="archived" label="已归档" />
+      </a-select>
+      <a-input-search v-model="keyword" :style="{ width: '220px' }" placeholder="搜索人物名称..." allow-clear @search="load" @press-enter="load" @clear="load" />
     </div>
 
-    <div class="grid grid-cols-[1fr_380px] gap-5 items-start">
-      <!-- ============ 人物卡片 ============ -->
-      <div class="grid grid-cols-2 gap-4">
-        <div
-          v-for="p in filtered"
-          :key="p.id"
-          class="mw-card p-4 cursor-pointer transition-all"
-          :class="currentId === p.id ? 'border-[color:var(--mw-primary)] ring-1 ring-[color:var(--mw-primary)]' : 'hover:shadow-sm'"
-          @click="currentId = p.id"
-        >
-          <div class="relative rounded-[10px] overflow-hidden" style="aspect-ratio: 16/9; background: linear-gradient(150deg,#42506266,#8a97a855), linear-gradient(#c8d3e2,#e7edf4)">
-            <div class="absolute inset-0 flex items-center justify-center">
-              <div class="w-10 h-10 rounded-full bg-black/25 flex items-center justify-center"><icon-play-arrow-fill :size="20" style="color:#fff" /></div>
-            </div>
-            <span class="absolute bottom-2 right-2 px-1.5 py-0.5 rounded-[4px] bg-black/50 text-white text-[11px]">{{ p.duration }}</span>
-          </div>
-          <div class="mt-3 flex items-center gap-2">
-            <span class="text-[15px] font-semibold">{{ p.name }}</span>
-            <LineTag :line="p.line" />
-          </div>
-          <div class="mw-subtle mt-1">{{ p.desc }}</div>
-          <div class="mt-2 flex items-center gap-1.5 flex-wrap">
-            <span v-for="s in p.status" :key="s.text" class="mw-tag" :class="s.cls">{{ s.text }}</span>
-          </div>
-          <div class="mt-3 pt-2.5 border-t border-[#f2f4f7] flex items-center gap-4 text-[12px] text-[var(--mw-text2)]">
-            <span class="flex items-center gap-1"><icon-image :size="14" class="text-[var(--mw-text3)]" />照片 {{ p.photo }}</span>
-            <span class="flex items-center gap-1"><icon-play-circle :size="14" class="text-[var(--mw-text3)]" />分身 {{ p.avatar }}</span>
-            <span class="flex items-center gap-1"><icon-sound :size="14" class="text-[var(--mw-text3)]" />声音 {{ p.voice }}</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- ============ 详情面板 ============ -->
-      <div class="mw-card p-5" v-if="current">
-        <div class="flex items-center gap-2">
-          <span class="text-[18px] font-bold">{{ current.name }}</span>
-          <LineTag :line="current.line" />
-        </div>
-        <div class="mw-subtle mt-0.5">当前选中 · 人物资产</div>
-
-        <a-tabs v-model:active-key="detailTab" size="small" class="mw-tabs people-tabs mt-2">
-          <a-tab-pane key="ip" title="IP 定位" />
-          <a-tab-pane key="photo" title="形象照片" />
-          <a-tab-pane key="avatar" title="口播分身" />
-          <a-tab-pane key="voice" title="声音档案" />
-          <a-tab-pane key="bg" title="背景与空镜" />
-        </a-tabs>
-
-        <!-- IP 定位 -->
-        <div v-if="detailTab === 'ip'">
-          <div class="flex justify-end"><span class="mw-tag mw-tag-gray">示例配置</span></div>
-          <div class="flex flex-col">
-            <div class="mw-form-row"><div class="mw-form-label">角色类型</div><a-select v-model="current.positioning.role" :style="{ width: '200px' }" /></div>
-            <div class="mw-form-row"><div class="mw-form-label">专业方向</div><a-select v-model="current.positioning.major" :style="{ width: '200px' }" /></div>
-            <div class="mw-form-row"><div class="mw-form-label">表达风格</div><a-select v-model="current.positioning.style" :style="{ width: '200px' }" /></div>
-            <div class="mw-form-row"><div class="mw-form-label">内容方向</div><a-select v-model="current.positioning.content" :style="{ width: '200px' }" /></div>
-            <div class="mw-form-row items-start">
-              <div class="mw-form-label pt-1">内容配比</div>
-              <div>
-                <div class="mw-subtle mb-1.5">示例方向，可编辑：具体配比待确认。</div>
-                <div class="flex gap-2 flex-wrap">
-                  <span v-for="m in current.positioning.mix" :key="m.text" class="mw-tag cursor-pointer" :class="m.cls">
-                    {{ m.text }} <icon-edit :size="11" />
-                  </span>
-                </div>
+    <div class="people-layout">
+      <section aria-label="人物列表">
+        <a-spin :loading="loading" class="w-full">
+          <p v-if="error" class="mw-subtle" role="alert">{{ error }}</p>
+          <div v-else-if="!items.length && !loading" class="mw-card p-8 text-center mw-subtle">没有符合条件的人物，可点击右上角「新增人物」。</div>
+          <div class="people-grid">
+            <button
+              v-for="p in items"
+              :key="p.id"
+              type="button"
+              class="mw-card people-card"
+              :class="{ active: currentId === p.id }"
+              :aria-pressed="currentId === p.id"
+              @click="openPersona(p.id)"
+            >
+              <div class="people-cover">
+                <img v-if="p.coverUrl" :src="p.coverUrl" :alt="`${p.name} 封面`" loading="lazy" />
+                <span v-else class="people-cover-empty">{{ p.name.slice(0, 1) }}</span>
               </div>
-            </div>
+              <div class="mt-3 flex items-center gap-2">
+                <span class="text-[15px] font-semibold truncate">{{ p.name }}</span>
+                <LineTag :line="p.line" />
+              </div>
+              <div class="mw-subtle mt-1 truncate">{{ p.description || p.ipProfile?.role || '未填写简介' }}</div>
+              <div class="mt-2 flex items-center gap-1.5 flex-wrap">
+                <span class="mw-tag" :class="toneClass(PERSONA_STATUS[p.status].tone)">{{ PERSONA_STATUS[p.status].label }}</span>
+                <span v-for="t in p.extraTags" :key="t" class="mw-tag" :class="toneClass(EXTRA_TAGS[t].tone)">{{ EXTRA_TAGS[t].label }}</span>
+              </div>
+              <div class="people-counts">
+                <span>照片 {{ p.counts.photos }}</span>
+                <span>分身 {{ p.counts.avatars }}</span>
+                <span>声音 {{ p.counts.voices }}</span>
+                <span>账号 {{ p.counts.bindings }}</span>
+              </div>
+            </button>
           </div>
-          <a-button type="primary" long class="mt-3" @click="$message.success('IP 定位已保存（演示）')">保存定位</a-button>
+        </a-spin>
+      </section>
 
-          <div class="mt-4 pt-3 border-t border-[var(--mw-border)] flex flex-col gap-2.5 text-[13px]">
-            <div class="flex"><span class="w-[76px] text-[var(--mw-text3)]">归属主体</span><span>{{ current.owner }}</span></div>
-            <div class="flex"><span class="w-[76px] text-[var(--mw-text3)]">可用范围</span><span>{{ current.positioning.scope }}</span></div>
-            <div class="flex items-center">
-              <span class="w-[76px] text-[var(--mw-text3)]">授权材料</span>
-              <span class="mw-tag" :class="current.positioning.auth.startsWith('待') ? 'mw-tag-yellow' : 'mw-tag-green'">{{ current.positioning.auth }}</span>
-              <div class="flex-1"></div>
-              <icon-right :size="13" class="text-[var(--mw-text3)]" />
-            </div>
-          </div>
-        </div>
-
-        <!-- 形象照片 -->
-        <div v-else-if="detailTab === 'photo'" class="grid grid-cols-3 gap-2">
-          <ThumbBox v-for="i in 6" :key="i" :seed="current.id + i" :width="100" :height="100" />
-        </div>
-
-        <!-- 口播分身 -->
-        <div v-else-if="detailTab === 'avatar'" class="flex flex-col gap-2.5">
-          <div v-for="i in current.avatar" :key="i" class="p-3 rounded-[10px] border border-[var(--mw-border)] flex items-center gap-3">
-            <ThumbBox :seed="current.id + 'av' + i" :width="52" :height="36" />
-            <div class="text-[13px]">分身 {{ i }} · 1080P</div>
-            <div class="flex-1"></div>
-            <a-button size="mini">预览</a-button>
-          </div>
-          <div v-if="!current.avatar" class="mw-subtle text-center py-6">暂无口播分身</div>
-        </div>
-
-        <!-- 声音档案 -->
-        <div v-else-if="detailTab === 'voice'" class="flex flex-col gap-2.5">
-          <div class="p-3 rounded-[10px] border border-[var(--mw-border)] flex items-center gap-3">
-            <icon-sound :size="18" class="text-[color:var(--mw-primary)]" />
-            <div>
-              <div class="text-[13px] font-medium">{{ current.name }} · 自录声音</div>
-              <div class="mw-subtle">WAV · 48kHz · 已绑定</div>
-            </div>
-            <div class="flex-1"></div>
-            <a-button size="mini" @click="$message.info('试听播放中（演示）')">试听</a-button>
-          </div>
-          <div class="mw-subtle">声音共享须单独核验授权。</div>
-        </div>
-
-        <!-- 背景与空镜 -->
-        <div v-else class="flex flex-col gap-2.5">
-          <div v-for="b in ['背景图', '背景视频', '空镜视频']" :key="b" class="p-3 rounded-[10px] border border-[var(--mw-border)] flex items-center gap-3">
-            <ThumbBox :seed="current.id + b" :width="52" :height="36" />
-            <div class="text-[13px]">{{ b }}</div>
-            <div class="flex-1"></div>
-            <span class="mw-tag mw-tag-gray">已配置</span>
-          </div>
-        </div>
-
-        <div class="mt-4 pt-3 border-t border-[var(--mw-border)] cursor-pointer" @click="detailTab = 'bg'">
-          <div class="flex items-center gap-2">
-            <icon-play-circle :size="17" class="text-[color:var(--mw-primary)]" />
-            <div class="text-[13.5px] font-medium">人物专属背景与空镜</div>
-            <div class="flex-1"></div>
-            <span class="mw-link flex items-center whitespace-nowrap">管理资源 <icon-right :size="12" /></span>
-          </div>
-          <div class="mw-subtle mt-1 pl-6">背景图、背景视频、空镜视频</div>
-        </div>
-      </div>
+      <section class="mw-card p-5 people-detail" aria-label="人物详情">
+        <PersonaDetail v-if="currentId && options" :key="currentId" :persona-id="currentId" :options="options" @changed="onChanged" />
+        <div v-else class="mw-subtle text-center py-16">从左侧选择一个人物查看详情</div>
+      </section>
     </div>
 
-    <div class="mt-4 mw-subtle flex items-center gap-1"><icon-info-circle :size="13" />素人矩阵不使用数字人口播。声音共享须单独核验授权。</div>
-    <div class="mw-corner-note">原型预览 · 演示数据</div>
+    <CreatePersonaModal v-if="options" v-model:visible="createVisible" :options="options" @created="onCreated" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, toRaw } from 'vue'
+import { onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { Message } from '@arco-design/web-vue'
 import PageHead from '@/components/PageHead.vue'
 import LineTag from '@/components/LineTag.vue'
-import ThumbBox from '@/components/ThumbBox.vue'
-import { people } from '@/mocks/data'
+import PersonaDetail from './people/PersonaDetail.vue'
+import CreatePersonaModal from './people/CreatePersonaModal.vue'
+import {
+  getPersonaOptions,
+  getPersonas,
+  getPersonaStats,
+  getReminders,
+  markRemindersRead,
+  type PersonaLine,
+  type PersonaListItem,
+  type PersonaOptions,
+  type PersonaReminder,
+} from '@/api/personas'
+import { EXTRA_TAGS, PERSONA_STATUS, REMINDER_LABELS, fmtTime, toneClass } from './people/labels'
 
-const tab = ref('all')
-const detailTab = ref('ip')
-const currentId = ref('p1')
+const LINES: Record<PersonaLine, string> = { manager: '经理 IP', kos: '员工 KOS', persona: '素人矩阵' }
 
-const filtered = computed(() => (tab.value === 'all' ? people : people.filter((p) => p.line === tab.value)))
-const current = computed(() => {
-  const p = people.find((x) => x.id === currentId.value)
-  return p ? toRaw(p) : undefined
+const route = useRoute()
+const router = useRouter()
+const options = ref<PersonaOptions | null>(null)
+const items = ref<PersonaListItem[]>([])
+const loading = ref(false)
+const error = ref('')
+const lineTab = ref<'all' | PersonaLine>('all')
+const statusFilter = ref<'all' | 'usable' | 'incomplete' | 'disabled' | 'archived'>('all')
+const keyword = ref('')
+const currentId = ref<string | null>(typeof route.query.id === 'string' ? route.query.id : null)
+const createVisible = ref(false)
+const stats = ref<{ lines: Partial<Record<PersonaLine, number>>; total: number }>({ lines: {}, total: 0 })
+const unread = ref(0)
+const reminders = ref<PersonaReminder[]>([])
+
+async function load(): Promise<void> {
+  loading.value = true
+  error.value = ''
+  try {
+    const status = statusFilter.value === 'all' ? undefined : statusFilter.value
+    const r = await getPersonas({
+      line: lineTab.value === 'all' ? undefined : lineTab.value,
+      keyword: keyword.value.trim() || undefined,
+      includeDisabled: true,
+      includeArchived: statusFilter.value === 'archived',
+      status,
+    })
+    items.value = r.items
+    if (!currentId.value && r.items.length) currentId.value = r.items[0]!.id
+  } catch (e) {
+    error.value = (e as Error).message
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadStats(): Promise<void> {
+  try {
+    const s = await getPersonaStats()
+    stats.value = { lines: s.lines, total: s.total }
+    unread.value = s.unreadReminders
+  } catch {
+    /* 统计失败不影响列表 */
+  }
+}
+
+async function loadReminders(): Promise<void> {
+  try {
+    const r = await getReminders()
+    reminders.value = r.items.slice(0, 30)
+    unread.value = r.unread
+  } catch (e) {
+    Message.error((e as Error).message)
+  }
+}
+
+async function readAll(): Promise<void> {
+  try {
+    await markRemindersRead()
+    await loadReminders()
+  } catch (e) {
+    Message.error((e as Error).message)
+  }
+}
+
+function openPersona(id: string): void {
+  currentId.value = id
+  void router.replace({ query: { ...route.query, id } })
+}
+
+function onChanged(): void {
+  void load()
+  void loadStats()
+}
+
+function onCreated(p: PersonaListItem): void {
+  statusFilter.value = 'all'
+  openPersona(p.id)
+  onChanged()
+}
+
+watch([lineTab, statusFilter], () => void load())
+
+onMounted(async () => {
+  try {
+    options.value = await getPersonaOptions()
+  } catch (e) {
+    error.value = (e as Error).message
+  }
+  await Promise.all([load(), loadStats()])
 })
 </script>
+
+<style scoped>
+.people-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(420px, 520px);
+  gap: 20px;
+  align-items: start;
+}
+.people-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+.people-card {
+  text-align: left;
+  padding: 16px;
+  cursor: pointer;
+  background: #fff;
+  font: inherit;
+  color: inherit;
+}
+.people-card.active {
+  border-color: var(--mw-primary);
+  box-shadow: 0 0 0 1px var(--mw-primary);
+}
+.people-cover {
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #eef1ee;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.people-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.people-cover-empty {
+  font-size: 28px;
+  color: var(--mw-text3);
+}
+.people-counts {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--mw-border-light);
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--mw-text2);
+}
+.people-detail {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+.reminder-pop {
+  width: 360px;
+  max-height: 420px;
+  overflow: auto;
+}
+.reminder-pop ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.reminder-pop li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 4px;
+  border-top: 1px solid var(--mw-border-light);
+  cursor: pointer;
+  font-size: 13px;
+}
+.reminder-pop li.unread .reminder-msg {
+  font-weight: 600;
+}
+@media (max-width: 1100px) {
+  .people-layout {
+    grid-template-columns: 1fr;
+  }
+  .people-detail {
+    position: static;
+    max-height: none;
+  }
+}
+</style>
