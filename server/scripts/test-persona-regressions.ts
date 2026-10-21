@@ -18,6 +18,8 @@ const { initDb, closeAll } = await import('../src/db/index.js')
 const { runMigrations } = await import('../src/db/migrate.js')
 const { createPersona, getPersonaById, updatePersona, archivePersona } = await import('../src/modules/personas/repo.js')
 const { getProductionProfile, checkReadiness } = await import('../src/modules/personas/readiness.js')
+const { cleanExpiredPreviews } = await import('../src/modules/personas/clone/voices.js')
+const { paths } = await import('../src/config.js')
 const { deriveStatus } = await import('../src/modules/personas/policy.js')
 const { toDb, utcNow } = await import('../src/lib/time.js')
 const { uploadAsset, setCoverAsset } = await import('../src/modules/personas/assets.js')
@@ -222,6 +224,23 @@ try {
     assert.equal(Number(logs?.c), 1)
     const reminders = await db.get<{ c: number }>('SELECT COUNT(*) AS c FROM persona_reminder WHERE ref_id = ?', [expiredId])
     assert.equal(Number(reminders?.c), 1)
+  })
+
+  await test('P2-7 过期试听清理连同音频文件一起删除', async () => {
+    const fs = await import('node:fs')
+    const key = `persona/test/voice_preview/${uid('pvp')}.mp3`
+    const local = join(paths.dataDir, 'oss', key)
+    fs.mkdirSync(join(local, '..'), { recursive: true })
+    fs.writeFileSync(local, 'mp3')
+    const id = uid('pvp')
+    await db.run(
+      `INSERT INTO persona_voice_preview (id, voice_id, params_hash, text_hash, status, audio_key, created_at, expires_at)
+       VALUES (?, 'v', ?, 't', 'ready', ?, '2020-01-01 00:00:00', '2020-01-08 00:00:00')`,
+      [id, id, key],
+    )
+    assert.ok((await cleanExpiredPreviews()) >= 1)
+    assert.equal(await db.get('SELECT id FROM persona_voice_preview WHERE id = ?', [id]), null)
+    assert.equal(fs.existsSync(local), false)
   })
 
   console.log(`${passed} persona regression groups passed`)

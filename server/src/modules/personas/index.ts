@@ -50,24 +50,25 @@ export async function registerPersonaModule(): Promise<void> {
   registerAssetProcessWorker()
   registerCloneWorker()
 
-  // persona-auth-expiry：每日扫描 + 试听缓存清理（同一 worker，按 job.name 分发）
+  // persona-auth-expiry：每日扫描（授权到期 + 试听缓存清理）
   registerWorker(QUEUE_NAMES.personaAuthExpiry, async (job) => {
     if (job.name === 'scan') {
       const r = await scanAuthExpiry()
       if (r.expiring || r.expired) {
         logger.info({ expiring: r.expiring, expired: r.expired }, 'persona.auth_expiry.scanned')
       }
-      return
-    }
-    if (job.name === 'clean_previews') {
+      // P2-7：试听缓存清理原先没有任何排期（死代码），并入每日扫描
+      // （内存队列每个队列只保留一个定时器，不能再单独排一个 clean_previews）
       const n = await cleanExpiredPreviews()
       if (n > 0) logger.info({ removed: n }, 'persona.preview.cleaned')
+      return
     }
   })
 
   await scheduleAuthExpiryScan()
   // 启动即扫描一次（不等首个排期点）；幂等由提醒去重口径保证
   await scanAuthExpiry().catch((e) => logger.error({ err: (e as Error).message }, 'persona.auth_expiry.boot_scan_failed'))
+  await cleanExpiredPreviews().catch((e) => logger.error({ err: (e as Error).message }, 'persona.preview.boot_clean_failed'))
   await resumeUncertainSubmissions()
   // P0-2：克隆 / 试听轮询改为 next_poll_at + 周期扫描
   await scheduleCloneSweep()

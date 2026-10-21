@@ -8,7 +8,7 @@ import { err } from '../../../errors.js'
 import { logger } from '../../../log.js'
 import { recordOperation } from '../../audit/repo.js'
 import { enqueue, QUEUE_NAMES, dedupOpts } from '../../../queue/index.js'
-import { putObjectFromFile } from '../../../integrations/aliyun-oss/client.js'
+import { deleteObject, putObjectFromFile } from '../../../integrations/aliyun-oss/client.js'
 import { MAGIC_HEAD_BYTES, validateUploadFile } from '../../../lib/upload.js'
 import { normalizeAudioToMp3, probeMedia } from '../../../media/inspect.js'
 import { ensureTempDir, cleanup } from '../../../media/pipeline.js'
@@ -736,6 +736,16 @@ export function previewAudioTarget(preview: VoicePreview): { storageKey: string;
 
 /** 试听缓存清理（过期行，worker 周期调用） */
 export async function cleanExpiredPreviews(): Promise<number> {
-  const r = await getDb().run('DELETE FROM `persona_voice_preview` WHERE `expires_at` < ?', [toDb(utcNow())])
-  return r.affectedRows
+  // P2-7：连同存储里的试听音频一起删除，否则过期记录删了文件还留着
+  const db = getDb()
+  const now = toDb(utcNow())
+  const rows = await db.all<{ id: string; audio_key: string | null }>(
+    'SELECT `id`, `audio_key` FROM `persona_voice_preview` WHERE `expires_at` < ? LIMIT 500',
+    [now],
+  )
+  for (const r of rows) {
+    if (r.audio_key) await deleteObject(r.audio_key)
+    await db.run('DELETE FROM `persona_voice_preview` WHERE `id` = ?', [r.id])
+  }
+  return rows.length
 }
