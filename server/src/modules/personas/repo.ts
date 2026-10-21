@@ -227,7 +227,15 @@ export async function createPersona(input: CreatePersonaInput): Promise<Persona>
     )
   } catch (e) {
     if (isDuplicateKey(e)) {
-      throw err.personaNameDuplicate(`已存在同名人物「${name}」，请更换名称`, { name })
+      const existing = await db.get<{ id: string; name: string }>(
+        'SELECT `id`, `name` FROM `persona` WHERE `active_name_key` = ?',
+        [normalizeNameKey(name)],
+      )
+      throw err.personaNameDuplicate(`已存在同名人物「${existing?.name ?? name}」，请更换名称`, {
+        name,
+        existingId: existing?.id ?? null,
+        existingName: existing?.name ?? null,
+      })
     }
     throw e
   }
@@ -239,6 +247,8 @@ export interface UpdatePersonaInput {
   ownerSubject?: string
   description?: string
   bindingMode?: BindingMode
+  /** 仅用于拒绝改线：与当前不一致即 400（生产线创建后不可改） */
+  line?: string
   rev: number
   operator: string
 }
@@ -254,6 +264,9 @@ export async function updatePersona(id: string, input: UpdatePersonaInput): Prom
       expectedRev: current.rev,
       providedRev: Number(input.rev),
     })
+  }
+  if (input.line !== undefined && input.line !== current.line) {
+    throw err.badRequest('生产线创建后不可修改，如需换线请新建人物', { line: current.line, requested: input.line })
   }
   const sets: string[] = []
   const params: unknown[] = []
@@ -296,7 +309,14 @@ export async function updatePersona(id: string, input: UpdatePersonaInput): Prom
     if (!r.affectedRows) throw err.personaConflict()
   } catch (e) {
     if (isDuplicateKey(e)) {
-      throw err.personaNameDuplicate('已存在同名人物，请更换名称', { name: input.name })
+      const existing = input.name
+        ? await db.get<{ id: string; name: string }>('SELECT `id`, `name` FROM `persona` WHERE `active_name_key` = ?', [normalizeNameKey(String(input.name))])
+        : null
+      throw err.personaNameDuplicate(`已存在同名人物${existing ? `「${existing.name}」` : ''}，请更换名称`, {
+        name: input.name,
+        existingId: existing?.id ?? null,
+        existingName: existing?.name ?? null,
+      })
     }
     throw e
   }
@@ -339,7 +359,8 @@ export async function setPersonaEnabled(id: string, enabled: boolean, operator: 
   if (!current) throw err.personaNotFound()
   if (current.archivedAt) throw err.personaArchived()
   if (enabled) {
-    const derived = await derivePersonaStatus(current)
+    // 按「启用之后」的状态判定：否则已停用的人物永远带着「人物已停用」这条原因，无法重新启用
+    const derived = await derivePersonaStatus({ ...current, enabled: true })
     if (!derived.usable) {
       throw err.conflict(`人物当前不可用，不能启用：${derived.reasons.map((r) => r.message).join('；')}`, {
         reasons: derived.reasons,

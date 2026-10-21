@@ -90,7 +90,7 @@ export async function checkReadiness(
     // 肖像授权有效（默认分身绑定）
     if (avatar) {
       const auths = await validAuthorizationsOf(personaId, db)
-      const authOk = auths.some((a) => a.id === avatar.authorization_id && a.scopes.includes('portrait'))
+      const authOk = auths.some((a) => a.scopes.includes('portrait'))
       checks.push(hard('portrait_auth', authOk, authOk ? '肖像授权有效' : '肖像授权缺失或已失效'))
     }
     // 默认声音 ready 且已确认
@@ -107,7 +107,7 @@ export async function checkReadiness(
     // 声音授权有效（默认声音绑定）
     if (voice) {
       const auths = await validAuthorizationsOf(personaId, db)
-      const authOk = auths.some((a) => a.id === voice.authorization_id && a.scopes.includes('voice'))
+      const authOk = auths.some((a) => a.scopes.includes('voice'))
       checks.push(hard('voice_auth', authOk, authOk ? '声音授权有效' : '声音授权缺失或已失效'))
     }
     // 飞影已配置（或 mock）

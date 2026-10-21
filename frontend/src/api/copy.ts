@@ -279,7 +279,7 @@ export interface CopyOptions {
     gates: Record<string, string>
     origins: Record<string, string>
   }
-  personas: Array<PersonaBrief & { enabled: boolean }>
+  personas: Array<PersonaBrief & { enabled: boolean; usable?: boolean; statusLabel?: string; statusReasons?: Array<{ code: string; message: string }> }>
 }
 
 /* ── 文章 ────────────────────────────────────────────────────────── */

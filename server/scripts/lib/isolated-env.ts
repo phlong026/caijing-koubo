@@ -61,6 +61,7 @@ export async function bootIsolated(opts: IsolatedEnvOptions = {}): Promise<Isola
     {
       NODE_ENV: 'test',
       TEMP_DIR: join(temp, 'media'),
+      DATA_DIR: join(temp, 'data'),
       MOCK_FALLBACK: 'true',
       NEWS_MOCK_SOURCE: 'true',
       REVIEW_STUB_ENABLED: 'true',

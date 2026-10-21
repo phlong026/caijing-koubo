@@ -152,7 +152,12 @@ export function deriveStatus(
   if (status === 'archived') reasons.push({ code: 'PERSONA_ARCHIVED', message: '人物已归档' })
   if (status === 'disabled') reasons.push({ code: 'PERSONA_DISABLED', message: '人物已停用' })
   if (status === 'auth_revoked') reasons.push({ code: 'AUTH_REVOKED', message: '授权已撤销，人物不可用' })
-  if (status === 'auth_expired') reasons.push({ code: 'AUTH_EXPIRED', message: '授权已过期，人物不可用' })
+  if (status === 'auth_expired') {
+    // 提示最近一次到期的日期（FR-U3 / AC-U2：授权失效后文案预检要能告诉运营是哪天过期的）
+    const last = expired.map((a) => a.expiresAt ?? '').filter(Boolean).sort().pop()
+    const day = last ? String(last).slice(0, 10) : ''
+    reasons.push({ code: 'AUTH_EXPIRED', message: day ? `授权已于 ${day} 过期，人物不可用` : '授权已过期，人物不可用' })
+  }
   if (status === 'auth_pending') reasons.push({ code: 'AUTH_PENDING', message: '授权待核验，人物不可用' })
 
   return {

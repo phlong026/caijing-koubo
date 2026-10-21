@@ -27,7 +27,8 @@ function bool(key: string, def: boolean): boolean {
 export const paths = {
   serverRoot,
   tempDir: path.resolve(serverRoot, str('TEMP_DIR', './.data/tmp')),
-  dataDir: path.resolve(serverRoot, './.data'),
+  // DATA_DIR 供测试隔离本地兜底存储（.data/oss）；缺省仍是 server/.data
+  dataDir: process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.resolve(serverRoot, './.data'),
 }
 
 export const config = {

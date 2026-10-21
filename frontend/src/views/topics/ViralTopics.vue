@@ -61,7 +61,7 @@
           <div class="topics-generation-controls">
             <label>人物
               <a-select v-model="targetPersonas" placeholder="选择人物" aria-label="目标角色或人物" multiple :max-tag-count="1">
-                <a-option v-for="p in personas.enabled" :key="p.id" :value="p.id">{{ p.name }} · {{ p.ipProfile.role }}</a-option>
+                <a-option v-for="p in personas.items" :key="p.id" :value="p.id" :disabled="!p.usable">{{ p.name }} · {{ p.ipProfile.role }}<span v-if="!p.usable" class="mw-subtle ml-1">不可选：{{ personas.reasonOf(p.id) }}</span></a-option>
               </a-select>
             </label>
             <label>生成数量<a-input-number v-model="genCount" :min="1" :max="10" mode="button" aria-label="生成数量" /></label>
@@ -93,7 +93,7 @@
                 <div class="flex items-start gap-2"><h3>{{ c.title }}</h3><a-button type="text" size="mini" :aria-label="`归档选题：${c.title}`" title="归档" @click.stop="onArchive(c.id)"><template #icon><icon-archive /></template></a-button></div>
                 <div v-if="c.direction" class="topics-direction"><span>方向</span><span class="mw-tag mw-tag-gray">{{ c.direction }}</span></div>
                 <p v-if="c.hook" class="topics-hook">钩子：{{ c.hook }}</p>
-                <div class="topics-persona"><span>分配给</span><a-select :model-value="currentPersonas(c)" placeholder="选择人物" :aria-label="`为${c.title}分配人物`" multiple :max-tag-count="1" @click.stop @change="(v) => onAssignChange(c.id, v)"><a-option v-for="p in personas.enabled" :key="p.id" :value="p.id">{{ p.name }}</a-option></a-select></div>
+                <div class="topics-persona"><span>分配给</span><a-select :model-value="currentPersonas(c)" placeholder="选择人物" :aria-label="`为${c.title}分配人物`" multiple :max-tag-count="1" @click.stop @change="(v) => onAssignChange(c.id, v)"><a-option v-for="p in personas.items" :key="p.id" :value="p.id" :disabled="!p.usable">{{ p.name }}<span v-if="!p.usable" class="mw-subtle ml-1">不可选：{{ personas.reasonOf(p.id) }}</span></a-option></a-select></div>
                 <p v-if="!currentPersonas(c).length" class="topics-assignment-note">分配人物后可送入文案工坊</p>
                 <p v-else-if="c.status === 'candidate'" class="topics-assignment-note">已预填目标人物，送入时按此分配</p>
               </div>
@@ -408,8 +408,8 @@
       <a-form :model="sendModal" layout="vertical">
         <a-form-item label="目标人物" required>
           <a-select v-model="sendModal.personaIds" multiple placeholder="选择人物（可多选）">
-            <a-option v-for="p in personas.enabled" :key="p.id" :value="p.id">
-              {{ p.name }} <span class="mw-subtle ml-1">{{ p.ipProfile.role }}</span>
+            <a-option v-for="p in personas.items" :key="p.id" :value="p.id" :disabled="!p.usable">
+              {{ p.name }} <span class="mw-subtle ml-1">{{ p.usable ? p.ipProfile.role : `不可选：${personas.reasonOf(p.id)}` }}</span>
             </a-option>
           </a-select>
           <template #extra><span class="mw-subtle">将按「视频 × 人物」展开创建文案草稿，并带上提取全文与句级时间戳。</span></template>

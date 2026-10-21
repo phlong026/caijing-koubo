@@ -524,13 +524,14 @@ export async function setDefaultVoice(id: string, operator: string): Promise<Per
   const persona = await getPersonaById(voice.personaId, true)
   if (!persona) throw err.personaNotFound()
   // 授权有效（肖像 / 声音范围）
+  // 按「人物当前有任一有效授权覆盖该范围」判定（授权续期后无需重做克隆）
   const auths = await validAuthorizationsOf(voice.personaId)
-  const auth = auths.find((a) => a.id === voice.authorizationId)
-  if (!auth || !auth.scopes.includes('voice')) {
-    throw err.authorizationRequired('该声音的授权已失效，不能设为默认', { authorizationId: voice.authorizationId })
+  const auth = auths.find((a) => a.scopes.includes('voice'))
+  if (!auth) {
+    throw err.authorizationRequired('该人物没有有效的声音授权，不能设为默认', { authorizationId: voice.authorizationId })
   }
   // FR-V9：共享人物的声音用于多个账号须「允许共享」授权
-  if (persona.bindingMode === 'shared' && !auth.scopes.includes('share')) {
+  if (persona.bindingMode === 'shared' && !auths.some((a) => a.scopes.includes('share'))) {
     throw err.authorizationRequired('声音共享须单独核验授权（范围含「允许共享」）', {
       authorizationId: auth.id,
       scopes: auth.scopes,
@@ -585,10 +586,10 @@ export async function softDeleteVoice(id: string, operator: string): Promise<voi
   if (!voice) throw err.notFound('声音不存在')
   if (voice.deletedAt) return // 幂等
   if (VOICE_IN_PROGRESS.includes(voice.status) || voice.status === 'uncertain') {
-    throw err.invalidState(
-      voice.status === 'uncertain' ? '状态待核对，不能删除（请先核对）' : '声音克隆中，不能删除',
-      { status: voice.status },
-    )
+    // 待核对 → CLONE_UNCERTAIN（须先核对）；制作中 → CLONE_NOT_READY（任务书 §5.2）
+    throw voice.status === 'uncertain'
+      ? err.cloneUncertain('状态待核对，不能删除（请先核对）', { status: voice.status })
+      : err.cloneNotReady('声音克隆中，不能删除', { status: voice.status })
   }
   const persona = await getPersonaById(voice.personaId, true)
   if (persona?.defaultVoiceId === id) {

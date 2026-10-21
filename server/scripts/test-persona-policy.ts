@@ -7,6 +7,7 @@ import {
   checkAvatarSourceQuality, checkImageQuality, checkImageStructure, checkJpegStructure, checkPngStructure, checkVideoQuality,
   checkVoiceSampleQuality, checkWebpStructure, isValidIssueCode,
 } from '../src/modules/personas/assets/quality.js'
+import { scanCompliance } from '../src/modules/copy/text.js'
 import type { MediaProbe } from '../src/media/inspect.js'
 import { toDb } from '../src/lib/time.js'
 
@@ -62,6 +63,7 @@ check('仅 pending 授权 → auth_pending', derive(kos, [auth('a', 'pending', D
 check('仅 rejected 授权 → auth_pending', derive(kos, [auth('a', 'rejected', DAY)]).status === 'auth_pending')
 check('仅 verified 已过期 → auth_expired', derive(kos, [auth('a', 'verified', -DAY)]).status === 'auth_expired')
 check('仅被撤销 → auth_revoked', derive(kos, [auth('a', 'revoked', DAY)]).status === 'auth_revoked', derive(kos, [auth('a', 'revoked', DAY)]).status)
+check('过期原因带到期日期（AC-U2）', (() => { const r = derive(kos, [auth('a', 'verified', -2 * DAY)]); return /\d{4}-\d{2}-\d{2}/.test(r.reasons[0]?.message ?? '') && r.reasons[0]?.code === 'AUTH_EXPIRED' })())
 check('撤销优于过期（AC-U7）', derive(kos, [auth('a', 'revoked', DAY), auth('b', 'verified', -DAY)]).status === 'auth_revoked', derive(kos, [auth('a', 'revoked', DAY), auth('b', 'verified', -DAY)]).status)
 check('撤销一份但另有有效授权 → active', derive(kos, [auth('a', 'revoked', DAY), auth('b', 'verified', DAY)]).status === 'active')
 check('多条授权取有效者：过期 + 有效 → active', derive(kos, [auth('a', 'verified', -DAY), auth('b', 'verified', DAY)]).usable)
@@ -180,6 +182,21 @@ check('样本无音频流 → AUD_NO_STREAM', checkVoiceSampleQuality(audio(30_0
 section('issue code 规范（R28）')
 check('合法', ['IMG_TOO_SMALL', 'AB', 'A1_B2'].every(isValidIssueCode))
 check('非法', ['', 'a', 'img_small', '1ABC', 'A', 'A-B', 'X'.repeat(65)].every((c) => !isValidIssueCode(c)))
+
+section('人物禁用表达进入合规扫描（FR-I4 / AC-I5）')
+{
+  const sec = (text: string) => [{ label: '开场', text }] as Parameters<typeof scanCompliance>[0]
+  const hit = (claims: string[], text: string, title: string | null = null) => scanCompliance(sec(text), [], claims, title).filter((h) => h.fromPersona)
+  check('禁用词本身（无前缀 / 括号）能命中', hit(['稳赚不赔'], '这只产品稳赚不赔，大家放心买').length === 1)
+  check('任意自拟词同样命中', hit(['星河独家保证词'], '提到星河独家保证词').length === 1)
+  check('规则句去前缀后命中（不承诺收益 → 承诺收益）', hit(['不承诺收益'], '我们承诺收益很高').length === 1)
+  check('规则句括号列举逐词命中', hit(['使用绝对化表述（稳赚、必涨）'], '这波必涨无疑').length === 1)
+  check('否定语境不算命中（不稳赚不赔）', hit(['稳赚不赔'], '请注意这并不是稳赚不赔的产品').length === 0 || hit(['稳赚不赔'], '千万不稳赚不赔').length === 0)
+  check('标题也被扫描', hit(['稳赚不赔'], '正文无问题', '稳赚不赔的秘密').length === 1)
+  check('命中标记 fromPersona 且为硬性', hit(['稳赚不赔'], '稳赚不赔').every((h) => h.level === 'hard' && h.fromPersona))
+  check('空 / 过短的禁用词被忽略', hit(['', ' ', '赚'], '赚钱了').length === 0)
+  check('超长整句（>12 字且无括号引号）不做整句硬匹配', hit(['这是一个特别特别特别长的规则描述句子'], '无关内容').length === 0)
+}
 
 console.log(`\n=== 人物库纯函数单测：${passed} 通过，${failed} 失败 ===`)
 process.exit(failed ? 1 : 0)

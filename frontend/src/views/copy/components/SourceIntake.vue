@@ -45,7 +45,7 @@
     </div>
 
     <div v-if="tab==='manual'||(tab==='article'&&parsed)||(tab==='video'&&video?.extractStatus==='done')" class="intake-create">
-      <label for="source-personas">目标人物</label><a-select id="source-personas" v-model="personaIds" aria-label="来源目标人物" multiple placeholder="选择一位或多位人物" :disabled="creating"><a-option v-for="p in personas" :key="p.id" :value="p.id" :label="p.name" /></a-select>
+      <label for="source-personas">目标人物</label><a-select id="source-personas" v-model="personaIds" aria-label="来源目标人物" multiple placeholder="选择一位或多位人物" :disabled="creating"><a-option v-for="p in personas" :key="p.id" :value="p.id" :disabled="p.usable === false" :label="p.name">{{ p.name }}<span v-if="p.usable === false" class="mw-subtle ml-1">不可选：{{ p.statusReasons?.map((r) => r.message).join('；') || p.statusLabel || '当前不可用' }}</span></a-option></a-select>
       <div class="intake-footer"><span class="intake-hint">为每位人物新建一条文案，保留当前稿件。</span><a-button type="primary" :loading="creating" :disabled="!canCreate" @click="createFromSource">创建文案并继续</a-button></div>
     </div>
     <p v-if="error" role="alert" class="intake-error">{{ error }}</p>
@@ -71,7 +71,7 @@ const manual=reactive({title:'',text:'',keywords:''}),personaIds=ref<string[]>([
 const articleText=ref(''),articleTitle=ref(''),articleFile=ref<File|null>(null),fileList=ref<FileItem[]>([]),parsed=ref<ArticleCreated|null>(null),articlePreview=ref(''),parsing=ref(false)
 const videoLink=ref(''),video=ref<BenchVideo|null>(null),scriptText=ref(''),parsingVideo=ref(false),retrying=ref(false),extractError=ref(''),pollStopped=ref(false)
 let pollTimer:ReturnType<typeof setTimeout>|null=null,videoSeq=0,pollStarted=0
-const personas=computed(()=>store.options?.personas.filter(p=>p.enabled) ?? [])
+const personas=computed(()=>store.options?.personas ?? [])
 const hasTopicSource=computed(()=>['news','benchmark'].includes(store.copy?.source ?? ''))
 const canCreate=computed(()=>!creating.value && !parsing.value && personaIds.value.length>0 && (tab.value==='manual'?!!manual.title.trim():tab.value==='article'?!!parsed.value && !!articleTitle.value.trim():tab.value==='video' && video.value?.extractStatus==='done'))
 const extractionLabel=computed(()=>({none:'等待提取',pending:'等待提取',submitting:'正在提取',running:'正在提取',done:'文案已提取，可创建文案',failed:'提取失败',uncertain:'需要确认后重试'}[video.value?.extractStatus ?? 'none']))

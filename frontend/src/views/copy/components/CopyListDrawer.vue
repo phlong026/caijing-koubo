@@ -67,7 +67,7 @@
         <!-- P0-6②：FR-S4 要求可一次选多位目标人物，每位各产一条 -->
         <a-form-item label="目标人物" required>
           <a-select v-model="form.personaIds" multiple placeholder="选择一位或多位人物" @change="onPersonaChange">
-            <a-option v-for="p in personas" :key="p.id" :value="p.id" :label="`${p.name}（${p.lineLabel || p.line}）`" />
+            <a-option v-for="p in personas" :key="p.id" :value="p.id" :disabled="p.usable === false" :label="`${p.name}（${p.lineLabel || p.line}）`">{{ p.name }}（{{ p.lineLabel || p.line }}）<span v-if="p.usable === false" class="mw-subtle ml-1">{{ unusableReason(p) }}</span></a-option>
           </a-select>
           <div class="mw-subtle mt-1">选多位人物时，每位各生成一条文案</div>
         </a-form-item>
@@ -156,7 +156,11 @@ const statusOptions: Record<string, string> = {
   revising: '修订中',
 }
 
-const personas = computed(() => (store.options?.personas ?? []).filter((p) => p.enabled))
+// 不可用人物不隐藏而是置灰并写明原因（FR-X7）：运营能看到「为什么选不了」，而不是以为人物丢了
+const personas = computed(() => store.options?.personas ?? [])
+function unusableReason(p: { statusReasons?: Array<{ message: string }>; statusLabel?: string }): string {
+  return `不可选：${p.statusReasons?.map((r) => r.message).join('；') || p.statusLabel || '当前不可用'}`
+}
 
 watch(
   () => props.visible,
@@ -255,7 +259,7 @@ const file = ref<File | null>(null)
 
 function openCreate(): void {
   form.mode = 'manual'
-  form.personaIds = personas.value[0]?.id ? [personas.value[0].id] : []
+  form.personaIds = personas.value.find((p) => p.usable !== false)?.id ? [personas.value.find((p) => p.usable !== false)!.id] : []
   form.title = ''
   form.sourceText = ''
   form.keywords = ''

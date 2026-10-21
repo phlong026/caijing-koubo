@@ -68,6 +68,7 @@ import {
 } from './clone/voices.js'
 import { pollAvatar, pollVoice, reconcileAvatar, reconcileVoice } from './clone/worker.js'
 import { checkReadiness, getProductionProfile } from './readiness.js'
+import { decoratePersonas } from './decorate.js'
 import {
   ASSET_KIND_LABELS,
   ASSET_LIMITS,
@@ -179,17 +180,20 @@ async function readMultipart(
           headChunks.push(c)
           headLen += c.length
         }
-        if (size > effectiveMax) {
-          // 早停：超出该类型上限即刻断流，避免把超大文件整份落盘
+        if (size > effectiveMax && !tooLarge) {
+          // 超出该类型上限：停止落盘（不把超大文件整份写到磁盘），但继续把剩余字节读完丢弃。
+          // 不能直接断流：服务端在客户端还在上传时关连接，浏览器只会看到「网络错误」而拿不到 413 提示。
           tooLarge = true
-          src.destroy?.()
+          src.unpipe(ws)
           ws.destroy()
+          // unpipe 掉最后一个目标后 Node 会暂停流，必须手动恢复，否则剩余字节永远读不完、请求挂住
+          ;(src as NodeJS.ReadableStream & { resume: () => void }).resume()
         }
       })
       src.on('error', (e) => settle(e as Error))
       ws.on('error', (e) => settle(e as Error))
       ws.on('finish', () => settle())
-      src.on('end', () => ws.end())
+      src.on('end', () => (tooLarge ? settle() : ws.end()))
       src.pipe(ws)
     })
     if (tooLarge || part.file?.truncated || size > effectiveMax) {
@@ -211,7 +215,7 @@ async function streamStorage(
   filename: string,
   range: string | undefined,
   audit: { action: string; targetType: string; targetId: string; operator: string; detail?: Record<string, unknown> } | null,
-): Promise<void> {
+): Promise<import('fastify').FastifyReply> {
   const res = await getObjectStream(storageKey, range)
   if (!res) throw err.notFound('文件不存在或已被清理')
   if (audit) {
@@ -231,7 +235,9 @@ async function streamStorage(
     if (res.contentLength != null) headers['Content-Length'] = String(res.contentLength)
     reply.headers(headers)
   }
-  reply.send(res.stream as any)
+  // 必须把 reply 返回给 Fastify：async 处理函数若返回 undefined，Fastify 会再以空载荷 send 一次，
+  // 把已经交给 reply 的文件流覆盖成 0 字节（thumb / original / 授权文件 / 试听都会读到空内容）
+  return reply.send(res.stream as any)
 }
 
 /* ── 工具 ──────────────────────────────────────────────────────── */
@@ -255,47 +261,25 @@ async function mustGetPersona(id: string): Promise<Persona> {
   return p
 }
 
-/** 列表项：人物 + 派生有效状态 + 计数（FR-L1 / FR-X1） */
-async function decoratePersona(p: Persona) {
-  const db = (await import('../../db/index.js')).getDb()
-  const derived = await derivePersonaStatus(p, db)
-  const [photoCount, avatarCount, voiceCount, bindingCount] = await Promise.all([
-    db.get<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM `persona_asset` WHERE `persona_id` = ? AND `kind` = ? AND `status` = ? AND `deleted_at` IS NULL',
-      [p.id, 'photo', 'approved'],
-    ),
-    db.get<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM `persona_avatar` WHERE `persona_id` = ? AND `status` = ? AND `deleted_at` IS NULL',
-      [p.id, 'ready'],
-    ),
-    db.get<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM `persona_voice` WHERE `persona_id` = ? AND `is_sample` = 0 AND `status` = ? AND `confirmed` = 1 AND `deleted_at` IS NULL',
-      [p.id, 'ready'],
-    ),
-    db.get<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM `persona_account_binding` WHERE `persona_id` = ? AND `released_at` IS NULL',
-      [p.id],
-    ),
-  ])
-  const cover = p.coverAssetId
-    ? await db.get<{ thumb_key: string | null }>('SELECT `thumb_key` FROM `persona_asset` WHERE `id` = ?', [p.coverAssetId])
-    : null
-  return {
-    ...p,
-    status: derived.status,
-    statusLabel: derived.label,
-    usable: derived.usable,
-    statusReasons: derived.reasons,
-    extraTags: derived.extraTags,
-    counts: {
-      photos: Number(photoCount?.c ?? 0),
-      avatars: Number(avatarCount?.c ?? 0),
-      voices: Number(voiceCount?.c ?? 0),
-      bindings: Number(bindingCount?.c ?? 0),
-    },
-    coverUrl: cover?.thumb_key ? `/api/persona-assets/${p.coverAssetId}/file?variant=thumb` : null,
-    currentVersionId: p.currentVersionId,
+/** 「已配置」附加标签（§3.2）：readiness(avatar_video) 全过；素人线为 readiness(copy) 全过。
+ *  只对「可用且已设默认分身 + 默认声音」的人物才真正跑 readiness，避免列表（≤500 人）逐个人物多查一遍 */
+async function withConfiguredTag(p: Persona, derived: { usable: boolean; extraTags: string[] }): Promise<string[]> {
+  const tags = [...derived.extraTags]
+  if (!derived.usable || tags.includes('configured')) return tags
+  if (p.line === 'persona') {
+    tags.push('configured')
+    return tags
   }
+  if (p.defaultAvatarId && p.defaultVoiceId) {
+    const r = await checkReadiness(p.id, 'avatar_video')
+    if (r.pass) tags.push('configured')
+  }
+  return tags
+}
+
+/** 列表项：人物 + 派生有效状态 + 计数（FR-L1 / FR-X1）；批量实现见 decorate.ts（AC-L6：无 N+1） */
+async function decoratePersona(p: Persona) {
+  return (await decoratePersonas([p]))[0]
 }
 
 export function registerPersonaRoutes(app: FastifyInstance): void {
@@ -315,8 +299,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
       includeArchived,
     })
     const items = []
-    for (const p of personas) {
-      const d = await decoratePersona(p)
+    for (const d of await decoratePersonas(personas)) {
       // 默认只返回 usable（FR-X1：桩期「enabled only」的等价语义）；
       // includeArchived=1 时放行归档人物（usable 恒 false，否则被 usable 过滤挡掉）
       if (!includeDisabled && !includeArchived && !d.usable) continue
@@ -412,7 +395,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
       statusLabel: derived.label,
       usable: derived.usable,
       statusReasons: derived.reasons,
-      extraTags: derived.extraTags,
+      extraTags: await withConfiguredTag(persona, derived),
       authorizations: auths,
       bindings,
       assets,
@@ -464,6 +447,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
       ownerSubject?: string
       description?: string
       bindingMode?: 'exclusive' | 'shared'
+      line?: string
       rev?: number
     }
     if (body.rev === undefined) throw err.badRequest('rev 必填（乐观锁）')
@@ -696,7 +680,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
             operator: req.operator,
             detail: { assetId: id, kind: asset.kind, variant },
           }
-    await streamStorage(reply, target.storageKey, target.filename, range, audit)
+    return streamStorage(reply, target.storageKey, target.filename, range, audit)
   })
 
   /* ── 授权与 consent ─────────────────────────────────────────── */
@@ -758,7 +742,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
     const auth = await getAuthorizationById(id)
     if (!auth) throw err.notFound('授权记录不存在')
     const target = authorizationFileTarget(auth)
-    await streamStorage(reply, target.storageKey, target.filename, req.headers.range, {
+    return streamStorage(reply, target.storageKey, target.filename, req.headers.range, {
       action: 'persona.sensitive_access',
       targetType: 'persona',
       targetId: auth.personaId,
@@ -985,7 +969,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
     const preview = await getVoicePreview(id)
     if (!preview) throw err.notFound('试听记录不存在')
     const target = previewAudioTarget(preview)
-    await streamStorage(reply, target.storageKey, target.filename, req.headers.range, null)
+    return streamStorage(reply, target.storageKey, target.filename, req.headers.range, null)
   })
 
   app.get('/persona-voices/:id/demo', async (req, reply) => {
@@ -993,7 +977,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
     const voice = await getVoiceById(id)
     if (!voice) throw err.notFound('声音不存在')
     if (!voice.demoKey) throw err.notFound('试听音频尚未归档')
-    await streamStorage(reply, voice.demoKey, `${voice.name || '试听'}.mp3`, req.headers.range, null)
+    return streamStorage(reply, voice.demoKey, `${voice.name || '试听'}.mp3`, req.headers.range, null)
   })
 
   app.patch('/persona-voices/:id', async (req) => {
