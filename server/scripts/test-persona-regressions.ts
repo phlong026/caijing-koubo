@@ -3,6 +3,8 @@
  * 用法：npm run test:personas
  */
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { statSync } from 'node:fs'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -18,7 +20,12 @@ const { createPersona, getPersonaById, updatePersona } = await import('../src/mo
 const { getProductionProfile, checkReadiness } = await import('../src/modules/personas/readiness.js')
 const { deriveStatus } = await import('../src/modules/personas/policy.js')
 const { toDb, utcNow } = await import('../src/lib/time.js')
+const { uploadAsset } = await import('../src/modules/personas/assets.js')
+const { config } = await import('../src/config.js')
 const db = await initDb()
+// 用进程内队列：不能把任务投进本机 Redis（会被正在运行的开发实例消费）
+const { setQueueBackend, closeQueues, redis } = await import('../src/queue/index.js')
+setQueueBackend('memory')
 
 let passed = 0
 async function test(name: string, fn: () => Promise<void> | void): Promise<void> {
@@ -146,8 +153,34 @@ try {
     )
   })
 
+  await test('P2-3 存储失败不留坏记录；处理失败的同文件可重新上传', async () => {
+    const p = await createPersona({ name: '回归戊', line: 'kos', operator: 'test' })
+    const img = join(temp, 'bg.jpg')
+    execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=1', '-frames:v', '1', img])
+    const head = Buffer.alloc(16)
+    const fd = await import('node:fs').then((m) => m.openSync(img, 'r'))
+    ;(await import('node:fs')).readSync(fd, head, 0, 16, 0)
+    const input = { personaId: p.id, kind: 'background_image' as const, filePath: img, filename: 'bg.jpg', size: statSync(img).size, head, operator: 'test' }
+    config.mockFallback = false // 无 OSS 且关闭兜底 → 存储写入失败
+    await assert.rejects(uploadAsset(input), (e: any) => e?.code === 'upstream_error')
+    config.mockFallback = true
+    const left = await db.get<{ c: number }>('SELECT COUNT(*) AS c FROM persona_asset WHERE persona_id = ?', [p.id])
+    assert.equal(Number(left?.c), 0)
+    const first = await uploadAsset(input)
+    assert.equal(first.deduplicated, false)
+    assert.equal((await uploadAsset(input)).deduplicated, true)
+    await db.run("UPDATE persona_asset SET status = 'failed' WHERE id = ?", [first.asset.id])
+    const again = await uploadAsset(input)
+    assert.equal(again.deduplicated, false)
+    assert.notEqual(again.asset.id, first.asset.id)
+    const old = await db.get<{ deleted_at: string | null }>('SELECT deleted_at FROM persona_asset WHERE id = ?', [first.asset.id])
+    assert.ok(old?.deleted_at)
+  })
+
   console.log(`${passed} persona regression groups passed`)
 } finally {
+  await closeQueues().catch(() => undefined)
+  redis.disconnect()
   await closeAll()
   rmSync(temp, { recursive: true, force: true })
 }

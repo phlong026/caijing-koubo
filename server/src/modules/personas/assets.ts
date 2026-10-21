@@ -172,7 +172,18 @@ export async function uploadAsset(input: UploadAssetInput): Promise<{ asset: Per
     [input.personaId, input.kind, sha256],
   )
   if (existing) {
-    return { asset: mapAssetRow(existing), deduplicated: true }
+    // P2-3：处理失败、或卡在「已上传」超过 10 分钟（存储写入中断）的旧记录不再占去重位：
+    // 软删后按新上传处理，否则同一文件永远拿回这条坏记录
+    const createdAt = fromDb(existing.created_at)
+    const stuck = existing.status === 'uploaded' && (!createdAt || Date.now() - new Date(createdAt).getTime() > 10 * 60_000)
+    if (existing.status !== 'failed' && !stuck) {
+      return { asset: mapAssetRow(existing), deduplicated: true }
+    }
+    const ts = toDb(utcNow())
+    await db.run(
+      'UPDATE `persona_asset` SET `deleted_at` = ?, `deleted_by` = ?, `sha256_key` = NULL, `updated_at` = ? WHERE `id` = ? AND `sha256_key` = ?',
+      [ts, input.operator, ts, existing.id, sha256],
+    )
   }
 
   const id = newId('pa')
@@ -221,8 +232,15 @@ export async function uploadAsset(input: UploadAssetInput): Promise<{ asset: Per
     throw e
   }
 
-  // 私有存储（OSS 或本地兜底）
-  await putObjectFromFile(input.filePath, storageKey, '')
+  // 私有存储（OSS 或本地兜底）。P2-3：写入失败时删除刚插入的记录，
+  // 否则记录停在「已上传」并占着去重位，重传同一文件会拿回这条坏记录
+  try {
+    await putObjectFromFile(input.filePath, storageKey, '')
+  } catch (e) {
+    await db.run('DELETE FROM `persona_asset` WHERE `id` = ? AND `status` = ?', [id, 'uploaded']).catch(() => undefined)
+    logger.error({ assetId: id, err: (e as Error).message }, 'persona.asset.store_failed')
+    throw err.upstream('素材存储失败，请稍后重试')
+  }
   await db.run('UPDATE `persona_asset` SET `status` = ?, `updated_at` = ? WHERE `id` = ?', ['processing', now, id])
 
   // 异步处理（FR-A2/§2.3）
