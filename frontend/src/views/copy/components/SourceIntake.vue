@@ -71,7 +71,7 @@ const manual=reactive({title:'',text:'',keywords:''}),personaIds=ref<string[]>([
 const articleText=ref(''),articleTitle=ref(''),articleFile=ref<File|null>(null),fileList=ref<FileItem[]>([]),parsed=ref<ArticleCreated|null>(null),articlePreview=ref(''),parsing=ref(false)
 const videoLink=ref(''),video=ref<BenchVideo|null>(null),scriptText=ref(''),parsingVideo=ref(false),retrying=ref(false),extractError=ref(''),pollStopped=ref(false)
 let pollTimer:ReturnType<typeof setTimeout>|null=null,videoSeq=0,pollStarted=0
-const personas=computed(()=>store.options?.personas.filter(p=>p.enabled) ?? [])
+const personas=computed(()=>store.options?.personas.filter(p=>p.usable ?? p.enabled) ?? [])
 const hasTopicSource=computed(()=>['news','benchmark'].includes(store.copy?.source ?? ''))
 const canCreate=computed(()=>!creating.value && !parsing.value && personaIds.value.length>0 && (tab.value==='manual'?!!manual.title.trim():tab.value==='article'?!!parsed.value && !!articleTitle.value.trim():tab.value==='video' && video.value?.extractStatus==='done'))
 const extractionLabel=computed(()=>({none:'等待提取',pending:'等待提取',submitting:'正在提取',running:'正在提取',done:'文案已提取，可创建文案',failed:'提取失败',uncertain:'需要确认后重试'}[video.value?.extractStatus ?? 'none']))

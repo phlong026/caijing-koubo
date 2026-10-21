@@ -49,6 +49,8 @@ import {
   assertReviewStubEnabled,
   getApprovedCopy,
   getSubmissionProgress,
+  listReviewQueue,
+  manualDecision,
   onReviewProgress,
   onReviewResult,
   submitForReview,
@@ -198,12 +200,15 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
         derivedStatus: DERIVED_STATUS_LABELS,
         gates: GATE_LABELS,
       },
+      // usable：派生状态可用（启用 + 授权有效）；新建文案只能选可用人物，否则创建时会被 409 拒绝
       personas: personas.map((p) => ({
         id: p.id,
         name: p.name,
         line: p.line,
         lineLabel: p.lineLabel,
         enabled: p.enabled,
+        usable: p.usable,
+        statusLabel: p.statusLabel,
       })),
       activeLine: line,
     })
@@ -1003,6 +1008,31 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
         reason: body.reason ?? null,
         rejectedGate: body.rejectedGate ?? null,
         riskPoints: body.riskPoints ?? null,
+        operator: req.operator,
+      }),
+    )
+  })
+
+  /* ── 人工复核（P1-7；角色限定见 auth/guard.ROLE_RULES）──────────── */
+
+  app.get('/review/queue', async (req) => {
+    const q = (req.query ?? {}) as { scope?: string; line?: string }
+    const scope = q.scope === 'decided' ? 'decided' : 'pending'
+    const line = q.line && ['manager', 'kos', 'persona'].includes(q.line) ? q.line : undefined
+    return ok({ items: await listReviewQueue({ scope, line }), stubEnabled: config.copy.reviewStubEnabled })
+  })
+
+  app.post('/review/submissions/:id/manual-decision', async (req) => {
+    const { id } = req.params as { id: string }
+    const body = (req.body ?? {}) as { result?: string; reason?: string; riskPoints?: string[]; appendedRiskText?: string }
+    if (body.result !== 'approved' && body.result !== 'rejected') throw err.badRequest('result 必须是 approved 或 rejected')
+    return ok(
+      await manualDecision({
+        submissionId: id,
+        result: body.result,
+        reason: body.reason ?? null,
+        riskPoints: Array.isArray(body.riskPoints) ? body.riskPoints.map(String).filter(Boolean).slice(0, 20) : null,
+        appendedRiskText: body.appendedRiskText ? String(body.appendedRiskText).slice(0, 2000) : null,
         operator: req.operator,
       }),
     )

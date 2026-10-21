@@ -114,7 +114,8 @@ if (options.status !== 200 || !options.data) {
   console.log(`  ❌ 无法访问 ${BASE}/copy/options，请先启动 server（npm run dev）`)
   process.exit(1)
 }
-const personas: any[] = options.data.personas ?? []
+// 只用可用人物（测试库里可能残留授权待核验的人物）
+const personas: any[] = (options.data.personas ?? []).filter((p: any) => p.usable ?? p.enabled)
 check('options 返回人物与模板', personas.length >= 3 && (options.data.templates ?? []).length > 0, {
   p: personas.length,
   t: (options.data.templates ?? []).length,
@@ -425,6 +426,38 @@ if (!genOnly) {
         { status: lateWd.status, code: lateWd.error?.code },
       )
     }
+  }
+
+  /* ──────────────────── 5b. P1-7 人工复核 ──────────────────── */
+
+  console.log('\n[5b] P1-7 人工复核（审核员裁决，四眼原则）')
+  const mr = await createManual(kosId, uniq('人工复核用例'), '人工复核用例的补充资料。')
+  if (mr) {
+    await saveDraft(mr.copyId, mr.draftId, uniq('人工复核标题'), [{ label: '开场', text: '这是一段用于验证人工复核的干净正文，不含任何禁用表述。' }])
+    const cur = (await req('GET', `/copy/${mr.copyId}/drafts/${mr.draftId}`)).data
+    const msub = await req('POST', `/copy/${mr.copyId}/submit`, { draftId: mr.draftId, rev: cur?.draft?.rev ?? cur?.rev })
+    const sid: string = msub.data?.submissionId ?? ''
+    check('提交取得审核单', !!sid, msub.error)
+    // 桩开启时等它走到待人工复核；桩关闭时停在「已提交」，人工复核可直接裁决
+    const stubOn = (await req('GET', '/review/queue')).data?.stubEnabled === true
+    for (let i = 0; stubOn && i < 20; i++) {
+      if ((await req('GET', `/review/submissions/${sid}`)).data?.status === 'pending_manual') break
+      await sleep(300)
+    }
+    const queue = await req('GET', '/review/queue')
+    check('审核员队列含该审核单', (queue.data?.items ?? []).some((i: any) => i.submissionId === sid), queue.status)
+    const opsQueue = await req('GET', '/review/queue', undefined, authHeader('GET', '/', 'ops'))
+    check('运营访问审核队列 403', opsQueue.status === 403, opsQueue.status)
+    const opsDecide = await req('POST', `/review/submissions/${sid}/manual-decision`, { result: 'approved' }, authHeader('POST', '/', 'ops'))
+    check('运营裁决 403', opsDecide.status === 403, opsDecide.status)
+    const noReason = await req('POST', `/review/submissions/${sid}/manual-decision`, { result: 'rejected' })
+    check('退回不填原因 400', noReason.status === 400, noReason.status)
+    const approve = await req('POST', `/review/submissions/${sid}/manual-decision`, { result: 'approved' })
+    check('审核员人工通过 200', approve.status === 200 && approve.data?.status === 'approved', approve.error)
+    const after = await req('GET', `/copy/${mr.copyId}`)
+    check('文案状态变为 approved', after.data?.copy?.status === 'approved', after.data?.copy?.status)
+    const again = await req('POST', `/review/submissions/${sid}/manual-decision`, { result: 'approved' })
+    check('已裁决的审核单不能重复裁决 409', again.status === 409, again.status)
   }
 
   /* ──────────────────── 6. AC-G4 非法 JSON 无半截稿 ──────────────────── */

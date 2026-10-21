@@ -182,6 +182,25 @@ export interface GateResult {
   at: string | null
 }
 
+export interface ReviewQueueItem {
+  submissionId: string
+  status: string
+  isStub: boolean
+  copyId: string
+  copyTitle: string | null
+  line: CopyLine | null
+  personaId: string | null
+  personaName: string | null
+  versionId: string
+  versionNo: number | null
+  submittedBy: string | null
+  submittedAt: string | null
+  decidedBy: string | null
+  reason: string | null
+  rejectedGate: string | null
+  updatedAt: string | null
+}
+
 export interface Submission {
   isStub?: boolean
   id: string
@@ -279,7 +298,7 @@ export interface CopyOptions {
     gates: Record<string, string>
     origins: Record<string, string>
   }
-  personas: Array<PersonaBrief & { enabled: boolean }>
+  personas: Array<PersonaBrief & { enabled: boolean; usable?: boolean; statusLabel?: string }>
 }
 
 /* ── 文章 ────────────────────────────────────────────────────────── */
@@ -508,6 +527,29 @@ export const copyApi = {
     body: { result: 'approved' | 'rejected'; reason?: string; rejectedGate?: string; riskPoints?: string[] },
   ) {
     return apiPost<{ copyId: string; status: 'approved' | 'rejected' }>(`/review/submissions/${submissionId}/decision`, body)
+  },
+
+  /** 人工复核队列（P1-7，仅审核员 / 管理员） */
+  reviewQueue(scope: 'pending' | 'decided' = 'pending', line?: CopyLine) {
+    return apiGet<{ items: ReviewQueueItem[]; stubEnabled: boolean }>('/review/queue', { scope, line })
+  },
+  /** 审核单原始记录（关卡结果、追加话术） */
+  submissionDetail(submissionId: string) {
+    return apiGet<{
+      id: string
+      status: string
+      gateResults: GateResult[]
+      appendedRiskText: string | null
+      reason: string | null
+      decidedBy: string | null
+    }>(`/review/submissions/${submissionId}`)
+  },
+  /** 人工复核裁决（P1-7；退回必须带原因，提交人不能裁决自己的文案） */
+  manualDecision(
+    submissionId: string,
+    body: { result: 'approved' | 'rejected'; reason?: string; riskPoints?: string[]; appendedRiskText?: string },
+  ) {
+    return apiPost<{ copyId: string; status: 'approved' | 'rejected' }>(`/review/submissions/${submissionId}/manual-decision`, body)
   },
 
   /* 工具 */

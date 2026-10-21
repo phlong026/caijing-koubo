@@ -21,7 +21,7 @@
       </div>
       <div class="mw-sidebar-tools"><a-button type="text" :aria-label="workspace.navigationCollapsed ? '展开导航' : '收起导航'" :aria-expanded="!workspace.navigationCollapsed" aria-controls="workspace-navigation" :title="workspace.navigationCollapsed ? '展开导航' : '收起导航'" @click="workspace.toggleNavigation()"><template #icon><icon-menu-unfold v-if="workspace.navigationCollapsed" /><icon-menu-fold v-else /></template><span v-if="!workspace.navigationCollapsed">收起导航</span></a-button></div>
       <nav id="workspace-navigation" class="mw-sidebar-nav">
-        <template v-for="group in navGroups" :key="group.label">
+        <template v-for="group in visibleNavGroups" :key="group.label">
           <div v-if="group.label" class="mw-nav-group">{{ group.label }}</div>
           <RouterLink
             v-for="item in group.items"
@@ -84,9 +84,10 @@
 </template>
 
 <script setup lang="ts">
-import { h, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useAuthStore } from '@/stores/auth'
+import type { Role } from '@/api/auth'
 import { useRouter } from 'vue-router'
 import { brand, applyBrand } from '@/config/brand'
 import { useBenchmarkStore } from '@/stores/benchmark'
@@ -128,7 +129,7 @@ const navGroups = [
     label: '运营',
     items: [
       { label: '任务中心', path: '/tasks', icon: icon(IconCheckSquare) },
-      { label: '审核工作台', path: '/review', icon: icon(IconSafe) },
+      { label: '审核工作台', path: '/review', icon: icon(IconSafe), roles: ['reviewer', 'admin'] as Role[] },
       { label: '发布管理', path: '/publish', icon: icon(IconSend) },
       { label: '数据看板', path: '/analytics', icon: icon(IconBarChart) },
     ],
@@ -137,6 +138,13 @@ const navGroups = [
 
 const router = useRouter()
 const auth = useAuthStore()
+// 按角色隐藏无权限的入口（服务端仍按角色校验）
+const visibleNavGroups = computed(() =>
+  navGroups.map((g) => ({
+    ...g,
+    items: g.items.filter((i) => !('roles' in i) || auth.hasRole(...((i as { roles: Role[] }).roles))),
+  })),
+)
 const passwordVisible = ref(false)
 const passwordSaving = ref(false)
 const oldPassword = ref('')

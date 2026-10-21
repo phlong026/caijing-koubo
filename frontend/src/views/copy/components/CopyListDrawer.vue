@@ -156,7 +156,8 @@ const statusOptions: Record<string, string> = {
   revising: '修订中',
 }
 
-const personas = computed(() => (store.options?.personas ?? []).filter((p) => p.enabled))
+// 只提供可用人物（启用且授权有效），否则创建文案会被服务端拒绝
+const personas = computed(() => (store.options?.personas ?? []).filter((p) => p.usable ?? p.enabled))
 
 watch(
   () => props.visible,
