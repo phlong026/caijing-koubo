@@ -273,6 +273,13 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean),
 
+  /**
+   * 示例数据（P1-6）：示例人物「张经理（示例）」等及其占位授权。
+   * 占位授权没有实体材料却标记为「已核验」，会进入合规审计口径，因此生产缺省关闭；
+   * 关闭时启动会把已存在的示例人物归档、示例授权撤销（幂等）。
+   */
+  seedDemo: bool('SEED_DEMO', str('NODE_ENV', 'development') !== 'production'),
+
   defaultOperator: str('DEFAULT_OPERATOR', 'ops'),
   // P1-7：生产环境默认**关闭** mock 兜底；否则漏配 key 时会静默返回假账号/假视频/假转写。
   mockFallback: bool('MOCK_FALLBACK', str('NODE_ENV', 'development') !== 'production'),

@@ -2,6 +2,7 @@ import type { Db } from './index.js'
 import { getDb, insertIgnore, upsert } from './index.js'
 import { TABLES, createIndexSql, createTableSql } from './schema.js'
 import { logger } from '../log.js'
+import { config } from '../config.js'
 import { newId } from '../lib/util.js'
 import { toDb, utcNow } from '../lib/time.js'
 import { seedCopyWorkshop, seedPersonaExtensions } from './seed-copy.js'
@@ -177,7 +178,8 @@ async function seedBaseData(db: Db): Promise<void> {
       },
     },
   ]
-  for (const p of personas) {
+  // P1-6：示例人物只在开发环境或显式 SEED_DEMO=true 时写入
+  for (const p of config.seedDemo ? personas : []) {
     await upsert(db, {
       table: 'persona',
       row: {
@@ -340,6 +342,8 @@ const migratePersonaLibrary: Migration['up'] = async (db) => {
  * 幂等：按 id upsert，重复执行只刷新状态与备注。
  */
 const seedStubAuthorizations: Migration['up'] = async (db) => {
+  // P1-6：占位授权没有实体材料，只在开发环境或显式 SEED_DEMO=true 时写入
+  if (!config.seedDemo) return
   const now = toDb(utcNow())
   const stubAuths: Array<{ id: string; personaId: string; grantor: string; scopes: string[] }> = [
     { id: 'pau_manager_demo', personaId: 'ps_manager_demo', grantor: '张经理（示例）', scopes: ['portrait', 'voice'] },
@@ -429,5 +433,53 @@ export async function runMigrations(db: Db = getDb()): Promise<string[]> {
     done.push(m.version)
   }
   if (!done.length) logger.info('db.migration: 已是最新（幂等）')
+  if (!config.seedDemo) await retireDemoData(db)
   return done
+}
+
+const DEMO_PERSONA_IDS = ['ps_manager_demo', 'ps_kos_demo', 'ps_persona_demo']
+
+/**
+ * P1-6：关闭示例数据时（生产缺省），把此前迁移写入的示例人物归档、占位授权撤销。
+ * 每次启动幂等执行：只处理仍未归档的示例人物与仍未撤销的占位授权，并写审计日志。
+ */
+async function retireDemoData(db: Db): Promise<void> {
+  const now = toDb(utcNow())
+  const ph = DEMO_PERSONA_IDS.map(() => '?').join(', ')
+  const personas = await db.all<{ id: string }>(
+    `SELECT \`id\` FROM \`persona\` WHERE \`id\` IN (${ph}) AND \`is_stub\` = 1 AND \`archived_at\` IS NULL`,
+    DEMO_PERSONA_IDS,
+  )
+  const auths = await db.all<{ id: string; persona_id: string }>(
+    "SELECT `id`, `persona_id` FROM `persona_authorization` WHERE `created_by` = 'seed' AND `status` != 'revoked'",
+  )
+  if (!personas.length && !auths.length) return
+  for (const a of auths) {
+    await db.run(
+      "UPDATE `persona_authorization` SET `status` = 'revoked', `decision_reason` = ?, `revoked_by` = 'system', `revoked_at` = ?, `updated_at` = ? WHERE `id` = ?",
+      ['示例授权（无实体材料），非示例环境自动撤销', now, now, a.id],
+    )
+  }
+  for (const p of personas) {
+    await db.run(
+      'UPDATE `persona` SET `archived_at` = ?, `enabled` = 0, `active_name_key` = NULL, `updated_at` = ?, `updated_by` = ? WHERE `id` = ?',
+      [now, now, 'system', p.id],
+    )
+  }
+  await db.run(
+    'INSERT INTO `operation_log` (`id`, `operator`, `action`, `target_type`, `target_id`, `detail`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [
+      newId('oplog'),
+      'system',
+      'persona.demo_data_retired',
+      'persona',
+      null,
+      JSON.stringify({ archivedPersonas: personas.map((p) => p.id), revokedAuthorizations: auths.map((a) => a.id) }),
+      now,
+    ],
+  )
+  logger.warn(
+    { archivedPersonas: personas.length, revokedAuthorizations: auths.length },
+    'db.demo_data_retired：SEED_DEMO 关闭，已归档示例人物并撤销占位授权',
+  )
 }
