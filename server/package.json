@@ -9,6 +9,7 @@
     "start": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:unit": "vitest run",
     "migrate": "tsx src/db/migrate-cli.ts",
     "smoke": "tsx scripts/smoke.ts",
     "smoke:copy": "tsx scripts/smoke-copy.ts",
@@ -21,7 +22,7 @@
     "test:finstep": "tsx scripts/test-finstep.ts",
     "test:saturn:clean": "tsx scripts/test-saturn-clean.ts",
     "test:saturn": "tsx scripts/test-saturn.ts",
-    "check": "npm run typecheck && npm run check:sql-columns && npm run check:mysql-ddl && npm run check:mysql-ddl:self && npm run test:hifly:protocol && npm run test:persona:policy && npm run test:oss && npm run test:finstep:clean && npm run test:saturn:clean && npm run test:review && npm run test:personas",
+    "check": "npm run typecheck && npm run test:unit && npm run check:sql-columns && npm run check:mysql-ddl && npm run check:mysql-ddl:self && npm run test:hifly:protocol && npm run test:persona:policy && npm run test:oss && npm run test:finstep:clean && npm run test:saturn:clean && npm run test:review && npm run test:personas",
     "smoke:topics": "tsx scripts/smoke-topics.ts",
     "smoke:all": "tsx scripts/run-smoke-all.ts",
     "fix:topic-status": "tsx scripts/fix-topic-status.ts",
@@ -55,6 +56,7 @@
     "@types/node": "^22.9.0",
     "node-sql-parser": "^5.4.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^3.2.7"
   }
 }
