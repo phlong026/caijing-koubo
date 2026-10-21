@@ -500,6 +500,7 @@ export const TABLES: TableDef[] = [
       vc('audio_key', 255, { nullable: true }),
       { name: 'error', type: 'text', nullable: true },
       int('attempts', 0),
+      dt('next_poll_at'), // P0-2：轮询排期，由 poll_sweep 到期入队
       dt('created_at'),
       dt('expires_at'),
     ],

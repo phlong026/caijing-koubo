@@ -537,17 +537,14 @@ async function main(): Promise<void> {
   check('进行中克隆阻断归档 409 PERSONA_IN_USE', blocked.status === 409 && blocked.raw?.error?.code === 'PERSONA_IN_USE', blocked.raw)
   check('阻断原因含「进行中的分身制作」', String(blocked.raw?.error?.message ?? '').includes('分身'), blocked.raw?.error?.message)
 
-  // 推进到终态后允许归档
-  await waitFor('分身乙终态', 120_000, 2000, async () => {
+  // P0-2：不手动 refresh，只靠后台 next_poll_at + poll_sweep 自动推进到终态
+  const avatarBDone = await waitFor('分身乙自动轮询到终态', 120_000, 2000, async () => {
     const r = await req('GET', `/persona-avatars/${avatarBId}`)
     const s = r.data?.status
-    if (s === 'running') {
-      await req('POST', `/persona-avatars/${avatarBId}/refresh`)
-      return null
-    }
     if (s === 'ready' || s === 'failed' || s === 'uncertain') return r.data
-    return false
+    return null
   })
+  check('不手动刷新也能自动制作完成（P0-2）', avatarBDone?.status === 'ready', avatarBDone?.status)
   // 终态后可能仍非默认，直接删掉再归档（默认分身甲不受影响）
   const avatarB2 = await req('GET', `/persona-avatars/${avatarBId}`)
   if (avatarB2.data?.status === 'ready') await req('DELETE', `/persona-avatars/${avatarBId}`)

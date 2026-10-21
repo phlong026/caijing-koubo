@@ -4,7 +4,7 @@ import { memScheduleRepeatable } from '../../queue/memory.js'
 import { logger } from '../../log.js'
 import { scanAuthExpiry } from './authorizations.js'
 import { registerAssetProcessWorker } from './assets/process.js'
-import { registerCloneWorker, resumeUncertainSubmissions } from './clone/worker.js'
+import { registerCloneWorker, resumeUncertainSubmissions, scheduleCloneSweep } from './clone/worker.js'
 import { cleanExpiredPreviews } from './clone/voices.js'
 import { registerPersonaRoutes } from './routes.js'
 
@@ -69,6 +69,8 @@ export async function registerPersonaModule(): Promise<void> {
   // 启动即扫描一次（不等首个排期点）；幂等由提醒去重口径保证
   await scanAuthExpiry().catch((e) => logger.error({ err: (e as Error).message }, 'persona.auth_expiry.boot_scan_failed'))
   await resumeUncertainSubmissions()
+  // P0-2：克隆 / 试听轮询改为 next_poll_at + 周期扫描
+  await scheduleCloneSweep()
 }
 
 export function registerPersonas(app: FastifyInstance): void {
