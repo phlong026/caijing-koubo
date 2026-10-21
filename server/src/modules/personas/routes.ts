@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
+import { Transform } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { ok } from '../../app.js'
 import { err } from '../../errors.js'
 import { config, paths } from '../../config.js'
@@ -105,6 +107,9 @@ import {
  *    各素材类型的细分上限在这里按 size 早停判定。
  */
 
+/** 计数 Transform 超限时抛出，pipeline 会据此销毁两端流并 reject */
+class UploadTooLarge extends Error {}
+
 interface UploadedFile {
   filePath: string
   filename: string
@@ -162,37 +167,30 @@ async function readMultipart(
     const headChunks: Buffer[] = []
     let size = 0
     let headLen = 0
-    let tooLarge = false
-    await new Promise<void>((resolve, reject) => {
-      let settled = false
-      const settle = (e?: Error) => {
-        if (settled) return
-        settled = true
-        if (e && !tooLarge) reject(e)
-        else resolve()
-      }
-      const ws = fs.createWriteStream(dest)
-      const src = part.file!
-      src.on('data', (c: Buffer) => {
-        size += c.length
+    // P1-1：用 pipeline + 计数 Transform 早停。原实现超限时直接 destroy 两端流，
+    // destroy 不触发 finish / end，Promise 永不返回，请求挂住且临时文件残留。
+    const counter = new Transform({
+      transform(chunk: Buffer, _enc, cb) {
+        size += chunk.length
         if (headLen < 16) {
-          headChunks.push(c)
-          headLen += c.length
+          headChunks.push(chunk)
+          headLen += chunk.length
         }
         if (size > effectiveMax) {
-          // 早停：超出该类型上限即刻断流，避免把超大文件整份落盘
-          tooLarge = true
-          src.destroy?.()
-          ws.destroy()
+          cb(new UploadTooLarge())
+          return
         }
-      })
-      src.on('error', (e) => settle(e as Error))
-      ws.on('error', (e) => settle(e as Error))
-      ws.on('finish', () => settle())
-      src.on('end', () => ws.end())
-      src.pipe(ws)
+        cb(null, chunk)
+      },
     })
-    if (tooLarge || part.file?.truncated || size > effectiveMax) {
+    try {
+      await pipeline(part.file!, counter, fs.createWriteStream(dest))
+    } catch (e) {
+      await fsp.unlink(dest).catch(() => undefined)
+      if (e instanceof UploadTooLarge) throw err.assetTooLarge(effectiveMsg, { max: effectiveMax, size })
+      throw e
+    }
+    if (part.file?.truncated || size > effectiveMax) {
       await fsp.unlink(dest).catch(() => undefined)
       throw err.assetTooLarge(effectiveMsg, { max: effectiveMax, size })
     }

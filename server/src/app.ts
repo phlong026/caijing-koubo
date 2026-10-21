@@ -61,7 +61,10 @@ export async function buildApp(): Promise<FastifyInstance> {
     )
   })
 
-  app.setErrorHandler(async (error, _req, reply: FastifyReply) => {
+  app.setErrorHandler(async (error, req, reply: FastifyReply) => {
+    // P1-1：上传超限等在请求体读完之前就报错时，服务端会关闭该连接；
+    // 显式告知客户端不要复用，否则下一个请求会在同一连接上遇到 ECONNRESET
+    if (!req.raw.complete) reply.header('Connection', 'close')
     if (isApiError(error)) {
       return reply.status(error.status).send({
         ok: false,

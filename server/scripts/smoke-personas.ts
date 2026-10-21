@@ -315,6 +315,12 @@ async function main(): Promise<void> {
   })
   check('同内容重复上传走幂等去重（AC-A4）', dupAsset.data?.deduplicated === true && dupAsset.data?.assetId === photoId, dupAsset.data)
 
+  // P1-1：字段在前、文件超限时必须立即 413，不能挂住请求
+  const oversize = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(11 * 1024 * 1024)])
+  const t0 = Date.now()
+  const tooLarge = await reqMultipart(`/personas/${idA}/assets`, { kind: 'photo' }, { buf: oversize, filename: 'big.jpg', type: 'image/jpeg' })
+  check('超限照片立即返回 413 ASSET_TOO_LARGE（P1-1）', tooLarge.status === 413 && tooLarge.raw?.error?.code === 'ASSET_TOO_LARGE' && Date.now() - t0 < 10_000, { status: tooLarge.status, ms: Date.now() - t0 })
+
   /* [6] 分身克隆全链路（AC-C1~C6） */
   console.log('[6] 分身克隆全链路')
   const consentC = await req('POST', `/personas/${idA}/consents`, {
