@@ -178,6 +178,10 @@ export async function decideAuthorization(
   const auth = await getAuthorizationById(id)
   if (!auth) throw err.notFound('授权记录不存在')
   if (auth.status === 'revoked') throw err.invalidState('授权已撤销，不能再次核验')
+  // P0-1 四眼原则：上传人不能核验自己上传的授权材料
+  if (auth.createdBy && auth.createdBy === input.operator) {
+    throw err.forbidden('授权材料须由上传人以外的审核员核验')
+  }
   const reason = String(input.reason ?? '').trim()
   if (input.decision === 'rejected' && !reason) throw err.badRequest('驳回必须填写原因')
   const now = toDb(utcNow())

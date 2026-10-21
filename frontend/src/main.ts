@@ -4,6 +4,8 @@ import ArcoVue from '@arco-design/web-vue'
 import ArcoVueIcon from '@arco-design/web-vue/es/icon'
 import App from './App.vue'
 import router from './router'
+import { UNAUTHORIZED_EVENT } from './api/client'
+import { useAuthStore } from './stores/auth'
 import '@arco-design/web-vue/dist/arco.css'
 import './style.css'
 
@@ -13,3 +15,10 @@ app.use(router)
 app.use(ArcoVue)
 app.use(ArcoVueIcon)
 app.mount('#app')
+
+// P0-1：任意接口返回 401（令牌过期 / 账号停用）时回到登录页
+window.addEventListener(UNAUTHORIZED_EVENT, () => {
+  useAuthStore().clear()
+  const current = router.currentRoute.value
+  if (current.name !== 'login') void router.replace({ name: 'login', query: { redirect: current.fullPath } })
+})

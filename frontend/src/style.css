@@ -629,6 +629,7 @@ button:focus-visible, a:focus-visible, summary:focus-visible {
 .mw-sidebar-footer { padding: 12px 16px; border-top: 1px solid var(--mw-border-light); }
 .mw-profile { display: flex; align-items: center; gap: 9px; font-size: 13px; }
 .mw-profile-avatar { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; color: #fff; background: var(--mw-primary); }
+.mw-profile-trigger { display: flex; align-items: center; gap: 9px; flex: 1; min-width: 0; padding: 0; border: 0; background: transparent; cursor: pointer; color: inherit; font: inherit; }
 .mw-main-column { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .mw-main { flex: 1; min-height: 0; overflow: auto; background: var(--mw-bg); }
 .mw-media-placeholder { display: flex; align-items: center; justify-content: center; flex-shrink: 0; background: #edf0ed; color: #869394; box-shadow: none; border-radius: 4px; }

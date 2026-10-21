@@ -187,7 +187,7 @@ export const config = {
     llmRetry: num('COPY_LLM_RETRY', 1),
     /**
      * 审核桩开关（W1）：开启时提交后自动模拟三关并开放人工裁决接口，仅供审核模块就绪前联调。
-     * 项目尚无登录鉴权、X-Operator 由请求方自填，开着桩等于任何人都能把文案批成通过，
+     * 桩裁决接口虽已限定审核员角色，但会跳过真实三关，
      * 因此生产环境默认关闭；关闭后审核单停在「已提交」，等待真实审核模块回写结果。
      */
     reviewStubEnabled: bool('REVIEW_STUB_ENABLED', str('NODE_ENV', 'development') !== 'production'),
@@ -241,6 +241,31 @@ export const config = {
     /** KOS 共享人物账号绑定上限（Q5） */
     kosSharedAccountLimit: num('KOS_SHARED_ACCOUNT_LIMIT', 5),
   },
+
+  /**
+   * 登录与权限（P0-1）。
+   * 操作人一律取自登录令牌，不再信任请求头 X-Operator。
+   * 生产环境必须配置 AUTH_JWT_SECRET（≥32 字符），否则拒绝启动。
+   */
+  auth: {
+    jwtSecret: str('AUTH_JWT_SECRET', ''),
+    tokenTtlHours: num('AUTH_TOKEN_TTL_HOURS', 12),
+    cookieName: 'mw_token',
+    /** 库内没有任何账号时，用它创建首个管理员；开发环境缺省 admin / admin123 */
+    bootstrapAdminUser: str('AUTH_BOOTSTRAP_ADMIN_USER', 'admin'),
+    bootstrapAdminPassword: str('AUTH_BOOTSTRAP_ADMIN_PASSWORD', ''),
+    /** 连续失败多少次后锁定、锁定多久（分钟） */
+    maxLoginFailures: num('AUTH_MAX_LOGIN_FAILURES', 5),
+    lockMinutes: num('AUTH_LOCK_MINUTES', 5),
+  },
+  /** 允许跨域的前端来源（逗号分隔）；生产缺省为空 = 只允许同源 */
+  corsOrigins: str(
+    'CORS_ORIGINS',
+    str('NODE_ENV', 'development') === 'production' ? '' : 'http://localhost:5173,http://127.0.0.1:5173',
+  )
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
 
   defaultOperator: str('DEFAULT_OPERATOR', 'ops'),
   // P1-7：生产环境默认**关闭** mock 兜底；否则漏配 key 时会静默返回假账号/假视频/假转写。

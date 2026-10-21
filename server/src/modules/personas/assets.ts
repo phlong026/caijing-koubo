@@ -324,6 +324,10 @@ export async function reviewAsset(id: string, input: ReviewAssetInput): Promise<
   if (asset.status !== 'pending_review') {
     throw err.invalidState(`当前状态（${asset.status}）不可审核，仅「待审核」素材可操作`, { status: asset.status })
   }
+  // P0-1 四眼原则：上传人不能审核自己上传的素材
+  if (asset.createdBy && asset.createdBy === input.operator) {
+    throw err.forbidden('素材须由上传人以外的审核员审核')
+  }
   const reason = String(input.reason ?? '').trim()
   if (input.decision === 'rejected' && !reason) {
     throw err.badRequest('驳回必须填写原因')

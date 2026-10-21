@@ -91,7 +91,7 @@ import {
 
 /**
  * 人物库 HTTP 层（任务书 §5.1）。
- * 约定：统一信封 ok(data)；写操作取 X-Operator（app.ts onRequest 钩子已注入 req.operator）；
+ * 约定：统一信封 ok(data)；写操作取登录账号（auth/guard 已注入 req.operator）；
  * 文件经后端流式代理（Range 支持），不暴露存储真实路径 / 长期公网 URL；
  * 授权材料 / 素材原件 / 声音样本原件的查看下载落 persona.sensitive_access 审计（FR-U6）。
  */
@@ -522,6 +522,8 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string }
     const db = (await import('../../db/index.js')).getDb()
     const body = (req.body ?? {}) as { force?: boolean }
+    // P0-1：强制归档会绕过进行中任务的保护，只允许管理员
+    if (body.force && req.user?.role !== 'admin') throw err.forbidden('强制归档仅限管理员')
     // 阻断条件（R29）：进行中的克隆任务；审核中的文案
     const [avatarBusy, voiceBusy, copyBusy] = await Promise.all([
       db.get<{ c: number }>(

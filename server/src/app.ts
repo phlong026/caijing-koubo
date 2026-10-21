@@ -10,17 +10,11 @@ import { redis, queueStats, getQueueBackend } from './queue/index.js'
 import { registerRoutes } from './routes.js'
 import { toDb, utcNow } from './lib/time.js'
 import { UPLOAD_LIMITS } from './modules/personas/types.js'
+import { registerAuthGuard } from './modules/auth/guard.js'
 
 /** 统一成功响应结构：{ ok: true, data } */
 export function ok<T>(data: T): { ok: true; data: T } {
   return { ok: true as const, data }
-}
-
-/** D14：操作人取值 —— 请求头 X-Operator，缺省 ops */
-export function operatorOf(req: FastifyRequest): string {
-  const raw = req.headers['x-operator']
-  const v = Array.isArray(raw) ? raw[0] : raw
-  return (v && String(v).trim()) || config.defaultOperator
 }
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -36,7 +30,11 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
   })
 
-  await app.register(cors, { origin: true, credentials: false })
+  // P0-1：跨域只放行白名单来源（生产缺省为空 = 只允许同源访问）
+  await app.register(cors, {
+    origin: config.corsOrigins.length ? config.corsOrigins : false,
+    credentials: true,
+  })
 
   // P0-3：文章上传走 multipart；单文件 + 大小上限由各路由用 limits 覆盖
   // 注意：@fastify/multipart 的插件级 limits 会覆盖每次调用的 limits（deepmergeAll 后者胜），
@@ -52,9 +50,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     throwFileSizeLimit: false,
   })
 
-  app.addHook('onRequest', async (req) => {
-    req.operator = operatorOf(req)
-  })
+  // P0-1：登录与角色守卫（操作人取自令牌，不再信任请求头 X-Operator）
+  registerAuthGuard(app)
 
   app.addHook('onResponse', async (req, reply) => {
     if (req.url === '/health' || req.url === '/api/health') return

@@ -9,7 +9,9 @@
  * 用法：先启动 server，再执行 `npm run smoke:topics`
  * 说明：选题生成依赖 LLM，未配置真实 key 时走 mock（MOCK_FALLBACK），链路本身照常验证。
  */
+import { authHeader, initSmokeAuth } from './lib/smoke-auth.js'
 const BASE = process.env.SMOKE_BASE || 'http://127.0.0.1:8787/api'
+await initSmokeAuth(BASE)
 
 let passed = 0
 let failed = 0
@@ -29,7 +31,7 @@ async function req<T = any>(
   path: string,
   body?: unknown,
 ): Promise<{ status: number; data: T; raw: any }> {
-  const headers: Record<string, string> = { 'X-Operator': 'smoke-topics' }
+  const headers: Record<string, string> = { ...authHeader(method, path) }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   const res = await fetch(`${BASE}${path}`, {
     method,

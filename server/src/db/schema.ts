@@ -864,6 +864,25 @@ export const TABLES: TableDef[] = [
     comment: '审核单（所有权：审核模块；未就绪时由文案工坊桩建表 §5.3）',
   },
   {
+    name: 'app_user',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('username', 64),
+      vc('display_name', 64),
+      vc('password_hash', 255),
+      vc('role', 16, { def: 'ops' }), // ops | reviewer | admin
+      tint('enabled', 1),
+      int('token_version', 0), // 改密 / 停用时 +1，使已签发令牌失效
+      vc('created_by', 64, { nullable: true }),
+      dt('created_at'),
+      dt('updated_at'),
+      dt('last_login_at'),
+    ],
+    uniques: [['username']],
+    comment: '登录账号与角色（运营 / 审核 / 管理员）',
+  },
+  {
     name: 'schema_migrations',
     pk: 'version',
     cols: [vc('version', 64), dt('applied_at')],

@@ -1,10 +1,13 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import MainLayout from '@/layouts/MainLayout.vue'
 import { brand } from '@/config/brand'
+import { useAuthStore } from '@/stores/auth'
+import type { Role } from '@/api/auth'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
+    { path: '/login', name: 'login', component: () => import('@/views/auth/Login.vue'), meta: { title: '登录', public: true } },
     {
       path: '/',
       component: MainLayout,
@@ -21,9 +24,22 @@ const router = createRouter({
         { path: 'review', name: 'review', component: () => import('@/views/review/ReviewWorkbench.vue'), meta: { title: '审核工作台' } },
         { path: 'publish', name: 'publish', component: () => import('@/views/publish/PublishManage.vue'), meta: { title: '发布管理' } },
         { path: 'analytics', name: 'analytics', component: () => import('@/views/analytics/DataBoard.vue'), meta: { title: '数据看板' } },
+        { path: 'users', name: 'users', component: () => import('@/views/admin/UserManage.vue'), meta: { title: '账号管理', roles: ['admin'] } },
       ],
     },
   ],
+})
+
+// P0-1：除登录页外都要求登录；带 roles 的页面再按角色放行
+router.beforeEach(async (to) => {
+  if (to.meta.public) return true
+  const auth = useAuthStore()
+  if (!(await auth.ensureLoaded())) {
+    return { name: 'login', query: to.fullPath && to.fullPath !== '/' ? { redirect: to.fullPath } : {} }
+  }
+  const roles = to.meta.roles as Role[] | undefined
+  if (roles && !auth.hasRole(...roles)) return { path: '/workbench' }
+  return true
 })
 
 router.afterEach((to) => {

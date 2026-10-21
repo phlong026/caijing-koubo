@@ -1,6 +1,8 @@
 import { buildApp } from './app.js'
 import { closeAll, initDb } from './db/index.js'
 import { runMigrations } from './db/migrate.js'
+import { ensureBootstrapAdmin } from './modules/auth/repo.js'
+import { jwtSecret } from './modules/auth/tokens.js'
 import { config } from './config.js'
 import { logger } from './log.js'
 import { closeQueues, setQueueBackend, warnIfQueuePrefixShared } from './queue/index.js'
@@ -59,6 +61,9 @@ async function main(): Promise<void> {
   installGlobalHandlers()
   const db = await initDb()
   await runMigrations(db)
+  // P0-1：令牌密钥自检（生产缺失直接拒绝启动）+ 首个管理员
+  jwtSecret()
+  await ensureBootstrapAdmin()
 
   // D9：server 进程须具备 ffmpeg 与可写临时目录
   const ffmpeg = await checkFfmpeg()
@@ -77,7 +82,7 @@ async function main(): Promise<void> {
   if (config.copy.reviewStubEnabled && config.env === 'production') {
     logger.warn(
       'review.stub_enabled_in_production：生产环境开启了审核桩（REVIEW_STUB_ENABLED=true），' +
-        '任何人都可通过 /review/submissions/:id/decision 把文案批成通过，请确认这是有意为之。',
+        '审核员可通过 /review/submissions/:id/decision 跳过真实三关直接裁决，请确认这是有意为之。',
     )
   }
 

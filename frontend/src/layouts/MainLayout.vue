@@ -47,8 +47,20 @@
       </nav>
       <div class="mw-sidebar-footer">
         <div class="mw-profile">
-          <div class="mw-profile-avatar">陈</div>
-          <div class="mw-profile-meta flex-1"><div class="font-medium">陈</div><div class="mw-subtle">管理员</div></div>
+          <a-dropdown trigger="click" position="tl">
+            <button type="button" class="mw-profile-trigger" :title="auth.user?.displayName" aria-label="账号菜单">
+              <div class="mw-profile-avatar">{{ (auth.user?.displayName || auth.user?.username || '?').slice(0, 1) }}</div>
+              <div class="mw-profile-meta flex-1 text-left">
+                <div class="font-medium">{{ auth.user?.displayName || auth.user?.username }}</div>
+                <div class="mw-subtle">{{ auth.user?.roleLabel }}</div>
+              </div>
+            </button>
+            <template #content>
+              <a-doption v-if="auth.hasRole('admin')" @click="router.push('/users')">账号管理</a-doption>
+              <a-doption @click="passwordVisible = true">修改密码</a-doption>
+              <a-doption @click="signOut">退出登录</a-doption>
+            </template>
+          </a-dropdown>
           <a-badge dot :count="bench.unread">
             <a-button type="text" shape="circle" title="对标告警" aria-label="查看对标告警" @click="router.push('/topics')">
               <template #icon><icon-notification :size="17" /></template>
@@ -62,11 +74,19 @@
         <router-view />
       </main>
     </div>
+    <a-modal v-model:visible="passwordVisible" title="修改密码" :ok-loading="passwordSaving" @ok="submitPassword" @cancel="passwordVisible = false">
+      <div class="flex flex-col gap-3">
+        <a-input-password v-model="oldPassword" placeholder="原密码" autocomplete="current-password" />
+        <a-input-password v-model="newPassword" placeholder="新密码（至少 8 位，含字母和数字）" autocomplete="new-password" />
+      </div>
+    </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { h, onBeforeUnmount, onMounted } from 'vue'
+import { h, onBeforeUnmount, onMounted, ref } from 'vue'
+import { Message } from '@arco-design/web-vue'
+import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
 import { brand, applyBrand } from '@/config/brand'
 import { useBenchmarkStore } from '@/stores/benchmark'
@@ -116,6 +136,31 @@ const navGroups = [
 ]
 
 const router = useRouter()
+const auth = useAuthStore()
+const passwordVisible = ref(false)
+const passwordSaving = ref(false)
+const oldPassword = ref('')
+const newPassword = ref('')
+
+async function submitPassword(): Promise<void> {
+  passwordSaving.value = true
+  try {
+    await auth.changePassword(oldPassword.value, newPassword.value)
+    Message.success('密码已修改')
+    passwordVisible.value = false
+    oldPassword.value = ''
+    newPassword.value = ''
+  } catch (e) {
+    Message.error((e as Error).message)
+  } finally {
+    passwordSaving.value = false
+  }
+}
+
+async function signOut(): Promise<void> {
+  await auth.logout()
+  await router.replace({ name: 'login' })
+}
 const workspace = useWorkspaceStore()
 // 导航铃铛：对标告警未读数（FR-B9），60s 刷新一次
 const bench = useBenchmarkStore()

@@ -66,6 +66,7 @@ export class ApiError extends Error {
 export const err = {
   badRequest: (msg: string, details?: unknown) => new ApiError('bad_request', msg, 400, details),
   notFound: (msg = '对象不存在') => new ApiError('not_found', msg, 404),
+  unauthorized: (msg = '请先登录') => new ApiError('unauthorized', msg, 401),
   forbidden: (msg = '无权限') => new ApiError('forbidden', msg, 403),
   conflict: (msg: string, details?: unknown) => new ApiError('conflict', msg, 409, details),
   invalidState: (msg: string, details?: unknown) => new ApiError('invalid_state', msg, 409, details),

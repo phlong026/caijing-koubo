@@ -10,11 +10,12 @@
  * 断言只依赖本次产生的数据，避免历史数据污染结论（AC-G5 用例集本身是幂等的）。
  */
 import { readFileSync } from 'node:fs'
+import { authHeader, initSmokeAuth } from './lib/smoke-auth.js'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const BASE = process.env.BASE ?? process.env.SMOKE_BASE ?? 'http://127.0.0.1:8787/api'
-const OP = 'smoke-copy'
+await initSmokeAuth(BASE)
 const GEN_TIMEOUT_MS = Number(process.env.SMOKE_GEN_TIMEOUT ?? 240000)
 
 let passed = 0
@@ -48,7 +49,7 @@ async function req(
     method,
     headers: {
       ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
-      'X-Operator': OP,
+      ...authHeader(method, path),
       ...headers,
     },
     body: hasBody ? JSON.stringify(body ?? {}) : undefined,

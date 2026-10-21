@@ -65,7 +65,7 @@ import { newId } from '../../lib/util.js'
 
 /**
  * 文案工坊路由（任务书 §5.1，前缀 /api）。
- * 统一信封 { ok, data }，写操作取 X-Operator 并落 operation_log。
+ * 统一信封 { ok, data }，写操作取登录账号（req.operator）并落 operation_log。
  * `/copy/from-topic` 仍由 copy-contract 提供（D12 冻结契约）；此处接管 `GET /copy` 并扩展筛选。
  */
 /** 文案引擎运行时信息：当前生效的模型接入（不泄漏 key） */
