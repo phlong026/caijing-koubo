@@ -109,6 +109,12 @@ export async function checkReadiness(
       const auths = await validAuthorizationsOf(personaId, db)
       const authOk = auths.some((a) => a.scopes.includes('voice'))
       checks.push(hard('voice_auth', authOk, authOk ? '声音授权有效' : '声音授权缺失或已失效'))
+      // P2-1：共享人物的声音用于多个账号即构成声音共享（FR-V9），授权还须含「允许共享」。
+      // 与肖像 / 声音授权同口径：任一有效的声音授权含「允许共享」即可（补授权后旧声音无需重建）
+      if (persona.bindingMode === 'shared') {
+        const shareOk = auths.some((a) => a.scopes.includes('voice') && a.scopes.includes('share'))
+        checks.push(hard('voice_share_auth', shareOk, shareOk ? '声音共享授权有效' : '共享人物的声音授权须包含「允许共享」'))
+      }
     }
     // 飞影已配置（或 mock）
     const hiflyOk = hasHifly() || config.mockFallback
@@ -170,12 +176,17 @@ export async function getProductionProfile(personaId: string, avatarId?: string,
   }
   const persona = (await getPersonaById(personaId, true))!
   const targetAvatarId = avatarId || persona.defaultAvatarId!
+  // P1-4：指定分身必须属于该人物——否则可用 B 人物的声音配 A 人物的分身生成视频（冒用肖像）。
+  // 肖像授权按「该人物任一有效肖像授权」判定（场景 3：补授权后旧分身无需重建），已由上面的 readiness 校验
   const avatar = await db.get<Record<string, any>>(
-    'SELECT * FROM `persona_avatar` WHERE `id` = ? AND `deleted_at` IS NULL',
-    [targetAvatarId],
+    'SELECT * FROM `persona_avatar` WHERE `id` = ? AND `persona_id` = ? AND `deleted_at` IS NULL',
+    [targetAvatarId, personaId],
   )
   if (!avatar || avatar.status !== 'ready' || !avatar.vendor_avatar_id) {
-    throw err.personaNotReady('指定分身不可用（非 ready 或缺少厂商标识）', { avatarId: targetAvatarId, status: avatar?.status ?? null })
+    throw err.personaNotReady('指定分身不可用（不属于该人物、非 ready 或缺少厂商标识）', {
+      avatarId: targetAvatarId,
+      status: avatar?.status ?? null,
+    })
   }
   const voice = await db.get<Record<string, any>>(
     'SELECT * FROM `persona_voice` WHERE `id` = ? AND `is_sample` = 0 AND `deleted_at` IS NULL',

@@ -66,10 +66,12 @@ export const useTopicStore = defineStore('topics', () => {
   const templates = ref<TopicTemplate[]>([])
   const templatesLoading = ref(false)
 
-  const checkedItems = computed(() =>
-    checkedIds.value.map((id) => items.value.find((t) => t.id === id)).filter(Boolean) as Topic[],
+  const checkedItems = computed(
+    () => checkedIds.value.map((id) => items.value.find((t) => t.id === id)).filter(Boolean) as Topic[],
   )
-  const assignedChecked = computed(() => checkedItems.value.filter((t) => (assignment.value[t.id] ?? t.personaIds).length > 0))
+  const assignedChecked = computed(() =>
+    checkedItems.value.filter((t) => (assignment.value[t.id] ?? t.personaIds).length > 0),
+  )
   const expectedCount = computed(() => batch.value?.expected ?? 0)
 
   /**

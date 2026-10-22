@@ -1,9 +1,13 @@
 <template>
   <div>
-    <div class="mw-alert-banner mb-3" role="note">口播视频的背景由分身素材决定，此处素材用于剪辑、封面与混剪（可打标签供关键词匹配）。</div>
+    <div class="mw-alert-banner mb-3" role="note">
+      口播视频的背景由分身素材决定，此处素材用于剪辑、封面与混剪（可打标签供关键词匹配）。
+    </div>
 
     <div v-for="g in groups" :key="g.kind" class="mb-6">
-      <div class="font-semibold mb-2">{{ g.title }}<span class="mw-subtle ml-2">{{ countOf(g.kind) }} / {{ limitOf(g.kind) }}</span></div>
+      <div class="font-semibold mb-2">
+        {{ g.title }}<span class="mw-subtle ml-2">{{ countOf(g.kind) }} / {{ limitOf(g.kind) }}</span>
+      </div>
       <AssetGrid
         :items="itemsOf(g.kind)"
         :accept="g.accept"
@@ -22,14 +26,35 @@
       />
     </div>
 
-    <ReasonDialog :visible="!!rejecting" title="驳回素材" :loading="busy" @update:visible="(v: boolean) => !v && (rejecting = null)" @confirm="reject" />
+    <ReasonDialog
+      :visible="!!rejecting"
+      title="驳回素材"
+      :loading="busy"
+      @update:visible="(v: boolean) => !v && (rejecting = null)"
+      @confirm="reject"
+    />
 
-    <a-modal :visible="!!editing" title="编辑素材" ok-text="保存" unmount-on-close :on-before-ok="saveEdit" @cancel="editing = null">
+    <a-modal
+      :visible="!!editing"
+      title="编辑素材"
+      ok-text="保存"
+      unmount-on-close
+      :on-before-ok="saveEdit"
+      @cancel="editing = null"
+    >
       <a-form :model="editForm" layout="vertical">
         <a-form-item label="名称"><a-input v-model="editForm.name" :max-length="60" /></a-form-item>
-        <a-form-item label="背景名（≤20 字）"><a-input v-model="editForm.backgroundLabel" :max-length="20" /></a-form-item>
+        <a-form-item label="背景名（≤20 字）"
+          ><a-input v-model="editForm.backgroundLabel" :max-length="20"
+        /></a-form-item>
         <a-form-item label="标签（最多 10 个，供剪辑 / 混剪关键词匹配）">
-          <a-input-tag v-model="editForm.tags" :max-tag-count="10" allow-clear placeholder="回车添加" aria-label="素材标签" />
+          <a-input-tag
+            v-model="editForm.tags"
+            :max-tag-count="10"
+            allow-clear
+            placeholder="回车添加"
+            aria-label="素材标签"
+          />
         </a-form-item>
       </a-form>
     </a-modal>
@@ -39,7 +64,16 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
-import { deleteAsset, patchAsset, reviewAsset, uploadAsset, type AssetKind, type PersonaAsset, type PersonaDetail, type PersonaOptions } from '@/api/personas'
+import {
+  deleteAsset,
+  patchAsset,
+  reviewAsset,
+  uploadAsset,
+  type AssetKind,
+  type PersonaAsset,
+  type PersonaDetail,
+  type PersonaOptions,
+} from '@/api/personas'
 import AssetGrid from './AssetGrid.vue'
 import ReasonDialog from './ReasonDialog.vue'
 import { checkUploadFile, toastError } from './shared'
@@ -69,15 +103,34 @@ async function upload(kind: AssetKind, file: File): Promise<string | void> {
   return r.deduplicated ? '已存在，未重复上传' : '已上传，处理中'
 }
 async function approve(a: PersonaAsset): Promise<void> {
-  try { await reviewAsset(a.id, { decision: 'approved' }); Message.success('已通过'); emit('changed') } catch (e) { toastError(e) }
+  try {
+    await reviewAsset(a.id, { decision: 'approved' })
+    Message.success('已通过')
+    emit('changed')
+  } catch (e) {
+    toastError(e)
+  }
 }
 async function reject(reason: string): Promise<void> {
   if (!rejecting.value) return
   busy.value = true
-  try { await reviewAsset(rejecting.value.id, { decision: 'rejected', reason }); rejecting.value = null; emit('changed') } catch (e) { toastError(e) } finally { busy.value = false }
+  try {
+    await reviewAsset(rejecting.value.id, { decision: 'rejected', reason })
+    rejecting.value = null
+    emit('changed')
+  } catch (e) {
+    toastError(e)
+  } finally {
+    busy.value = false
+  }
 }
 async function remove(a: PersonaAsset): Promise<void> {
-  try { await deleteAsset(a.id); emit('changed') } catch (e) { toastError(e) }
+  try {
+    await deleteAsset(a.id)
+    emit('changed')
+  } catch (e) {
+    toastError(e)
+  }
 }
 function openEdit(a: PersonaAsset): void {
   editing.value = a
@@ -88,11 +141,18 @@ function openEdit(a: PersonaAsset): void {
 async function saveEdit(): Promise<boolean> {
   if (!editing.value) return true
   try {
-    await patchAsset(editing.value.id, { name: editForm.name.trim() || undefined, backgroundLabel: editForm.backgroundLabel.trim(), tags: editForm.tags })
+    await patchAsset(editing.value.id, {
+      name: editForm.name.trim() || undefined,
+      backgroundLabel: editForm.backgroundLabel.trim(),
+      tags: editForm.tags,
+    })
     Message.success('已保存')
     editing.value = null
     emit('changed')
     return true
-  } catch (e) { toastError(e); return false }
+  } catch (e) {
+    toastError(e)
+    return false
+  }
 }
 </script>

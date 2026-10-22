@@ -80,6 +80,11 @@ export const config = {
     timeoutMs: num('DASHSCOPE_TIMEOUT_MS', 120000),
     llmUnitPrice: num('LLM_UNIT_PRICE', 0.004),
     asrUnitPrice: num('ASR_UNIT_PRICE', 0.0005),
+    /**
+     * P2-13a：ASR 按音频时长计费的单价（元 / 秒）。配置后提取成本 = 时长 × 单价，
+     * 未配置（0）时沿用按次计价 ASR_UNIT_PRICE。具体单价以百炼账单为准。
+     */
+    asrPricePerSec: num('ASR_PRICE_PER_SEC', 0),
   },
 
   oss: {
@@ -196,7 +201,7 @@ export const config = {
     llmRetry: num('COPY_LLM_RETRY', 1),
     /**
      * 审核桩开关（W1）：开启时提交后自动模拟三关并开放人工裁决接口，仅供审核模块就绪前联调。
-     * 项目尚无登录鉴权、X-Operator 由请求方自填，开着桩等于任何人都能把文案批成通过，
+     * 桩裁决接口虽已限定审核员角色，但会跳过真实三关，
      * 因此生产环境默认关闭；关闭后审核单停在「已提交」，等待真实审核模块回写结果。
      */
     reviewStubEnabled: bool('REVIEW_STUB_ENABLED', str('NODE_ENV', 'development') !== 'production'),
@@ -222,6 +227,12 @@ export const config = {
     unitPrice: num('COPY_LLM_UNIT_PRICE', 0),
     inputPricePer1k: num('COPY_LLM_INPUT_PRICE_PER_1K', 0),
     outputPricePer1k: num('COPY_LLM_OUTPUT_PRICE_PER_1K', 0),
+    /**
+     * P0-4 合规闸门：COPY_LLM_* 指向第三方中转（如 ccg-cli.online）时，文案与人物档案会发往该服务。
+     * 生产环境必须显式设为 true（表示已获产品与合规书面批准）才启用，否则自动回退百炼；
+     * 开发环境不受影响。
+     */
+    complianceApproved: bool('COPY_LLM_COMPLIANCE_APPROVED', str('NODE_ENV', 'development') !== 'production'),
   },
 
   /**
@@ -251,6 +262,43 @@ export const config = {
     kosSharedAccountLimit: num('KOS_SHARED_ACCOUNT_LIMIT', 5),
   },
 
+  /**
+   * 登录与权限（P0-1）。
+   * 操作人一律取自登录令牌，不再信任请求头 X-Operator。
+   * 生产环境必须配置 AUTH_JWT_SECRET（≥32 字符），否则拒绝启动。
+   */
+  auth: {
+    jwtSecret: str('AUTH_JWT_SECRET', ''),
+    tokenTtlHours: num('AUTH_TOKEN_TTL_HOURS', 12),
+    cookieName: 'mw_token',
+    /** 库内没有任何账号时，用它创建首个管理员；开发环境缺省 admin / admin123 */
+    bootstrapAdminUser: str('AUTH_BOOTSTRAP_ADMIN_USER', 'admin'),
+    bootstrapAdminPassword: str('AUTH_BOOTSTRAP_ADMIN_PASSWORD', ''),
+    /** 连续失败多少次后锁定、锁定多久（分钟） */
+    maxLoginFailures: num('AUTH_MAX_LOGIN_FAILURES', 5),
+    lockMinutes: num('AUTH_LOCK_MINUTES', 5),
+  },
+  /** P2-12：计费 / 高成本接口按操作人限流；RATE_LIMIT_SCALE 整体放大或缩小各接口的每分钟次数 */
+  rateLimit: {
+    enabled: bool('RATE_LIMIT_ENABLED', true),
+    scale: num('RATE_LIMIT_SCALE', 1),
+  },
+  /** 允许跨域的前端来源（逗号分隔）；生产缺省为空 = 只允许同源 */
+  corsOrigins: str(
+    'CORS_ORIGINS',
+    str('NODE_ENV', 'development') === 'production' ? '' : 'http://localhost:5173,http://127.0.0.1:5173',
+  )
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+
+  /**
+   * 示例数据（P1-6）：示例人物「张经理（示例）」等及其占位授权。
+   * 占位授权没有实体材料却标记为「已核验」，会进入合规审计口径，因此生产缺省关闭；
+   * 关闭时启动会把已存在的示例人物归档、示例授权撤销（幂等）。
+   */
+  seedDemo: bool('SEED_DEMO', str('NODE_ENV', 'development') !== 'production'),
+
   defaultOperator: str('DEFAULT_OPERATOR', 'ops'),
   // P1-7：生产环境默认**关闭** mock 兜底；否则漏配 key 时会静默返回假账号/假视频/假转写。
   mockFallback: bool('MOCK_FALLBACK', str('NODE_ENV', 'development') !== 'production'),
@@ -279,9 +327,9 @@ export function hasTikHub(): boolean {
 export function hasDashScope(): boolean {
   return !!config.dashscope.apiKey
 }
-/** 文案二创是否已配置专用模型（三项齐备才算） */
+/** 文案二创是否启用专用模型：BASE_URL 与 API_KEY 齐备，且（生产环境）已通过合规批准 */
 export function hasCopyLlm(): boolean {
-  return !!(config.copyLlm.baseUrl && config.copyLlm.apiKey)
+  return !!(config.copyLlm.baseUrl && config.copyLlm.apiKey && config.copyLlm.complianceApproved)
 }
 export function hasOss(): boolean {
   return !!(config.oss.bucket && config.oss.accessKeyId && config.oss.accessKeySecret)

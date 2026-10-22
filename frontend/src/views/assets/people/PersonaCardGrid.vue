@@ -22,7 +22,11 @@
           v-for="p in items"
           :key="p.id"
           class="mw-card p-4 cursor-pointer transition-all people-card"
-          :class="currentId === p.id ? 'border-[color:var(--mw-primary)] ring-1 ring-[color:var(--mw-primary)]' : 'hover:shadow-sm'"
+          :class="
+            currentId === p.id
+              ? 'border-[color:var(--mw-primary)] ring-1 ring-[color:var(--mw-primary)]'
+              : 'hover:shadow-sm'
+          "
           role="button"
           tabindex="0"
           :aria-pressed="currentId === p.id"
@@ -32,7 +36,13 @@
           @keydown.space.prevent="$emit('select', p.id)"
         >
           <div class="people-cover" style="aspect-ratio: 16/9">
-            <img v-if="p.coverUrl" :src="p.coverUrl" :alt="`${p.name} 封面`" class="w-full h-full object-cover" loading="lazy" />
+            <img
+              v-if="p.coverUrl"
+              :src="p.coverUrl"
+              :alt="`${p.name} 封面`"
+              class="w-full h-full object-cover"
+              loading="lazy"
+            />
             <div v-else class="w-full h-full flex items-center justify-center text-[28px] font-semibold people-initial">
               {{ p.name.slice(0, 1) }}
             </div>
@@ -51,9 +61,15 @@
           </div>
 
           <div class="mt-3 pt-2.5 border-t border-[#f2f4f7] flex items-center gap-4 text-[12px] text-[var(--mw-text2)]">
-            <span class="flex items-center gap-1"><icon-image :size="14" class="text-[var(--mw-text3)]" />照片 {{ p.counts.photos }}</span>
-            <span class="flex items-center gap-1"><icon-play-circle :size="14" class="text-[var(--mw-text3)]" />分身 {{ p.counts.avatars }}</span>
-            <span class="flex items-center gap-1"><icon-sound :size="14" class="text-[var(--mw-text3)]" />声音 {{ p.counts.voices }}</span>
+            <span class="flex items-center gap-1"
+              ><icon-image :size="14" class="text-[var(--mw-text3)]" />照片 {{ p.counts.photos }}</span
+            >
+            <span class="flex items-center gap-1"
+              ><icon-play-circle :size="14" class="text-[var(--mw-text3)]" />分身 {{ p.counts.avatars }}</span
+            >
+            <span class="flex items-center gap-1"
+              ><icon-sound :size="14" class="text-[var(--mw-text3)]" />声音 {{ p.counts.voices }}</span
+            >
           </div>
         </div>
       </div>

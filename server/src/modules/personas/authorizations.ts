@@ -1,10 +1,8 @@
-import crypto from 'node:crypto'
-import fsp from 'node:fs/promises'
 import { getDb, type Db } from '../../db/index.js'
 import { jdec, newId } from '../../lib/util.js'
 import { fromDb, toDb, utcNow } from '../../lib/time.js'
 import { err } from '../../errors.js'
-import { MAGIC_HEAD_BYTES, validateUploadFile } from '../../lib/upload.js'
+import { MAGIC_HEAD_BYTES, sha256File, validateUploadFile } from '../../lib/upload.js'
 import { putObjectFromFile } from '../../integrations/aliyun-oss/client.js'
 import { recordOperation } from '../../modules/audit/repo.js'
 import { getPersonaById } from './repo.js'
@@ -117,8 +115,7 @@ export async function uploadAuthorization(input: UploadAuthorizationInput): Prom
     allowedExts: [...limits.exts],
     maxBytes: limits.maxBytes,
   })
-  const buf = await fsp.readFile(input.filePath)
-  const sha256 = crypto.createHash('sha256').update(buf).digest('hex')
+  const sha256 = await sha256File(input.filePath)
 
   const id = newId('auth')
   const fileKey = `persona/${input.personaId}/authorization/${id}${meta.ext}`
@@ -139,7 +136,8 @@ export async function uploadAuthorization(input: UploadAuthorizationInput): Prom
       input.size,
       sha256,
       effectiveFrom,
-      `${expiresAt} 23:59:59`,
+      // P2-6：到期日按北京时间当天 23:59:59 计（存 UTC），原来按 UTC 存相当于北京时间次日 07:59:59
+      toDb(new Date(`${expiresAt}T23:59:59+08:00`)),
       String(input.note ?? '').trim().slice(0, 255) || null,
       input.operator,
       now,
@@ -178,6 +176,10 @@ export async function decideAuthorization(
   const auth = await getAuthorizationById(id)
   if (!auth) throw err.notFound('授权记录不存在')
   if (auth.status === 'revoked') throw err.invalidState('授权已撤销，不能再次核验')
+  // P0-1 四眼原则：上传人不能核验自己上传的授权材料
+  if (auth.createdBy && auth.createdBy === input.operator) {
+    throw err.forbidden('授权材料须由上传人以外的审核员核验')
+  }
   const reason = String(input.reason ?? '').trim()
   if (input.decision === 'rejected' && !reason) throw err.badRequest('驳回必须填写原因')
   const now = toDb(utcNow())
@@ -255,7 +257,9 @@ export async function scanAuthExpiry(): Promise<{ expiring: number; expired: num
     if (!auth.expiresAt) continue
     const expires = new Date(auth.expiresAt)
     if (expires.getTime() <= now.getTime()) {
-      // 已到期：落 operation_log + 提醒（读时派生已使其失效，这里只做通知）
+      // 已到期：落 operation_log + 提醒（读时派生已使其失效，这里只做通知）。
+      // P2-6：只通知一次，原来每天扫描都会重复写日志，提醒被读过后也会每天重新生成
+      if (r.expired_notified_at) continue
       expired += 1
       await recordOperation({
         operator: 'system',
@@ -271,6 +275,7 @@ export async function scanAuthExpiry(): Promise<{ expiring: number; expired: num
         message: `授权已到期（${auth.expiresAt.slice(0, 10)}），依赖它的分身 / 声音已不可用`,
         operator: 'system',
       }).catch(() => undefined)
+      await db.run('UPDATE `persona_authorization` SET `expired_notified_at` = ? WHERE `id` = ?', [toDb(now), auth.id])
       continue
     }
     const daysLeft = (expires.getTime() - now.getTime()) / 86_400_000

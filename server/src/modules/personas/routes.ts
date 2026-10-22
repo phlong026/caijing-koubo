@@ -92,7 +92,7 @@ import {
 
 /**
  * 人物库 HTTP 层（任务书 §5.1）。
- * 约定：统一信封 ok(data)；写操作取 X-Operator（app.ts onRequest 钩子已注入 req.operator）；
+ * 约定：统一信封 ok(data)；写操作取登录账号（auth/guard 已注入 req.operator）；
  * 文件经后端流式代理（Range 支持），不暴露存储真实路径 / 长期公网 URL；
  * 授权材料 / 素材原件 / 声音样本原件的查看下载落 persona.sensitive_access 审计（FR-U6）。
  */
@@ -226,6 +226,10 @@ async function streamStorage(
     'Content-Disposition': `inline; filename="${encodeURIComponent(filename)}"`,
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'private, max-age=300',
+  }
+  // P2-4：按存储层给出的状态码回写（416 范围无效时不带正文，只回 Content-Range: bytes */总长）
+  if (res.status === 416) {
+    return reply.status(416).headers({ 'Content-Range': res.contentRange ?? '', 'Accept-Ranges': 'bytes' }).send()
   }
   if (res.contentRange) {
     headers['Content-Range'] = res.contentRange
@@ -506,6 +510,8 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string }
     const db = (await import('../../db/index.js')).getDb()
     const body = (req.body ?? {}) as { force?: boolean }
+    // P0-1：强制归档会绕过进行中任务的保护，只允许管理员
+    if (body.force && req.user?.role !== 'admin') throw err.forbidden('强制归档仅限管理员')
     // 阻断条件（R29）：进行中的克隆任务；审核中的文案
     const [avatarBusy, voiceBusy, copyBusy] = await Promise.all([
       db.get<{ c: number }>(
@@ -578,13 +584,14 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
       const k = f.kind as AssetKind | undefined
       return k && ASSET_KINDS.includes(k) ? UPLOAD_LIMITS[k].maxBytes : undefined
     })
-    const kind = (fields.kind ?? 'photo') as AssetKind
-    if (!ASSET_KINDS.includes(kind)) throw err.badRequest(`不支持的素材类型：${kind}`, { allowed: ASSET_KINDS })
-    const maxBytes = UPLOAD_LIMITS[kind].maxBytes
-    if (file.size > maxBytes) {
-      throw err.assetTooLarge(`${ASSET_KIND_LABELS[kind]}超过 ${Math.round(maxBytes / 1024 / 1024)}MB 上限`, { max: maxBytes, size: file.size })
-    }
+    // P1-2：所有校验都放在 try 内，任何分支报错都由 finally 删除临时文件
     try {
+      const kind = (fields.kind ?? 'photo') as AssetKind
+      if (!ASSET_KINDS.includes(kind)) throw err.badRequest(`不支持的素材类型：${kind}`, { allowed: ASSET_KINDS })
+      const maxBytes = UPLOAD_LIMITS[kind].maxBytes
+      if (file.size > maxBytes) {
+        throw err.assetTooLarge(`${ASSET_KIND_LABELS[kind]}超过 ${Math.round(maxBytes / 1024 / 1024)}MB 上限`, { max: maxBytes, size: file.size })
+      }
       const tags = fields.tags ? String(fields.tags).split(',').map((t) => t.trim()).filter(Boolean) : []
       const r = await uploadAsset({
         personaId: id,
@@ -667,6 +674,8 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
     if (!['thumb', 'compat', 'original'].includes(variant)) throw err.badRequest('variant 仅支持 thumb / compat / original')
     const asset = await getAssetById(id)
     if (!asset) throw err.notFound('素材不存在')
+    // P2-5：已删除素材不再对外提供；管理员审计需要时仍可查看（照常记敏感访问日志）
+    if (asset.deletedAt && req.user?.role !== 'admin') throw err.notFound('素材已删除')
     const target = assetFileTarget(asset, variant)
     const range = req.headers.range
     // 敏感访问审计：原件与兼容版本（FR-U6）；缩略图不记

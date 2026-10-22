@@ -31,13 +31,20 @@
 
       <a-form-item label="绑定方式">
         <a-radio-group v-model="form.bindingMode" type="button" :disabled="bindingModes.length < 2">
-          <a-radio v-for="m in bindingModes" :key="m" :value="m">{{ m === 'shared' ? '共享（可供多个账号）' : '一对一（专属）' }}</a-radio>
+          <a-radio v-for="m in bindingModes" :key="m" :value="m">{{
+            m === 'shared' ? '共享（可供多个账号）' : '一对一（专属）'
+          }}</a-radio>
         </a-radio-group>
         <template #extra>{{ bindingHint }}</template>
       </a-form-item>
 
       <a-form-item label="简介">
-        <a-textarea v-model="form.description" :max-length="120" show-word-limit :auto-size="{ minRows: 2, maxRows: 4 }" />
+        <a-textarea
+          v-model="form.description"
+          :max-length="120"
+          show-word-limit
+          :auto-size="{ minRows: 2, maxRows: 4 }"
+        />
       </a-form-item>
     </a-form>
   </a-modal>
@@ -46,7 +53,14 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
-import { createPersona, patchPersona, type BindingMode, type PersonaDetail, type PersonaLine, type PersonaOptions } from '@/api/personas'
+import {
+  createPersona,
+  patchPersona,
+  type BindingMode,
+  type PersonaDetail,
+  type PersonaLine,
+  type PersonaOptions,
+} from '@/api/personas'
 import { isApiCode, toastError } from './shared'
 
 const props = defineProps<{
@@ -84,7 +98,9 @@ const bindingModes = computed<BindingMode[]>(() => {
 const bindingHint = computed(() => {
   if (form.line === 'manager') return '经理 IP 固定一对一，最多绑定 1 个账号。'
   if (form.line === 'persona') return '素人矩阵一对一，最多绑定 1 个账号。'
-  return form.bindingMode === 'shared' ? '共享人物最多可供 5 个授权账号使用；声音共享须单独核验授权。' : '一对一最多绑定 1 个账号。'
+  return form.bindingMode === 'shared'
+    ? '共享人物最多可供 5 个授权账号使用；声音共享须单独核验授权。'
+    : '一对一最多绑定 1 个账号。'
 })
 
 function onLineChange(): void {

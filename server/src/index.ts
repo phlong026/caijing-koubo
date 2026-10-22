@@ -1,6 +1,8 @@
 import { buildApp } from './app.js'
 import { closeAll, initDb } from './db/index.js'
 import { runMigrations } from './db/migrate.js'
+import { ensureBootstrapAdmin } from './modules/auth/repo.js'
+import { jwtSecret } from './modules/auth/tokens.js'
 import { config, hasOss, ossConfigIssues } from './config.js'
 import { logger } from './log.js'
 import { closeQueues, setQueueBackend, warnIfQueuePrefixShared } from './queue/index.js'
@@ -14,6 +16,7 @@ import { registerPersonaModule } from './modules/personas/index.js'
 import { checkFfmpeg } from './media/pipeline.js'
 import { ossStatus } from './integrations/aliyun-oss/client.js'
 import { describeUpstream } from './integrations/tikhub/client.js'
+import { createBurstCounter } from './lib/burst.js'
 
 /**
  * 全局异常兜底。
@@ -25,11 +28,40 @@ import { describeUpstream } from './integrations/tikhub/client.js'
  *
  * 注意：这不代表可以吞掉错误——未捕获异常通常意味着状态可能不一致，
  * 所以一律以 error 级别记录堆栈，便于事后排查。
+ *
+ * P3-5：偶发一次照旧「记录 + 存活」；但同一分钟内反复出现（默认 3 次，UNCAUGHT_EXIT_THRESHOLD），
+ * 说明进程大概率已带着不一致的状态在跑，此时走优雅停机并以非 0 退出，交给守护进程重启。
  */
+const uncaughtBurst = createBurstCounter(60_000)
+let requestFatalShutdown: ((reason: string) => void) | null = null
+
 function installGlobalHandlers(): void {
+  const threshold = Math.max(0, Number(process.env.UNCAUGHT_EXIT_THRESHOLD ?? 3) || 0)
+  // 日志 worker 线程已退出时 logger 本身会抛错；在异常处理器里再抛会形成新的未捕获异常，退回直接写 stderr
+  const safeLog = (write: () => void, fallback: string) => {
+    try {
+      write()
+    } catch {
+      process.stderr.write(`${fallback}\n`)
+    }
+  }
   process.on('uncaughtException', (err) => {
-    logger.error({ err: err.message, stack: err.stack, kind: 'uncaughtException' }, 'server.uncaught_exception')
-    // 进程已处于不确定状态，但仍继续服务；由外部监控按日志频次告警
+    const recent = uncaughtBurst.hit()
+    safeLog(
+      () =>
+        logger.error(
+          { err: err.message, stack: err.stack, kind: 'uncaughtException', recentPerMinute: recent, exitThreshold: threshold || null },
+          'server.uncaught_exception',
+        ),
+      `server.uncaught_exception (${recent}/min): ${err.stack ?? err.message}`,
+    )
+    if (!threshold || recent < threshold) return
+    safeLog(
+      () => logger.fatal({ recentPerMinute: recent, threshold }, 'server.uncaught_burst：一分钟内多次未捕获异常，主动退出交给守护进程重启'),
+      `server.uncaught_burst: ${recent} uncaught exceptions within a minute, exiting`,
+    )
+    if (requestFatalShutdown) requestFatalShutdown('uncaughtException')
+    else process.exit(1)
   })
   process.on('unhandledRejection', (reason) => {
     const e = reason instanceof Error ? reason : new Error(String(reason))
@@ -59,6 +91,9 @@ async function main(): Promise<void> {
   installGlobalHandlers()
   const db = await initDb()
   await runMigrations(db)
+  // P0-1：令牌密钥自检（生产缺失直接拒绝启动）+ 首个管理员
+  jwtSecret()
+  await ensureBootstrapAdmin()
 
   // OSS：半配置 / 内网签名等问题在启动时就暴露，而不是等到飞影拉取失败
   for (const issue of ossConfigIssues()) logger.warn({ issue }, 'oss.config_issue')
@@ -83,10 +118,16 @@ async function main(): Promise<void> {
     },
     'env.check',
   )
+  if (config.copyLlm.baseUrl && config.copyLlm.apiKey && !config.copyLlm.complianceApproved) {
+    logger.warn(
+      'copy_llm.not_approved：已配置 COPY_LLM_*（第三方模型中转），但未设置 COPY_LLM_COMPLIANCE_APPROVED=true，' +
+        '文案生成已回退百炼。获得产品与合规书面批准后再开启。',
+    )
+  }
   if (config.copy.reviewStubEnabled && config.env === 'production') {
     logger.warn(
       'review.stub_enabled_in_production：生产环境开启了审核桩（REVIEW_STUB_ENABLED=true），' +
-        '任何人都可通过 /review/submissions/:id/decision 把文案批成通过，请确认这是有意为之。',
+        '审核员可通过 /review/submissions/:id/decision 跳过真实三关直接裁决，请确认这是有意为之。',
     )
   }
 
@@ -130,6 +171,11 @@ async function main(): Promise<void> {
   // 审核桩在进程内推进，重启后续推未走完三关的桩审核单（P2-19）
   await resumeStubSubmissions().catch((e) => logger.error({ err: (e as Error).message }, 'review.stub.resume_scan_failed'))
 
+  // P2-13c：临时文件每日清理（启动时先跑一次）
+  const { cleanupTempFiles } = await import('./modules/copy/article.js')
+  await cleanupTempFiles().catch((e) => logger.warn({ err: (e as Error).message }, 'temp.clean_failed'))
+  setInterval(() => void cleanupTempFiles().catch(() => undefined), 24 * 3600 * 1000).unref()
+
   const app = await buildApp()
   await app.listen({ port: config.port, host: config.host })
   logger.info({ url: `http://${config.host}:${config.port}/api`, health: `http://${config.host}:${config.port}/health` }, 'server.ready')
@@ -145,17 +191,28 @@ async function main(): Promise<void> {
       .catch((e) => logger.error({ err: (e as Error).message }, 'boot.fetch_failed'))
   }
 
-  const shutdown = async (signal: string) => {
-    logger.info({ signal }, 'server.shutdown')
+  let shuttingDown = false
+  const shutdown = async (signal: string, exitCode = 0) => {
+    if (shuttingDown) return
+    shuttingDown = true
+    logger.info({ signal, exitCode }, 'server.shutdown')
+    // P2-10：worker.close() 会等进行中的任务结束（提取轮询最长 15 分钟），停机必须有上限。
+    // 被打断的任务由既有续跑逻辑接住：提取按 running + task_id 续轮询、审核桩续推、克隆由 poll_sweep 续上
+    const forceMs = Math.max(1000, Number(process.env.SHUTDOWN_TIMEOUT_MS ?? 10_000) || 10_000)
+    setTimeout(() => {
+      logger.warn({ forceMs }, 'server.shutdown_forced：优雅停机超时，强制退出')
+      process.exit(1)
+    }, forceMs).unref()
     try {
       await app.close()
     } catch {}
     await closeQueues()
     await closeAll()
-    process.exit(0)
+    process.exit(exitCode)
   }
   process.on('SIGINT', () => void shutdown('SIGINT'))
   process.on('SIGTERM', () => void shutdown('SIGTERM'))
+  requestFatalShutdown = (reason) => void shutdown(reason, 1)
 }
 
 main().catch((e) => {

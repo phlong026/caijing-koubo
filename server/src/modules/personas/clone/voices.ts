@@ -1,14 +1,14 @@
 import { getDb, isDuplicateKey, upsert } from '../../../db/index.js'
 import crypto from 'node:crypto'
-import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { newId } from '../../../lib/util.js'
 import { fromDb, toDb, utcNow } from '../../../lib/time.js'
+import { sha256File } from '../../../lib/upload.js'
 import { err } from '../../../errors.js'
 import { logger } from '../../../log.js'
 import { recordOperation } from '../../audit/repo.js'
 import { enqueue, QUEUE_NAMES, dedupOpts } from '../../../queue/index.js'
-import { putObjectFromFile } from '../../../integrations/aliyun-oss/client.js'
+import { deleteObject, putObjectFromFile } from '../../../integrations/aliyun-oss/client.js'
 import { MAGIC_HEAD_BYTES, validateUploadFile } from '../../../lib/upload.js'
 import { normalizeAudioToMp3, probeMedia } from '../../../media/inspect.js'
 import { ensureTempDir, cleanup } from '../../../media/pipeline.js'
@@ -180,8 +180,7 @@ export async function uploadVoiceSample(input: UploadVoiceSampleInput): Promise<
   await ensureTempDir()
   const mp3 = await normalizeAudioToMp3(input.filePath, `${newId('vs')}_norm.mp3`)
   const mp3Probe = await probeMedia(mp3)
-  const buf = await fsp.readFile(mp3)
-  const sha256 = crypto.createHash('sha256').update(buf).digest('hex')
+  const sha256 = await sha256File(mp3)
 
   const id = newId('pvs')
   const sampleKey = `persona/${input.personaId}/voice_sample/${id}.mp3`
@@ -738,6 +737,16 @@ export function previewAudioTarget(preview: VoicePreview): { storageKey: string;
 
 /** 试听缓存清理（过期行，worker 周期调用） */
 export async function cleanExpiredPreviews(): Promise<number> {
-  const r = await getDb().run('DELETE FROM `persona_voice_preview` WHERE `expires_at` < ?', [toDb(utcNow())])
-  return r.affectedRows
+  // P2-7：连同存储里的试听音频一起删除，否则过期记录删了文件还留着
+  const db = getDb()
+  const now = toDb(utcNow())
+  const rows = await db.all<{ id: string; audio_key: string | null }>(
+    'SELECT `id`, `audio_key` FROM `persona_voice_preview` WHERE `expires_at` < ? LIMIT 500',
+    [now],
+  )
+  for (const r of rows) {
+    if (r.audio_key) await deleteObject(r.audio_key)
+    await db.run('DELETE FROM `persona_voice_preview` WHERE `id` = ?', [r.id])
+  }
+  return rows.length
 }

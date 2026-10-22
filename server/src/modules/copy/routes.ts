@@ -49,6 +49,8 @@ import {
   assertReviewStubEnabled,
   getApprovedCopy,
   getSubmissionProgress,
+  listReviewQueue,
+  manualDecision,
   onReviewProgress,
   onReviewResult,
   submitForReview,
@@ -65,7 +67,7 @@ import { newId } from '../../lib/util.js'
 
 /**
  * 文案工坊路由（任务书 §5.1，前缀 /api）。
- * 统一信封 { ok, data }，写操作取 X-Operator 并落 operation_log。
+ * 统一信封 { ok, data }，写操作取登录账号（req.operator）并落 operation_log。
  * `/copy/from-topic` 仍由 copy-contract 提供（D12 冻结契约）；此处接管 `GET /copy` 并扩展筛选。
  */
 /** 文案引擎运行时信息：当前生效的模型接入（不泄漏 key） */
@@ -81,10 +83,13 @@ export function registerCopyLlmRoutes(app: FastifyInstance): void {
       baseUrlHost: r ? safeHost(r.baseUrl) : null,
       mock: !r,
       mockFallback: config.mockFallback,
+      complianceApproved: config.copyLlm.complianceApproved,
       hint: r
         ? r.dedicated
           ? '使用文案二创专用模型（COPY_LLM_*）'
-          : '未配置 COPY_LLM_*，已回退百炼 DASHSCOPE_*'
+          : config.copyLlm.baseUrl && config.copyLlm.apiKey && !config.copyLlm.complianceApproved
+            ? '已配置 COPY_LLM_* 但未获合规批准（COPY_LLM_COMPLIANCE_APPROVED），已回退百炼 DASHSCOPE_*'
+            : '未配置 COPY_LLM_*，已回退百炼 DASHSCOPE_*'
         : '未配置任何模型，当前走 mock 兜底输出',
     })
   })
@@ -195,12 +200,15 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
         derivedStatus: DERIVED_STATUS_LABELS,
         gates: GATE_LABELS,
       },
+      // usable：派生状态可用（启用 + 授权有效）；新建文案只能选可用人物，否则创建时会被 409 拒绝
       personas: personas.map((p) => ({
         id: p.id,
         name: p.name,
         line: p.line,
         lineLabel: p.lineLabel,
         enabled: p.enabled,
+        usable: p.usable,
+        statusLabel: p.statusLabel,
       })),
       activeLine: line,
     })
@@ -686,18 +694,30 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
       // P0-3：@fastify/multipart 已在 app.ts 注册（limits.fileSize = articleMaxBytes）
       const file = await (req as FastifyRequest & {
         file: () => Promise<
-          | { filename: string; mimetype: string; toBuffer: () => Promise<Buffer>; file?: { truncated?: boolean } }
+          | { filename: string; mimetype: string; file: AsyncIterable<Buffer> & { truncated?: boolean; destroy?: () => void } }
           | undefined
         >
       }).file()
       if (!file) throw err.badRequest('请上传文件（字段名 file）')
-      const buf = await file.toBuffer()
-      // 超过 limits.fileSize 时 multipart 会把流截断，必须显式判失败，否则会把半个文件当完整解析
-      if (file.file?.truncated) {
-        throw err.articleTooLarge(`文件超过 ${Math.round(config.copy.articleMaxBytes / 1024 / 1024)}MB，请压缩后上传`, {
+      // P2-2：全局 multipart 上限是人物素材的 200MB，这里按文章上限边读边判，超限立即中断，
+      // 不再先 toBuffer() 把整份读进内存再判断
+      const tooLarge = () =>
+        err.articleTooLarge(`文件超过 ${Math.round(config.copy.articleMaxBytes / 1024 / 1024)}MB，请压缩后上传`, {
           max: config.copy.articleMaxBytes,
         })
+      const chunks: Buffer[] = []
+      let total = 0
+      for await (const chunk of file.file) {
+        total += chunk.length
+        if (total > config.copy.articleMaxBytes) {
+          file.file.destroy?.()
+          throw tooLarge()
+        }
+        chunks.push(chunk)
       }
+      // 超过 limits.fileSize 时 multipart 会把流截断，必须显式判失败，否则会把半个文件当完整解析
+      if (file.file.truncated) throw tooLarge()
+      const buf = Buffer.concat(chunks)
       const head = buf.subarray(0, 16)
       const ext = validateFileMeta(file.filename, buf.length, head)
       const parsed = await parseArticleBuffer(ext, buf)
@@ -995,6 +1015,31 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
         reason: body.reason ?? null,
         rejectedGate: body.rejectedGate ?? null,
         riskPoints: body.riskPoints ?? null,
+        operator: req.operator,
+      }),
+    )
+  })
+
+  /* ── 人工复核（P1-7；角色限定见 auth/guard.ROLE_RULES）──────────── */
+
+  app.get('/review/queue', async (req) => {
+    const q = (req.query ?? {}) as { scope?: string; line?: string }
+    const scope = q.scope === 'decided' ? 'decided' : 'pending'
+    const line = q.line && ['manager', 'kos', 'persona'].includes(q.line) ? q.line : undefined
+    return ok({ items: await listReviewQueue({ scope, line }), stubEnabled: config.copy.reviewStubEnabled })
+  })
+
+  app.post('/review/submissions/:id/manual-decision', async (req) => {
+    const { id } = req.params as { id: string }
+    const body = (req.body ?? {}) as { result?: string; reason?: string; riskPoints?: string[]; appendedRiskText?: string }
+    if (body.result !== 'approved' && body.result !== 'rejected') throw err.badRequest('result 必须是 approved 或 rejected')
+    return ok(
+      await manualDecision({
+        submissionId: id,
+        result: body.result,
+        reason: body.reason ?? null,
+        riskPoints: Array.isArray(body.riskPoints) ? body.riskPoints.map(String).filter(Boolean).slice(0, 20) : null,
+        appendedRiskText: body.appendedRiskText ? String(body.appendedRiskText).slice(0, 2000) : null,
         operator: req.operator,
       }),
     )

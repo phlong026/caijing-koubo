@@ -76,6 +76,11 @@ export async function bootIsolated(opts: IsolatedEnvOptions = {}): Promise<Isola
       OSS_ACCESS_KEY_SECRET: '',
       OSS_BUCKET: '',
       HIFLY_API_KEY: '',
+      // P0-1：开发 / 测试环境自动创建 admin / admin123；脚本经 smoke-auth 登录
+      AUTH_BOOTSTRAP_ADMIN_USER: 'admin',
+      AUTH_BOOTSTRAP_ADMIN_PASSWORD: 'admin123',
+      // 同一账号在一分钟内连续调用计费接口，放大限流额度（限流本身由 test:review 覆盖）
+      RATE_LIMIT_SCALE: '20',
     },
   )
 
@@ -114,6 +119,7 @@ export async function bootIsolated(opts: IsolatedEnvOptions = {}): Promise<Isola
   const { registerPersonaModule } = await import('../../src/modules/personas/index.js')
   const { createTopic } = await import('../../src/modules/topics/repo.js')
   const { buildApp } = await import('../../src/app.js')
+  const { ensureBootstrapAdmin } = await import('../../src/modules/auth/repo.js')
 
   if (!real) {
     redis.disconnect()
@@ -126,6 +132,7 @@ export async function bootIsolated(opts: IsolatedEnvOptions = {}): Promise<Isola
 
   const db = await initDb()
   await runMigrations(db)
+  await ensureBootstrapAdmin()
   await registerNewsJobs()
   await registerTopicJobs()
   await registerBenchmarkJobs()

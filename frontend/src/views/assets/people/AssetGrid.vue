@@ -23,7 +23,14 @@
     <div v-if="uploads.length" class="mt-3 space-y-1.5" aria-live="polite">
       <div v-for="u in uploads" :key="u.id" class="flex items-center gap-2 text-[12.5px]">
         <span class="truncate flex-1">{{ u.name }}</span>
-        <a-progress v-if="u.state === 'uploading'" :percent="0.5" :show-text="false" size="small" class="!w-[90px]" status="normal" />
+        <a-progress
+          v-if="u.state === 'uploading'"
+          :percent="0.5"
+          :show-text="false"
+          size="small"
+          class="!w-[90px]"
+          status="normal"
+        />
         <span v-else-if="u.state === 'done'" class="text-[#1a7f4b]">{{ u.note || '已上传' }}</span>
         <span v-else class="text-[#c0392b]" role="alert">{{ u.note }}</span>
       </div>
@@ -35,7 +42,9 @@
         <div class="asset-thumb" @click="$emit('preview', a)">
           <img v-if="isImage(a) && a.thumbKey" :src="assetFileUrl(a.id, 'thumb')" :alt="a.name" loading="lazy" />
           <img v-else-if="a.thumbKey" :src="assetFileUrl(a.id, 'thumb')" :alt="a.name" loading="lazy" />
-          <div v-else class="asset-thumb-empty"><icon-image v-if="isImage(a)" :size="22" /><icon-video-camera v-else :size="22" /></div>
+          <div v-else class="asset-thumb-empty">
+            <icon-image v-if="isImage(a)" :size="22" /><icon-video-camera v-else :size="22" />
+          </div>
           <span class="mw-tag asset-status" :class="ASSET_STATUS[a.status].cls">{{ ASSET_STATUS[a.status].text }}</span>
           <span v-if="a.id === coverId" class="mw-tag mw-tag-deep asset-cover">封面</span>
           <span v-if="a.durationMs" class="asset-duration">{{ fmtDuration(a.durationMs) }}</span>
@@ -56,9 +65,18 @@
             {{ a.quality.soft.map((s) => s.message).join('；') }}
           </div>
           <div class="mt-1.5 flex items-center gap-1 flex-wrap">
-            <a-button v-if="a.status === 'pending_review'" size="mini" type="primary" @click="$emit('approve', a)">通过</a-button>
-            <a-button v-if="a.status === 'pending_review'" size="mini" status="danger" @click="$emit('reject', a)">驳回</a-button>
-            <a-button v-if="allowCover && a.status === 'approved' && a.id !== coverId" size="mini" @click="$emit('cover', a)">设为封面</a-button>
+            <a-button v-if="a.status === 'pending_review'" size="mini" type="primary" @click="$emit('approve', a)"
+              >通过</a-button
+            >
+            <a-button v-if="a.status === 'pending_review'" size="mini" status="danger" @click="$emit('reject', a)"
+              >驳回</a-button
+            >
+            <a-button
+              v-if="allowCover && a.status === 'approved' && a.id !== coverId"
+              size="mini"
+              @click="$emit('cover', a)"
+              >设为封面</a-button
+            >
             <a-button v-if="allowEdit" size="mini" type="text" @click="$emit('edit', a)">编辑</a-button>
             <a-popconfirm content="删除后可重新上传同一文件，确认删除？" @ok="$emit('remove', a)">
               <a-button size="mini" type="text" status="danger">删除</a-button>
@@ -76,20 +94,23 @@ import { ref } from 'vue'
 import { assetFileUrl, type PersonaAsset } from '@/api/personas'
 import { ASSET_STATUS, fmtDuration, fmtSize } from './shared'
 
-const props = withDefaults(defineProps<{
-  items: PersonaAsset[]
-  accept: string
-  uploadLabel: string
-  hint: string
-  emptyText: string
-  coverId?: string | null
-  allowCover?: boolean
-  allowEdit?: boolean
-  disabled?: boolean
-  disabledText?: string
-  /** 上传一个文件；返回提示文案（如「已存在，未重复上传」），抛错则标记失败 */
-  uploader: (file: File) => Promise<string | void>
-}>(), { coverId: null, allowCover: false, allowEdit: false, disabled: false, disabledText: '当前不可上传' })
+const props = withDefaults(
+  defineProps<{
+    items: PersonaAsset[]
+    accept: string
+    uploadLabel: string
+    hint: string
+    emptyText: string
+    coverId?: string | null
+    allowCover?: boolean
+    allowEdit?: boolean
+    disabled?: boolean
+    disabledText?: string
+    /** 上传一个文件；返回提示文案（如「已存在，未重复上传」），抛错则标记失败 */
+    uploader: (file: File) => Promise<string | void>
+  }>(),
+  { coverId: null, allowCover: false, allowEdit: false, disabled: false, disabledText: '当前不可上传' },
+)
 
 const emit = defineEmits<{
   (e: 'uploaded'): void
@@ -130,7 +151,12 @@ function onDrop(ev: DragEvent): void {
 
 async function run(files: File[]): Promise<void> {
   for (const f of files) {
-    const row = { id: ++seq, name: f.name, state: 'uploading' as 'uploading' | 'done' | 'error', note: '' as string | undefined }
+    const row = {
+      id: ++seq,
+      name: f.name,
+      state: 'uploading' as 'uploading' | 'done' | 'error',
+      note: '' as string | undefined,
+    }
     uploads.value.unshift(row)
     try {
       row.note = (await props.uploader(f)) || undefined
@@ -153,7 +179,9 @@ async function run(files: File[]): Promise<void> {
   text-align: center;
   cursor: pointer;
   color: var(--mw-text2);
-  transition: border-color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
 }
 .people-drop:hover,
 .people-drop.over,

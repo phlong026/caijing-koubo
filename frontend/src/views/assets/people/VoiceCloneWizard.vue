@@ -19,11 +19,17 @@
       <div class="mw-subtle mb-2">wav / mp3 / m4a，≤20MB，时长 5–180 秒；建议 30–60 秒清晰人声，无背景音乐。</div>
       <input ref="fileInput" type="file" accept=".wav,.mp3,.m4a,audio/*" aria-label="选择声音样本" @change="onFile" />
       <div v-if="sampleInfo" class="mt-3 text-[13px]">
-        <div>已选择：{{ sampleInfo.name }}（{{ fmtSize(sampleInfo.size) }}<template v-if="sampleInfo.durationMs"> · {{ fmtDuration(sampleInfo.durationMs) }}</template>）</div>
+        <div>
+          已选择：{{ sampleInfo.name }}（{{ fmtSize(sampleInfo.size)
+          }}<template v-if="sampleInfo.durationMs"> · {{ fmtDuration(sampleInfo.durationMs) }}</template
+          >）
+        </div>
       </div>
       <div v-if="fileError" class="mt-2 text-[12.5px] text-[#c0392b]" role="alert">{{ fileError }}</div>
       <div class="mt-4 flex justify-end">
-        <a-button type="primary" :loading="uploading" :disabled="!file || !!fileError" @click="uploadSample">上传并校验</a-button>
+        <a-button type="primary" :loading="uploading" :disabled="!file || !!fileError" @click="uploadSample"
+          >上传并校验</a-button
+        >
       </div>
     </div>
 
@@ -32,12 +38,22 @@
       <a-form :model="form" layout="vertical">
         <a-form-item label="授权材料（须已核验、未过期，范围含「声音」）" required>
           <a-select v-model="form.authId" :disabled="!auths.length" placeholder="选择授权" aria-label="授权材料">
-            <a-option v-for="a in auths" :key="a.id" :value="a.id">{{ a.grantorName }} · 至 {{ fmtDate(a.expiresAt) }}</a-option>
+            <a-option v-for="a in auths" :key="a.id" :value="a.id"
+              >{{ a.grantorName }} · 至 {{ fmtDate(a.expiresAt) }}</a-option
+            >
           </a-select>
-          <template #extra><span v-if="!auths.length" class="text-[#c0392b]">没有可用的声音授权，请先在「授权管理」上传并核验。</span></template>
+          <template #extra
+            ><span v-if="!auths.length" class="text-[#c0392b]"
+              >没有可用的声音授权，请先在「授权管理」上传并核验。</span
+            ></template
+          >
         </a-form-item>
-        <a-checkbox v-model="form.agree" class="consent"><span class="text-[12.5px] leading-5">{{ consentText }}</span></a-checkbox>
-        <div v-if="persona.bindingMode === 'shared'" class="mw-alert-banner mt-3" role="note">共享人物的声音用于多个账号时，须在授权中勾选「允许共享」，否则不能设为默认声音。</div>
+        <a-checkbox v-model="form.agree" class="consent"
+          ><span class="text-[12.5px] leading-5">{{ consentText }}</span></a-checkbox
+        >
+        <div v-if="persona.bindingMode === 'shared'" class="mw-alert-banner mt-3" role="note">
+          共享人物的声音用于多个账号时，须在授权中勾选「允许共享」，否则不能设为默认声音。
+        </div>
       </a-form>
       <div class="mt-4 flex justify-between">
         <a-button @click="step = 1">上一步</a-button>
@@ -48,7 +64,9 @@
     <!-- ③ 命名 -->
     <div v-else>
       <a-form :model="form" layout="vertical">
-        <a-form-item label="声音名称" required><a-input v-model="form.name" :max-length="60" show-word-limit :input-attrs="{ 'aria-label': '声音名称' }" /></a-form-item>
+        <a-form-item label="声音名称" required
+          ><a-input v-model="form.name" :max-length="60" show-word-limit :input-attrs="{ 'aria-label': '声音名称' }"
+        /></a-form-item>
         <a-form-item label="语种">
           <a-select v-model="form.language" aria-label="语种">
             <a-option value="mandarin">普通话（默认）</a-option>
@@ -56,11 +74,16 @@
           </a-select>
         </a-form-item>
       </a-form>
-      <div class="mw-subtle">提交后由飞影克隆，克隆完成后需人工试听确认才能设为默认；每人最多 5 条有效声音，克隆会消耗飞影积分，请勿重复提交。</div>
+      <div class="mw-subtle">
+        提交后由飞影克隆，克隆完成后需人工试听确认才能设为默认；每人最多 5
+        条有效声音，克隆会消耗飞影积分，请勿重复提交。
+      </div>
       <div v-if="error" class="mw-alert-banner mt-3" role="alert">{{ error }}</div>
       <div class="mt-4 flex justify-between">
         <a-button @click="step = 2">上一步</a-button>
-        <a-button type="primary" :loading="submitting" :disabled="!form.name.trim()" @click="submit">确认并提交</a-button>
+        <a-button type="primary" :loading="submitting" :disabled="!form.name.trim()" @click="submit"
+          >确认并提交</a-button
+        >
       </div>
     </div>
   </a-modal>
@@ -90,7 +113,11 @@ let consentId = ''
 
 const auths = computed(() => usableAuthorizations(props.persona.authorizations, 'voice'))
 const languages = computed(() => props.options?.voiceLanguages ?? [])
-const consentText = computed(() => props.options?.consentTexts?.VOICE_CLONE ?? '我确认已获得声音权利人的书面授权，同意将该样本提交给第三方服务克隆声音，并仅用于授权范围内的内容生产。')
+const consentText = computed(
+  () =>
+    props.options?.consentTexts?.VOICE_CLONE ??
+    '我确认已获得声音权利人的书面授权，同意将该样本提交给第三方服务克隆声音，并仅用于授权范围内的内容生产。',
+)
 
 watch(
   () => props.visible,
@@ -117,7 +144,10 @@ function probeDuration(f: File): Promise<number | null> {
   return new Promise((resolve) => {
     const url = URL.createObjectURL(f)
     const audio = new Audio()
-    const done = (v: number | null): void => { URL.revokeObjectURL(url); resolve(v) }
+    const done = (v: number | null): void => {
+      URL.revokeObjectURL(url)
+      resolve(v)
+    }
     audio.preload = 'metadata'
     audio.onloadedmetadata = () => done(Number.isFinite(audio.duration) ? Math.round(audio.duration * 1000) : null)
     audio.onerror = () => done(null)
@@ -175,7 +205,12 @@ async function submit(): Promise<void> {
     }
     const r = await createVoice(
       props.persona.id,
-      { name: form.name.trim(), sampleId: sampleId.value, consentId, ...(form.language && form.language !== 'mandarin' ? { language: form.language } : {}) },
+      {
+        name: form.name.trim(),
+        sampleId: sampleId.value,
+        consentId,
+        ...(form.language && form.language !== 'mandarin' ? { language: form.language } : {}),
+      },
       idemKey,
     )
     Message.success(r.replayed ? '该请求已提交过' : '已提交，声音克隆中')

@@ -28,7 +28,9 @@
           <div class="text-[15px] font-semibold">字幕片段</div>
           <span class="mw-subtle">文字可编辑 · 时间只读</span>
         </div>
-        <div class="grid grid-cols-[92px_1fr] text-[12px] text-[var(--mw-text3)] pb-2 border-b border-[var(--mw-border)]">
+        <div
+          class="grid grid-cols-[92px_1fr] text-[12px] text-[var(--mw-text3)] pb-2 border-b border-[var(--mw-border)]"
+        >
           <span>时间</span><span>字幕内容</span>
         </div>
         <div
@@ -62,18 +64,40 @@
           <div class="text-[15px] font-semibold">视频预览</div>
           <span class="mw-tag mw-tag-gray">预览示例</span>
         </div>
-        <div class="relative rounded-[12px] overflow-hidden" style="aspect-ratio: 9/16; max-height: 430px; margin: 0 auto; width: auto; height: 430px; background: linear-gradient(160deg,#3c4a5d 0%,#5a6b80 55%,#8a97a8 100%)">
-          <div class="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/35 text-white text-[12px]">
-            <span class="w-4 h-4 rounded-full bg-[#1d4ed8] inline-flex items-center justify-center text-[9px]">林</span>小林科普
+        <div
+          class="relative rounded-[12px] overflow-hidden"
+          style="
+            aspect-ratio: 9/16;
+            max-height: 430px;
+            margin: 0 auto;
+            width: auto;
+            height: 430px;
+            background: linear-gradient(160deg, #3c4a5d 0%, #5a6b80 55%, #8a97a8 100%);
+          "
+        >
+          <div
+            class="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/35 text-white text-[12px]"
+          >
+            <span class="w-4 h-4 rounded-full bg-[#1d4ed8] inline-flex items-center justify-center text-[9px]">林</span
+            >小林科普
           </div>
           <div class="absolute bottom-14 inset-x-0 text-center px-4">
-            <div class="inline-block px-2.5 py-1 rounded-[6px] text-white text-[14px] font-medium" style="background: rgba(0,0,0,.45); text-shadow: 0 0 4px rgba(0,0,0,.5)">{{ segments[current].text }}</div>
-            <div class="mt-1.5 inline-block px-2 py-0.5 rounded-[4px] bg-black/55 text-white/90 text-[10px]">基金有风险，投资需谨慎</div>
+            <div
+              class="inline-block px-2.5 py-1 rounded-[6px] text-white text-[14px] font-medium"
+              style="background: rgba(0, 0, 0, 0.45); text-shadow: 0 0 4px rgba(0, 0, 0, 0.5)"
+            >
+              {{ segments[current].text }}
+            </div>
+            <div class="mt-1.5 inline-block px-2 py-0.5 rounded-[4px] bg-black/55 text-white/90 text-[10px]">
+              基金有风险，投资需谨慎
+            </div>
           </div>
         </div>
         <!-- 播放器 -->
         <div class="flex items-center gap-2.5 mt-3">
-          <a-button type="text" size="mini" @click="$message.info('预览播放（演示）')"><template #icon><icon-play-arrow-fill /></template></a-button>
+          <a-button type="text" size="mini" @click="$message.info('预览播放（演示）')"
+            ><template #icon><icon-play-arrow-fill /></template
+          ></a-button>
           <span class="text-[12px] text-[var(--mw-text2)]">00:12 / 01:00</span>
           <a-slider v-model="progress" :max="60" :style="{ flex: 1 }" :tooltip-visible="false" />
           <icon-fullscreen :size="15" class="text-[var(--mw-text3)]" />
@@ -82,8 +106,14 @@
         <div class="mt-2">
           <div class="mw-subtle mb-1">预览定位</div>
           <div class="relative h-6 rounded-[6px] border border-[var(--mw-border)] bg-[#fafbfc]">
-            <div class="absolute inset-y-0" :style="{ left: '0%', width: progress / 60 * 100 + '%', background: 'rgba(29,78,216,.12)' }"></div>
-            <div class="absolute top-0 bottom-0 w-[2px] bg-[#1d4ed8]" :style="{ left: progress / 60 * 100 + '%' }"></div>
+            <div
+              class="absolute inset-y-0"
+              :style="{ left: '0%', width: (progress / 60) * 100 + '%', background: 'rgba(29,78,216,.12)' }"
+            ></div>
+            <div
+              class="absolute top-0 bottom-0 w-[2px] bg-[#1d4ed8]"
+              :style="{ left: (progress / 60) * 100 + '%' }"
+            ></div>
             <div class="absolute inset-0 flex items-center justify-between px-2 text-[10px] text-[var(--mw-text3)]">
               <span>00:00</span><span>00:15</span><span>00:30</span><span>00:45</span><span>01:00</span>
             </div>
@@ -108,17 +138,32 @@
         <!-- 字幕 -->
         <div v-if="tab === 'sub'" class="mt-2">
           <div class="text-[14px] font-semibold mb-1">字幕样式</div>
-          <div class="mw-form-row"><div class="mw-form-label">字体</div><a-select v-model="subFont" :style="{ width: '200px' }" /></div>
-          <div class="mw-form-row"><div class="mw-form-label">字号</div><a-select v-model="subSize" :style="{ width: '120px' }" /></div>
-          <div class="mw-form-row"><div class="mw-form-label">位置</div><a-select v-model="subPos" :style="{ width: '120px' }" /></div>
+          <div class="mw-form-row">
+            <div class="mw-form-label">字体</div>
+            <a-select v-model="subFont" :style="{ width: '200px' }" />
+          </div>
+          <div class="mw-form-row">
+            <div class="mw-form-label">字号</div>
+            <a-select v-model="subSize" :style="{ width: '120px' }" />
+          </div>
+          <div class="mw-form-row">
+            <div class="mw-form-label">位置</div>
+            <a-select v-model="subPos" :style="{ width: '120px' }" />
+          </div>
           <div class="mw-form-row">
             <div class="mw-form-label">文字颜色</div>
-            <span class="w-7 h-7 rounded-[6px] border border-[var(--mw-border)] inline-block" style="background:#fff"></span>
+            <span
+              class="w-7 h-7 rounded-[6px] border border-[var(--mw-border)] inline-block"
+              style="background: #fff"
+            ></span>
             <span class="text-[13px] text-[var(--mw-text2)]">#FFFFFF</span>
           </div>
           <div class="mw-form-row">
             <div class="mw-form-label">描边</div>
-            <span class="w-7 h-7 rounded-[6px] border border-[var(--mw-border)] inline-block" style="background:#0f2d5c"></span>
+            <span
+              class="w-7 h-7 rounded-[6px] border border-[var(--mw-border)] inline-block"
+              style="background: #0f2d5c"
+            ></span>
             <span class="text-[13px] text-[var(--mw-text2)]">深蓝</span>
           </div>
           <div class="text-[14px] font-semibold mt-5 mb-1">背景音乐</div>
@@ -129,11 +174,18 @@
           <div class="mw-form-row">
             <div class="mw-form-label">音乐选择</div>
             <a-select v-model="bgm" :style="{ width: '200px' }" :disabled="!bgmOn" />
-            <a-button size="small" :disabled="!bgmOn" @click="$message.info('试听播放中（演示）')"><template #icon><icon-play-arrow /></template>试听</a-button>
+            <a-button size="small" :disabled="!bgmOn" @click="$message.info('试听播放中（演示）')"
+              ><template #icon><icon-play-arrow /></template>试听</a-button
+            >
           </div>
           <div class="mw-form-row">
             <div class="mw-form-label">音量</div>
-            <a-slider v-model="volume" :max="100" :style="{ width: '200px' }" :format-tooltip="(v: number) => v + '%'" />
+            <a-slider
+              v-model="volume"
+              :max="100"
+              :style="{ width: '200px' }"
+              :format-tooltip="(v: number) => v + '%'"
+            />
             <span class="text-[13px] text-[var(--mw-text2)]">{{ volume }}%</span>
           </div>
         </div>
@@ -141,17 +193,25 @@
         <!-- 后期 -->
         <div v-if="tab === 'post'" class="mt-2">
           <div class="text-[14px] font-semibold mb-2">后期处理</div>
-          <div class="p-3.5 rounded-[10px] border border-[var(--mw-border)] flex items-center mb-3 cursor-pointer hover:border-[color:var(--mw-primary-soft)]">
+          <div
+            class="p-3.5 rounded-[10px] border border-[var(--mw-border)] flex items-center mb-3 cursor-pointer hover:border-[color:var(--mw-primary-soft)]"
+          >
             <div>
-              <div class="text-[13.5px] font-medium flex items-center gap-1">自动剪气口 <icon-info-circle :size="13" class="text-[var(--mw-text3)]" /></div>
+              <div class="text-[13.5px] font-medium flex items-center gap-1">
+                自动剪气口 <icon-info-circle :size="13" class="text-[var(--mw-text3)]" />
+              </div>
               <div class="mw-subtle mt-0.5">检测语音停顿并收紧节奏（生成后可预览）</div>
             </div>
             <div class="flex-1"></div>
             <span class="mw-subtle mr-2">未启用</span><icon-right :size="14" class="text-[var(--mw-text3)]" />
           </div>
-          <div class="p-3.5 rounded-[10px] border border-[var(--mw-border)] flex items-center cursor-pointer hover:border-[color:var(--mw-primary-soft)]">
+          <div
+            class="p-3.5 rounded-[10px] border border-[var(--mw-border)] flex items-center cursor-pointer hover:border-[color:var(--mw-primary-soft)]"
+          >
             <div>
-              <div class="text-[13.5px] font-medium flex items-center gap-1">画中画 <icon-info-circle :size="13" class="text-[var(--mw-text3)]" /></div>
+              <div class="text-[13.5px] font-medium flex items-center gap-1">
+                画中画 <icon-info-circle :size="13" class="text-[var(--mw-text3)]" />
+              </div>
               <div class="mw-subtle mt-0.5">叠加展示画面（素材库画中画模板）</div>
             </div>
             <div class="flex-1"></div>
@@ -165,7 +225,9 @@
             <div class="text-[14px] font-semibold">风险尾页</div>
             <span class="mw-tag mw-tag-yellow">待配置</span>
           </div>
-          <div class="p-3.5 rounded-[10px] border border-[color:var(--mw-primary-mid)] bg-[color:var(--mw-primary-faint)]">
+          <div
+            class="p-3.5 rounded-[10px] border border-[color:var(--mw-primary-mid)] bg-[color:var(--mw-primary-faint)]"
+          >
             <div class="flex gap-3">
               <ThumbBox seed="risk" :width="72" :height="54" />
               <div class="flex-1">
@@ -176,13 +238,18 @@
               </div>
             </div>
           </div>
-          <div class="mw-form-row mt-2"><div class="mw-form-label">来源</div><a-select v-model="riskSrc" :style="{ width: '220px' }" /></div>
+          <div class="mw-form-row mt-2">
+            <div class="mw-form-label">来源</div>
+            <a-select v-model="riskSrc" :style="{ width: '220px' }" />
+          </div>
           <div class="mw-form-row">
             <div class="mw-form-label">插入</div>
             <a-checkbox v-model="riskAppend">插入视频末尾</a-checkbox>
             <span class="mw-subtle">播放时长 待配置</span>
           </div>
-          <div class="mw-subtle flex items-center gap-1 mt-1"><icon-info-circle :size="12" />适用范围、文案及最长时长待确认。</div>
+          <div class="mw-subtle flex items-center gap-1 mt-1">
+            <icon-info-circle :size="12" />适用范围、文案及最长时长待确认。
+          </div>
         </div>
       </div>
     </div>
@@ -192,7 +259,9 @@
       <span class="mw-tag mw-tag-green"><icon-check-circle :size="12" />已保存 10:28</span>
       <span class="mw-subtle">1080P · 9:16 · 01:00</span>
       <span class="text-[var(--mw-border)]">|</span>
-      <span class="mw-subtle">{{ modified ? '字幕已修改：保存版本后将重新合成，并需重新送审。' : '修改文案含义或风险提示，须重新送审。' }}</span>
+      <span class="mw-subtle">{{
+        modified ? '字幕已修改：保存版本后将重新合成，并需重新送审。' : '修改文案含义或风险提示，须重新送审。'
+      }}</span>
       <div class="flex-1"></div>
       <span class="mw-subtle">设计预览 · 规则待确认</span>
     </div>

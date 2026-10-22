@@ -94,7 +94,14 @@ export interface ResearchOverview {
   interactions: number
   lastFetchedAt: string | null
   extractionReady: boolean
-  methodology: { interactionFields: string[]; multiplier: number; sampleSize: number; minSample: number; refreshDays: number; formula: string }
+  methodology: {
+    interactionFields: string[]
+    multiplier: number
+    sampleSize: number
+    minSample: number
+    refreshDays: number
+    formula: string
+  }
 }
 
 export function getResearchOverview() {
@@ -186,7 +193,9 @@ export function getBenchmarkVideos(query: BenchmarkVideoQuery) {
 
 /** P1-3①：uncertain 状态必须由界面二次确认（confirm=true）才允许重新入队 */
 export function extractVideo(id: string, confirm = false) {
-  return apiPost<{ status: string; cacheId: string }>(`/benchmark/videos/${encodeURIComponent(id)}/extract`, { confirm })
+  return apiPost<{ status: string; cacheId: string }>(`/benchmark/videos/${encodeURIComponent(id)}/extract`, {
+    confirm,
+  })
 }
 
 export function getExtractStatus(id: string) {
@@ -198,7 +207,9 @@ export function getVideoScript(id: string) {
 }
 
 export function sendVideoToCopy(id: string, personaIds: string[]) {
-  return apiPost<{ topicId: string; copyIds: string[] }>(`/benchmark/videos/${encodeURIComponent(id)}/send-to-copy`, { personaIds })
+  return apiPost<{ topicId: string; copyIds: string[] }>(`/benchmark/videos/${encodeURIComponent(id)}/send-to-copy`, {
+    personaIds,
+  })
 }
 
 export function parseBenchmarkLink(shareUrl: string) {

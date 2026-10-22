@@ -103,7 +103,9 @@ export async function decoratePersonas(list: Persona[], db: Db = getDb(), now: D
         configured =
           !!av && av.status === 'ready' && !av.deleted_at && !!av.vendor_avatar_id &&
           !!vo && vo.status === 'ready' && !!vo.confirmed && !vo.deleted_at && !!vo.vendor_voice_id &&
-          derived.validPortraitAuthIds.length > 0 && derived.validVoiceAuthIds.length > 0 && hiflyOk
+          derived.validPortraitAuthIds.length > 0 && derived.validVoiceAuthIds.length > 0 && hiflyOk &&
+          // readiness 的 voice_share_auth：共享人物须有含「允许共享」的有效声音授权
+          (p.bindingMode !== 'shared' || myAuths.some((a) => derived.validVoiceAuthIds.includes(a.id) && a.scopes.includes('share')))
       }
     }
     const extraTags = configured && !derived.extraTags.includes('configured') ? [...derived.extraTags, 'configured'] : [...derived.extraTags]

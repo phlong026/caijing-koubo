@@ -2,7 +2,9 @@
  * 端到端自检脚本（T9）：跑通 §8 全局验收场景 1~5。
  * 用法：先启动 server（npm run dev），再执行 npm run smoke
  */
+import { authHeader, initSmokeAuth, type SmokeRole } from './lib/smoke-auth.js'
 const BASE = process.env.SMOKE_BASE || 'http://127.0.0.1:8787/api'
+await initSmokeAuth(BASE)
 
 let passed = 0
 let failed = 0
@@ -21,8 +23,9 @@ async function req<T = any>(
   method: string,
   path: string,
   body?: unknown,
+  role?: SmokeRole,
 ): Promise<{ status: number; data: T; raw: any }> {
-  const headers: Record<string, string> = { 'X-Operator': 'smoke' }
+  const headers: Record<string, string> = { ...authHeader(method, path, role) }
   // 无 body 时不能声明 application/json，否则 Fastify 抛 "Body cannot be empty"
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   const res = await fetch(`${BASE}${path}`, {
@@ -121,6 +124,23 @@ async function main(): Promise<void> {
   check('/health 数据库可用，队列正常或明确标记内存降级',
     health?.data?.db?.up === true && (health.data.status === 'ok' ||
       (health.data.status === 'degraded' && health.data.queue?.backend === 'memory')), health?.data)
+
+  /* 场景 0.1：登录与权限（P0-1） */
+  console.log('\n[0.1] 登录与权限（P0-1）')
+  const anon = await fetch(`${BASE}/personas`, { headers: { 'X-Operator': 'admin' } })
+  check('未登录（仅带 X-Operator）访问被拒 401', anon.status === 401, anon.status)
+  const badLogin = await fetch(`${BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'smoke_ops', password: 'wrong-password-1' }),
+  })
+  check('错误密码登录 401', badLogin.status === 401, badLogin.status)
+  const me = await req('GET', '/auth/me')
+  check('/auth/me 返回当前账号', me.data?.username === 'smoke_ops' && me.data?.role === 'ops', me.data)
+  const opsAudit = await req('GET', '/operations?pageSize=1', undefined, 'ops')
+  check('运营访问审计日志被拒 403', opsAudit.status === 403, opsAudit.raw)
+  const opsDeleteWord = await req('DELETE', '/compliance-words/not-exist', undefined, 'ops')
+  check('运营删除合规词被拒 403', opsDeleteWord.status === 403, opsDeleteWord.raw)
 
   /* 场景 1：资讯采集与去重（T1） */
   console.log('\n[1] 资讯采集 / 去重 / 检索（FR-N1~N3）')

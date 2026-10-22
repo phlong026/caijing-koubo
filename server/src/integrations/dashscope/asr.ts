@@ -66,7 +66,8 @@ export async function submitTask(fileUrl: string, ref?: { type: string; id: stri
       ok: true,
       httpStatus: res.status,
       durationMs: Date.now() - started,
-      cost: config.dashscope.asrUnitPrice,
+      // 按时长计价时提交时还不知道时长，成本在转写完成后按实际时长记一笔（extract.ts）
+      cost: config.dashscope.asrPricePerSec > 0 ? 0 : config.dashscope.asrUnitPrice,
       requestId: res.headers?.['x-request-id'] ? String(res.headers['x-request-id']) : null,
     })
     return taskId

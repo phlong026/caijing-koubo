@@ -1,6 +1,13 @@
 import { Message } from '@arco-design/web-vue'
 import { ApiError } from '@/api/client'
-import type { AssetKind, AssetStatus, AuthorizationStatus, EffectiveStatus, PersonaExtraTag, PersonaOptions } from '@/api/personas'
+import type {
+  AssetKind,
+  AssetStatus,
+  AuthorizationStatus,
+  EffectiveStatus,
+  PersonaExtraTag,
+  PersonaOptions,
+} from '@/api/personas'
 
 /** 把任意异常转成给用户看的一句话（业务码已由后端翻译成中文） */
 export function errMsg(e: unknown, fallback = '操作失败'): string {
@@ -19,9 +26,10 @@ export function isApiCode(e: unknown, code: string): boolean {
 
 /** 幂等键：一次「打开弹窗」只生成一个，重试沿用，避免网络抖动时重复扣费（R13） */
 export function newIdempotencyKey(prefix: string): string {
-  const rand = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const rand =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
   return `${prefix}-${rand}`
 }
 
@@ -139,6 +147,9 @@ export function checkUploadFile(options: PersonaOptions | null, kind: AssetKind,
 }
 
 /** 已核验、未过期、范围含指定项的授权（制作分身 / 克隆声音时可选） */
-export function usableAuthorizations<T extends { status: string; scopes: string[] }>(auths: T[], scope: 'portrait' | 'voice'): T[] {
+export function usableAuthorizations<T extends { status: string; scopes: string[] }>(
+  auths: T[],
+  scope: 'portrait' | 'voice',
+): T[] {
   return auths.filter((a) => a.status === 'verified' && a.scopes.includes(scope))
 }

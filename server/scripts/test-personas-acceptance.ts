@@ -17,6 +17,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { bootIsolated } from './lib/isolated-env.js'
+import { authHeader, initSmokeAuth } from './lib/smoke-auth.js'
 
 const pexec = promisify(execFile)
 const real = process.argv.includes('--real')
@@ -25,6 +26,8 @@ const only = process.argv.find((a) => a.startsWith('--only='))?.slice(7) ?? ''
 
 const env = await bootIsolated({ real, oss: withOss, env: { HIFLY_MOCK_POLLS_TO_DONE: '2' } })
 const BASE = env.base
+// P0-1：所有接口要求登录；按接口所需角色自动选运营 / 审核员 / 管理员令牌
+await initSmokeAuth(BASE)
 
 const { getDb } = await import('../src/db/index.js')
 const { injectHifly, clearHiflyInjections } = await import('../src/integrations/hifly/mock.js')
@@ -59,7 +62,7 @@ interface Res<T = any> {
 }
 
 async function api<T = any>(method: string, p: string, body?: unknown, headers: Record<string, string> = {}): Promise<Res<T>> {
-  const h: Record<string, string> = { 'X-Operator': 'acceptance', ...headers }
+  const h: Record<string, string> = { ...authHeader(method, p), ...headers }
   if (body !== undefined) h['Content-Type'] = 'application/json'
   const res = await fetch(`${BASE}${p}`, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body) })
   const raw: any = await res.json().catch(() => ({}))
@@ -70,7 +73,7 @@ async function upload<T = any>(p: string, fields: Record<string, string>, file: 
   const fd = new FormData()
   for (const [k, v] of Object.entries(fields)) fd.append(k, v)
   fd.append('file', new Blob([file.buf], { type: file.type }), file.filename)
-  const res = await fetch(`${BASE}${p}`, { method: 'POST', headers: { 'X-Operator': 'acceptance' }, body: fd })
+  const res = await fetch(`${BASE}${p}`, { method: 'POST', headers: authHeader('POST', p), body: fd })
   const raw: any = await res.json().catch(() => ({}))
   return { status: res.status, data: raw?.data, raw, code: raw?.error?.code }
 }
@@ -430,7 +433,7 @@ try {
     check('AC-A1 EXIF 照片上传 200', exifUp.status === 200, exifUp.raw)
     const exifAsset = await settleAsset(kos, 'photo', exifUp.data.assetId)
     check('AC-A1 EXIF 照片处理通过', exifAsset?.status === 'pending_review', exifAsset)
-    const thumbRes = await fetch(`${BASE}/persona-assets/${exifUp.data.assetId}/file?variant=thumb`, { headers: { 'X-Operator': 'acceptance' } })
+    const thumbRes = await fetch(`${BASE}/persona-assets/${exifUp.data.assetId}/file?variant=thumb`, { headers: authHeader('GET', '/') })
     const thumbFile = path.join(TMP, 'exif-thumb.jpg')
     const thumbBuf = Buffer.from(await thumbRes.arrayBuffer())
     fs.writeFileSync(thumbFile, thumbBuf)
@@ -491,9 +494,9 @@ try {
     const approved = await uploadAsset(kos, 'photo', await jpeg(720, 720, '#778899'), 'ok.jpg', 'image/jpeg')
     await settleAsset(kos, 'photo', approved.data.assetId)
     await api('POST', `/persona-assets/${approved.data.assetId}/review`, { decision: 'approved' })
-    const full = await fetch(`${BASE}/persona-assets/${approved.data.assetId}/file?variant=original`, { headers: { 'X-Operator': 'acceptance' } })
+    const full = await fetch(`${BASE}/persona-assets/${approved.data.assetId}/file?variant=original`, { headers: authHeader('GET', '/') })
     const fullBuf = Buffer.from(await full.arrayBuffer())
-    const rng = await fetch(`${BASE}/persona-assets/${approved.data.assetId}/file?variant=original`, { headers: { 'X-Operator': 'acceptance', Range: 'bytes=10-59' } })
+    const rng = await fetch(`${BASE}/persona-assets/${approved.data.assetId}/file?variant=original`, { headers: { ...authHeader('GET', '/'), Range: 'bytes=10-59' } })
     const rngBuf = Buffer.from(await rng.arrayBuffer())
     check('AC-A5 Range 返回 206 与正确区间', rng.status === 206 && rngBuf.equals(fullBuf.subarray(10, 60)) && /^bytes 10-59\//.test(rng.headers.get('content-range') ?? ''), { s: rng.status, cr: rng.headers.get('content-range') })
     check('AC-A5 完整读取 200', full.status === 200 && fullBuf.length > 100)
@@ -504,7 +507,7 @@ try {
     const auditOf = async (): Promise<any[]> => (await opLogs('persona.sensitive_access')).filter((l) => JSON.stringify(l.detail ?? {}).includes(approved.data.assetId))
     const audit = await auditOf()
     check('AC-A5 读取 original 产生敏感访问审计', audit.length >= 1, audit.length)
-    await fetch(`${BASE}/persona-assets/${approved.data.assetId}/file?variant=thumb`, { headers: { 'X-Operator': 'acceptance' } })
+    await fetch(`${BASE}/persona-assets/${approved.data.assetId}/file?variant=thumb`, { headers: authHeader('GET', '/') })
     check('AC-A5 读取缩略图不产生敏感审计', (await auditOf()).length === audit.length)
 
     // AC-A6 背景标签与数量上限
@@ -863,7 +866,7 @@ try {
     const idS = await newPersona('kos', uniq('审计'))
     const authS = await addAuth(idS)
     const before = (await opLogs('persona.sensitive_access')).length
-    const af = await fetch(`${BASE}/persona-authorizations/${authS}/file`, { headers: { 'X-Operator': 'acceptance' } })
+    const af = await fetch(`${BASE}/persona-authorizations/${authS}/file`, { headers: authHeader('GET', '/') })
     check('AC-U5 查看授权材料 200', af.status === 200, af.status)
     await af.arrayBuffer()
     const after1 = await opLogs('persona.sensitive_access')
@@ -973,7 +976,7 @@ try {
     await logged('删除分身', () => api('DELETE', `/persona-avatars/${p.avatarId}`))
     await logged('归档', async () => {
       await api('DELETE', `/persona-avatars/${av2id}`).catch(() => undefined)
-      return api('POST', `/personas/${p.id}/archive`, { force: true })
+      return api('POST', `/personas/${p.id}/archive`, { force: true }, authHeader('POST', '/', 'admin')) // 强制归档仅限管理员
     })
     const sensitiveReads = await countLogs()
     void sensitiveReads

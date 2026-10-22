@@ -9,6 +9,7 @@ export type ErrorCode =
   | 'domain_not_allowed'
   | 'too_long'
   | 'upstream_error'
+  | 'rate_limited'
   | 'internal'
   // ── 文案工坊（任务书 §5.2）──
   | 'COPY_LOCKED' // 审核中写操作
@@ -66,6 +67,7 @@ export class ApiError extends Error {
 export const err = {
   badRequest: (msg: string, details?: unknown) => new ApiError('bad_request', msg, 400, details),
   notFound: (msg = '对象不存在') => new ApiError('not_found', msg, 404),
+  unauthorized: (msg = '请先登录') => new ApiError('unauthorized', msg, 401),
   forbidden: (msg = '无权限') => new ApiError('forbidden', msg, 403),
   conflict: (msg: string, details?: unknown) => new ApiError('conflict', msg, 409, details),
   invalidState: (msg: string, details?: unknown) => new ApiError('invalid_state', msg, 409, details),
@@ -73,6 +75,7 @@ export const err = {
     new ApiError('domain_not_allowed', msg, 400, details),
   tooLong: (msg: string, details?: unknown) => new ApiError('too_long', msg, 413, details),
   upstream: (msg: string, details?: unknown) => new ApiError('upstream_error', msg, 502, details),
+  rateLimited: (msg = '操作过于频繁，请稍后再试', details?: unknown) => new ApiError('rate_limited', msg, 429, details),
   internal: (msg = '服务内部错误') => new ApiError('internal', msg, 500),
 
   /* ── 文案工坊专属错误码（§5.2）───────────────────────────────── */

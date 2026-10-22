@@ -15,9 +15,21 @@
       <a-select v-model="row.platform" class="!w-[110px]" :aria-label="`第 ${i + 1} 个账号的平台`">
         <a-option v-for="(label, key) in platforms" :key="key" :value="key">{{ label }}</a-option>
       </a-select>
-      <a-input v-model="row.accountKey" placeholder="账号标识（如抖音号）" class="flex-1" :input-attrs="{ 'aria-label': `第 ${i + 1} 个账号标识` }" />
-      <a-input v-model="row.displayName" placeholder="显示名" class="!w-[140px]" :input-attrs="{ 'aria-label': `第 ${i + 1} 个账号显示名` }" />
-      <a-button status="danger" type="text" :aria-label="`移除第 ${i + 1} 个账号`" @click="rows.splice(i, 1)"><icon-delete /></a-button>
+      <a-input
+        v-model="row.accountKey"
+        placeholder="账号标识（如抖音号）"
+        class="flex-1"
+        :input-attrs="{ 'aria-label': `第 ${i + 1} 个账号标识` }"
+      />
+      <a-input
+        v-model="row.displayName"
+        placeholder="显示名"
+        class="!w-[140px]"
+        :input-attrs="{ 'aria-label': `第 ${i + 1} 个账号显示名` }"
+      />
+      <a-button status="danger" type="text" :aria-label="`移除第 ${i + 1} 个账号`" @click="rows.splice(i, 1)"
+        ><icon-delete
+      /></a-button>
     </div>
     <a-button type="outline" size="small" :disabled="rows.length >= limit" @click="add">
       <template #icon><icon-plus /></template>添加账号
@@ -56,7 +68,11 @@ watch(
   (v) => {
     if (!v) return
     serverError.value = ''
-    rows.value = props.persona.bindings.map((b) => ({ platform: b.platform, accountKey: b.accountKey, displayName: b.displayName }))
+    rows.value = props.persona.bindings.map((b) => ({
+      platform: b.platform,
+      accountKey: b.accountKey,
+      displayName: b.displayName,
+    }))
   },
 )
 
