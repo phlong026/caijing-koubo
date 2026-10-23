@@ -134,13 +134,17 @@ export async function checkReadiness(
 
 /* ── production-profile（FR-X5 / M3 契约）────────────────────── */
 
+export type ProductionPurpose = 'avatar_video' | 'mixcut'
+
 export interface ProductionProfile {
   personaId: string
+  purpose: ProductionPurpose
   versionId: string | null
   versionNo: number | null
   name: string
   line: string
   provider: 'hifly'
+  /** mixcut 恒为 null：混剪不使用数字人形象 */
   avatar: {
     avatarId: string
     vendorAvatarId: string
@@ -149,7 +153,8 @@ export interface ProductionProfile {
     coverUrl: string | null
     sourceWidth: number | null
     sourceHeight: number | null
-  }
+  } | null
+  /** 素人线无克隆声音时为 null：M3 用公共音色 / 预置配音兜底（Q12） */
   voice: {
     voiceId: string
     vendorVoiceId: string
@@ -159,23 +164,82 @@ export interface ProductionProfile {
     volume: number
     pitch: number
     demoUrl: string | null
-  }
+  } | null
 }
 
 /**
- * M3 取用契约。可选 ?avatarId= 指定非默认分身（视频创作屏的「背景」切换，L15）。
- * readiness(avatar_video) 硬项不过 → 409 PERSONA_NOT_READY（带 checks）。
+ * M3 取用契约。purpose=avatar_video（默认，数字人口播）：readiness(avatar_video) 硬项全过才返回分身 + 声音；
+ * purpose=mixcut（混剪）：不取分身；经理 / KOS 须有已确认的克隆声音（Q12 本人声音口播），素人可空。
+ * 可选 ?avatarId= 指定非默认分身（视频创作屏的「背景」切换，L15）。
+ * 硬项不过 → 409 PERSONA_NOT_READY（带 checks）。
  */
-export async function getProductionProfile(personaId: string, avatarId?: string, db: Db = getDb()): Promise<ProductionProfile> {
-  const readiness = await checkReadiness(personaId, 'avatar_video', db)
+export async function getProductionProfile(
+  personaId: string,
+  opts: { avatarId?: string; purpose?: ProductionPurpose } = {},
+  db: Db = getDb(),
+): Promise<ProductionProfile> {
+  const purpose = opts.purpose ?? 'avatar_video'
+  const readiness = await checkReadiness(personaId, purpose === 'mixcut' ? 'mixcut' : 'avatar_video', db)
   if (!readiness.pass) {
-    throw err.personaNotReady('人物尚未准备就绪（形象与声音未绑定）', {
-      checks: readiness.checks,
-      status: readiness.status,
-    })
+    throw err.personaNotReady(
+      purpose === 'mixcut' ? '人物不可用（已归档或停用）' : '人物尚未准备就绪（形象与声音未绑定）',
+      { checks: readiness.checks, status: readiness.status },
+    )
   }
   const persona = (await getPersonaById(personaId, true))!
-  const targetAvatarId = avatarId || persona.defaultAvatarId!
+  const version = persona.currentVersionId
+    ? await db.get<{ id: string; version_no: number }>('SELECT `id`, `version_no` FROM `persona_version` WHERE `id` = ?', [
+        persona.currentVersionId,
+      ])
+    : null
+  const base = {
+    personaId,
+    purpose,
+    versionId: persona.currentVersionId,
+    versionNo: version ? Number(version.version_no) : null,
+    name: persona.name,
+    line: persona.line,
+    provider: 'hifly' as const,
+  }
+
+  if (purpose === 'mixcut') {
+    const rule = LINE_RULES[persona.line]
+    const voice = persona.defaultVoiceId
+      ? await db.get<Record<string, any>>(
+          'SELECT * FROM `persona_voice` WHERE `id` = ? AND `is_sample` = 0 AND `deleted_at` IS NULL',
+          [persona.defaultVoiceId],
+        )
+      : null
+    const voiceUsable = !!voice && voice.status === 'ready' && !!voice.confirmed && !!voice.vendor_voice_id
+    if (voiceUsable) {
+      if (rule.authRequired) {
+        const auths = await validAuthorizationsOf(personaId, db)
+        if (!auths.some((a) => a.scopes.includes('voice'))) {
+          throw err.personaNotReady('声音授权缺失或已失效', { voiceId: voice!.id, status: readiness.status })
+        }
+      }
+      return {
+        ...base,
+        avatar: null,
+        voice: {
+          voiceId: voice!.id,
+          vendorVoiceId: voice!.vendor_voice_id,
+          name: voice!.name,
+          language: voice!.language,
+          speechRate: Number(voice!.speech_rate ?? 1),
+          volume: Number(voice!.volume ?? 1),
+          pitch: Number(voice!.pitch ?? 1),
+          demoUrl: voice!.demo_key ? `/api/persona-voices/${voice!.id}/demo` : null,
+        },
+      }
+    }
+    if (rule.authRequired) {
+      throw err.personaNotReady('混剪要求已确认的默认声音（口播须本人克隆声音）', { status: readiness.status })
+    }
+    return { ...base, avatar: null, voice: null }
+  }
+
+  const targetAvatarId = opts.avatarId || persona.defaultAvatarId!
   // P1-4：指定分身必须属于该人物——否则可用 B 人物的声音配 A 人物的分身生成视频（冒用肖像）。
   // 肖像授权按「该人物任一有效肖像授权」判定（场景 3：补授权后旧分身无需重建），已由上面的 readiness 校验
   const avatar = await db.get<Record<string, any>>(
@@ -198,17 +262,8 @@ export async function getProductionProfile(personaId: string, avatarId?: string,
   const asset = await db.get<Record<string, any>>('SELECT `thumb_key`, `width`, `height` FROM `persona_asset` WHERE `id` = ?', [
     avatar.source_asset_id,
   ])
-  const version = await db.get<{ id: string; version_no: number }>(
-    'SELECT `id`, `version_no` FROM `persona_version` WHERE `id` = ?',
-    [persona.currentVersionId ?? ''],
-  )
   return {
-    personaId,
-    versionId: persona.currentVersionId,
-    versionNo: version ? Number(version.version_no) : null,
-    name: persona.name,
-    line: persona.line,
-    provider: 'hifly',
+    ...base,
     avatar: {
       avatarId: avatar.id,
       vendorAvatarId: avatar.vendor_avatar_id,

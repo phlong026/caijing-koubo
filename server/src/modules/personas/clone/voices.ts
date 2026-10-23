@@ -549,8 +549,10 @@ export async function setDefaultVoice(id: string, operator: string): Promise<Per
     targetId: voice.personaId,
     detail: { voiceId: id },
   })
-  // 默认声音变化 → 人物版本（L7）
-  await ensurePersonaVersion(persona, 'default_asset', operator)
+  // 默认声音变化 → 人物版本（L7）。必须用更新后的人物取快照：
+  // 上面的 persona 是 UPDATE 之前读的，default_voice_id 还是旧值，快照不变就不会出新版本
+  const updated = await getPersonaById(voice.personaId, true)
+  if (updated) await ensurePersonaVersion(updated, 'default_asset', operator)
   return (await getVoiceById(id))!
 }
 
@@ -691,26 +693,37 @@ export async function createVoicePreview(
     }
   }
 
-  const id = newId('pvp')
+  const newPreviewId = newId('pvp')
   const now = new Date()
   const expires = new Date(now.getTime() + PREVIEW_TTL_MS)
   // 同（声音 + 参数 + 文本）唯一：重试 / 复发时重置为 running（幂等）
   await upsert(getDb(), {
     table: 'persona_voice_preview',
     row: {
-      id,
+      id: newPreviewId,
       voice_id: voiceId,
       params_hash: paramsHash,
       text_hash: textHash,
       text: cleanText,
+      vendor_task_id: null,
+      audio_key: null,
+      error: null,
       status: 'running',
       attempts: 0,
       created_at: toDb(now),
       expires_at: toDb(expires),
     },
     uniqueCols: ['voice_id', 'params_hash', 'text_hash'],
-    updateCols: ['status', 'vendor_task_id', 'audio_key', 'error', 'attempts', 'expires_at'],
+    // created_at 一并重置：轮询时长上限按它计算，重新生成要重新计时
+    updateCols: ['status', 'vendor_task_id', 'audio_key', 'error', 'attempts', 'created_at', 'expires_at'],
   })
+  // 冲突时（失败 / 过期后重新生成）沿用的是旧记录的 id，必须回查真实 id，否则后续入队和返回都指向不存在的记录
+  const saved = await db.get<{ id: string }>(
+    'SELECT `id` FROM `persona_voice_preview` WHERE `voice_id` = ? AND `params_hash` = ? AND `text_hash` = ?',
+    [voiceId, paramsHash, textHash],
+  )
+  if (!saved) throw new Error('试听记录写入失败')
+  const id = saved.id
   await recordOperation({
     operator,
     action: 'persona.voice_preview_create',

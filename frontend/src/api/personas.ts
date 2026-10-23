@@ -192,35 +192,43 @@ export function getReadiness(id: string, purpose: 'copy' | 'avatar_video' | 'mix
   }>(`/personas/${id}/readiness`, { purpose })
 }
 
-export function getProductionProfile(id: string, avatarId?: string) {
-  const suffix = avatarId ? `?avatarId=${encodeURIComponent(avatarId)}` : ''
-  return apiGet<{
-    personaId: string
-    versionId: string | null
-    versionNo: number | null
+export type ProductionPurpose = 'avatar_video' | 'mixcut'
+
+export interface ProductionProfile {
+  personaId: string
+  purpose: ProductionPurpose
+  versionId: string | null
+  versionNo: number | null
+  name: string
+  line: string
+  provider: 'hifly'
+  avatar: {
+    avatarId: string
+    vendorAvatarId: string
     name: string
-    line: string
-    provider: 'hifly'
-    avatar: {
-      avatarId: string
-      vendorAvatarId: string
-      name: string
-      backgroundLabel: string | null
-      coverUrl: string | null
-      sourceWidth: number | null
-      sourceHeight: number | null
-    }
-    voice: {
-      voiceId: string
-      vendorVoiceId: string
-      name: string
-      language: string
-      speechRate: number
-      volume: number
-      pitch: number
-      demoUrl: string | null
-    }
-  }>(`/personas/${id}/production-profile${suffix}`)
+    backgroundLabel: string | null
+    coverUrl: string | null
+    sourceWidth: number | null
+    sourceHeight: number | null
+  } | null
+  voice: {
+    voiceId: string
+    vendorVoiceId: string
+    name: string
+    language: string
+    speechRate: number
+    volume: number
+    pitch: number
+    demoUrl: string | null
+  } | null
+}
+
+export function getProductionProfile(id: string, opts: { avatarId?: string; purpose?: ProductionPurpose } = {}) {
+  const qs = new URLSearchParams()
+  if (opts.avatarId) qs.set('avatarId', opts.avatarId)
+  if (opts.purpose) qs.set('purpose', opts.purpose)
+  const suffix = qs.size > 0 ? `?${qs.toString()}` : ''
+  return apiGet<ProductionProfile>(`/personas/${id}/production-profile${suffix}`)
 }
 
 /* ── 素材 / 授权 / 声音（multipart；字段在前、文件在后）────────── */

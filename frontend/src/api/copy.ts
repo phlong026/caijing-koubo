@@ -221,6 +221,25 @@ export interface CopyDetail {
   article: ArticleDetail | null
 }
 
+export interface ReviewQueueItem {
+  submissionId: string
+  status: string
+  isStub: boolean
+  copyId: string
+  copyTitle: string | null
+  line: CopyLine | null
+  personaId: string | null
+  personaName: string | null
+  versionId: string
+  versionNo: number | null
+  submittedBy: string | null
+  submittedAt: string | null
+  decidedBy: string | null
+  reason: string | null
+  rejectedGate: string | null
+  updatedAt: string | null
+}
+
 /* ── 选项（下拉/表单） ───────────────────────────────────────────── */
 
 export interface DurationTierOption {
@@ -514,6 +533,31 @@ export const copyApi = {
   /** P1-22：编辑时实时合规扫描（后端 POST /copy/compliance/scan）；copyId 用于带出人物禁用表述 */
   scanCompliance(body: { copyId?: string; title?: string | null; sections: Section[] }) {
     return apiPost<{ hits: ComplianceHit[] }>('/copy/compliance/scan', body)
+  },
+  /** 人工复核队列（P1-7，仅审核员 / 管理员） */
+  reviewQueue(scope: 'pending' | 'decided' = 'pending', line?: CopyLine) {
+    return apiGet<{ items: ReviewQueueItem[]; stubEnabled: boolean }>('/review/queue', { scope, line })
+  },
+  /** 审核单原始记录（关卡结果、追加话术） */
+  submissionDetail(submissionId: string) {
+    return apiGet<{
+      id: string
+      status: string
+      gateResults: GateResult[]
+      appendedRiskText: string | null
+      reason: string | null
+      decidedBy: string | null
+    }>(`/review/submissions/${submissionId}`)
+  },
+  /** 人工复核裁决（P1-7；退回必须带原因，提交人不能裁决自己的文案） */
+  manualDecision(
+    submissionId: string,
+    body: { result: 'approved' | 'rejected'; reason?: string; riskPoints?: string[]; appendedRiskText?: string },
+  ) {
+    return apiPost<{ copyId: string; status: 'approved' | 'rejected' }>(
+      `/review/submissions/${submissionId}/manual-decision`,
+      body,
+    )
   },
   promptPreview(copyId: string, body: { templateId: string; styleId: string; durationTier: DurationTier; durationSeconds?: number | null; instructions?: string; count?: number }) {
     return apiPost<{ candidates?: Array<{direction: string; user: string}>; system: string; user: string; prompt: string; promptHash: string; wordRange: { min: number; max: number } }>(

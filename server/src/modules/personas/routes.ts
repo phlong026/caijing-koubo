@@ -568,8 +568,9 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
 
   app.get('/personas/:id/production-profile', async (req) => {
     const { id } = req.params as { id: string }
-    const avatarId = q(req).avatarId
-    return ok(await getProductionProfile(id, avatarId))
+    const purpose = (q(req).purpose ?? 'avatar_video') as 'avatar_video' | 'mixcut'
+    if (!['avatar_video', 'mixcut'].includes(purpose)) throw err.badRequest('purpose 仅支持 avatar_video / mixcut')
+    return ok(await getProductionProfile(id, { avatarId: q(req).avatarId, purpose }))
   })
 
   /* ── 素材 ───────────────────────────────────────────────────── */

@@ -1,6 +1,6 @@
 import { getDb, type Db } from '../../db/index.js'
 import crypto from 'node:crypto'
-import { jdec, jenc, newId } from '../../lib/util.js'
+import { jdec, jenc, newId, canonicalJson } from '../../lib/util.js'
 import { toDb, utcNow } from '../../lib/time.js'
 import { isDuplicateKey } from '../../db/index.js'
 import { readProfile, type Persona } from './repo.js'
@@ -115,10 +115,9 @@ async function awaitRawProfile(personaId: string, db: Db): Promise<unknown> {
   return row?.ip_profile ?? null
 }
 
-/** 规范化 JSON 的 SHA-256 */
+/** 规范化 JSON 的 SHA-256。必须用 canonicalJson：JSON.stringify 的数组参数是全层级白名单，会丢弃嵌套对象字段且不排序嵌套键 */
 export function snapshotHash(snapshot: Record<string, unknown>): string {
-  const sorted = JSON.stringify(snapshot, Object.keys(snapshot).sort())
-  return crypto.createHash('sha256').update(sorted).digest('hex')
+  return crypto.createHash('sha256').update(canonicalJson(snapshot)).digest('hex')
 }
 
 /**

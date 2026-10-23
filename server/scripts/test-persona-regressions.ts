@@ -18,6 +18,7 @@ const { initDb, closeAll } = await import('../src/db/index.js')
 const { runMigrations } = await import('../src/db/migrate.js')
 const { createPersona, getPersonaById, updatePersona, archivePersona } = await import('../src/modules/personas/repo.js')
 const { getProductionProfile, checkReadiness } = await import('../src/modules/personas/readiness.js')
+const { ensurePersonaVersion } = await import('../src/modules/personas/versions.js')
 const { cleanExpiredPreviews } = await import('../src/modules/personas/clone/voices.js')
 const { sweepDuePolls } = await import('../src/modules/personas/clone/worker.js')
 const { memQueueStats } = await import('../src/queue/memory.js')
@@ -78,8 +79,8 @@ try {
 
   await test('P1-4 production-profile 不能借用其他人物的分身', async () => {
     const own = await getProductionProfile(b.personaId)
-    assert.equal(own.avatar.avatarId, b.avatarId)
-    await assert.rejects(getProductionProfile(b.personaId, a.avatarId), (e: any) => e?.code === 'PERSONA_NOT_READY')
+    assert.equal(own.avatar!.avatarId, b.avatarId)
+    await assert.rejects(getProductionProfile(b.personaId, { avatarId: a.avatarId }), (e: any) => e?.code === 'PERSONA_NOT_READY')
   })
 
   await test('P1-4 指定非默认分身：按人物任一有效肖像授权判定，授权全部失效时被拒', async () => {
@@ -99,11 +100,11 @@ try {
       [second, a.personaId, second.slice(-6), expiredAuth, second, now, now],
     )
     // 旧分身绑定的授权已过期，但人物另有有效肖像授权（场景 3：补授权后旧分身无需重建）
-    const viaOther = await getProductionProfile(a.personaId, second)
-    assert.equal(viaOther.avatar.avatarId, second)
+    const viaOther = await getProductionProfile(a.personaId, { avatarId: second })
+    assert.equal(viaOther.avatar!.avatarId, second)
     // 人物的有效授权被撤销后，任何分身都不能用于视频生成
     await db.run("UPDATE persona_authorization SET status = 'revoked' WHERE persona_id = ? AND id <> ?", [a.personaId, expiredAuth])
-    await assert.rejects(getProductionProfile(a.personaId, second), (e: any) => e?.code === 'PERSONA_NOT_READY')
+    await assert.rejects(getProductionProfile(a.personaId, { avatarId: second }), (e: any) => e?.code === 'PERSONA_NOT_READY')
     await assert.rejects(getProductionProfile(a.personaId), (e: any) => e?.code === 'PERSONA_NOT_READY')
     assert.ok(await getPersonaById(a.personaId, true))
   })
@@ -262,6 +263,38 @@ try {
     const waitingBefore = memQueueStats()['persona-clone']?.waiting ?? 0
     assert.ok((await sweepDuePolls()) >= 1)
     assert.ok((memQueueStats()['persona-clone']?.waiting ?? 0) > waitingBefore)
+  })
+
+  // ── mixcut 取用（视频创作 V0 前置）──
+
+  await test('mixcut：只有声音、无分身也能取到 production-profile', async () => {
+    const k = await readyPersona('回归mixcut')
+    await db.run('UPDATE persona SET default_avatar_id = NULL WHERE id = ?', [k.personaId])
+    // readyPersona 用 SQL 直插绕过了版本创建路径，这里补一个版本供冻结
+    await ensurePersonaVersion((await getPersonaById(k.personaId, true))!, 'migrate', 'test')
+    const profile = await getProductionProfile(k.personaId, { purpose: 'mixcut' })
+    assert.equal(profile.purpose, 'mixcut')
+    assert.equal(profile.avatar, null)
+    assert.equal(profile.voice?.vendorVoiceId, `vendor_${k.voiceId}`)
+    assert.ok(profile.versionId, 'mixcut 也应携带版本 id 供任务冻结')
+  })
+
+  await test('mixcut：素人无克隆声音时 voice 为空（公共音色兜底）', async () => {
+    const lay = await createPersona({ name: '回归素人', line: 'persona', operator: 'test' })
+    const profile = await getProductionProfile(lay.id, { purpose: 'mixcut' })
+    assert.equal(profile.voice, null)
+    assert.equal(profile.avatar, null)
+  })
+
+  await test('mixcut：经理线无克隆声音仍被拒（口播须本人声音）', async () => {
+    const p = await createPersona({ name: '回归经理无声', line: 'manager', operator: 'test' })
+    await assert.rejects(() => getProductionProfile(p.id, { purpose: 'mixcut' }), /声音/)
+  })
+
+  await test('avatar_video 仍要求默认分身就绪（回归守卫）', async () => {
+    const k = await readyPersona('回归无分身')
+    await db.run('UPDATE persona SET default_avatar_id = NULL WHERE id = ?', [k.personaId])
+    await assert.rejects(() => getProductionProfile(k.personaId), /未准备就绪|形象与声音/)
   })
 
   console.log(`${passed} persona regression groups passed`)
