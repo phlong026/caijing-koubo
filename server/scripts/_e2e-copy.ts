@@ -4,14 +4,16 @@
  *
  * 用法：BASE=http://127.0.0.1:8788/api npx tsx scripts/_e2e-copy.ts
  */
+import { authHeader, initSmokeAuth } from './lib/smoke-auth.js'
+
 const BASE = process.env.BASE ?? 'http://127.0.0.1:8787/api'
-const OP = 'e2e'
+await initSmokeAuth(BASE)
 
 async function req(method: string, path: string, body?: unknown, headers: Record<string, string> = {}) {
   const hasBody = method === 'POST' || method === 'PUT' || method === 'PATCH'
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: { ...(hasBody ? { 'Content-Type': 'application/json' } : {}), 'X-Operator': OP, ...headers },
+    headers: { ...(hasBody ? { 'Content-Type': 'application/json' } : {}), ...authHeader(method, path), ...headers },
     body: hasBody ? JSON.stringify(body ?? {}) : undefined,
   })
   const json = (await res.json()) as { ok: boolean; data?: any; error?: any }

@@ -1,14 +1,14 @@
 import { getDb, isDuplicateKey, upsert } from '../../../db/index.js'
 import crypto from 'node:crypto'
-import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { newId } from '../../../lib/util.js'
 import { fromDb, toDb, utcNow } from '../../../lib/time.js'
+import { sha256File } from '../../../lib/upload.js'
 import { err } from '../../../errors.js'
 import { logger } from '../../../log.js'
 import { recordOperation } from '../../audit/repo.js'
 import { enqueue, QUEUE_NAMES, dedupOpts } from '../../../queue/index.js'
-import { putObjectFromFile } from '../../../integrations/aliyun-oss/client.js'
+import { deleteObject, putObjectFromFile } from '../../../integrations/aliyun-oss/client.js'
 import { MAGIC_HEAD_BYTES, validateUploadFile } from '../../../lib/upload.js'
 import { normalizeAudioToMp3, probeMedia } from '../../../media/inspect.js'
 import { ensureTempDir, cleanup } from '../../../media/pipeline.js'
@@ -180,8 +180,7 @@ export async function uploadVoiceSample(input: UploadVoiceSampleInput): Promise<
   await ensureTempDir()
   const mp3 = await normalizeAudioToMp3(input.filePath, `${newId('vs')}_norm.mp3`)
   const mp3Probe = await probeMedia(mp3)
-  const buf = await fsp.readFile(mp3)
-  const sha256 = crypto.createHash('sha256').update(buf).digest('hex')
+  const sha256 = await sha256File(mp3)
 
   const id = newId('pvs')
   const sampleKey = `persona/${input.personaId}/voice_sample/${id}.mp3`
@@ -524,13 +523,14 @@ export async function setDefaultVoice(id: string, operator: string): Promise<Per
   const persona = await getPersonaById(voice.personaId, true)
   if (!persona) throw err.personaNotFound()
   // 授权有效（肖像 / 声音范围）
+  // 按「人物当前有任一有效授权覆盖该范围」判定（授权续期后无需重做克隆）
   const auths = await validAuthorizationsOf(voice.personaId)
-  const auth = auths.find((a) => a.id === voice.authorizationId)
-  if (!auth || !auth.scopes.includes('voice')) {
-    throw err.authorizationRequired('该声音的授权已失效，不能设为默认', { authorizationId: voice.authorizationId })
+  const auth = auths.find((a) => a.scopes.includes('voice'))
+  if (!auth) {
+    throw err.authorizationRequired('该人物没有有效的声音授权，不能设为默认', { authorizationId: voice.authorizationId })
   }
   // FR-V9：共享人物的声音用于多个账号须「允许共享」授权
-  if (persona.bindingMode === 'shared' && !auth.scopes.includes('share')) {
+  if (persona.bindingMode === 'shared' && !auths.some((a) => a.scopes.includes('share'))) {
     throw err.authorizationRequired('声音共享须单独核验授权（范围含「允许共享」）', {
       authorizationId: auth.id,
       scopes: auth.scopes,
@@ -549,10 +549,8 @@ export async function setDefaultVoice(id: string, operator: string): Promise<Per
     targetId: voice.personaId,
     detail: { voiceId: id },
   })
-  // 默认声音变化 → 人物版本（L7）。必须用更新后的人物取快照：
-  // 上面的 persona 是 UPDATE 之前读的，default_voice_id 还是旧值，快照不变就不会出新版本
-  const updated = await getPersonaById(voice.personaId, true)
-  if (updated) await ensurePersonaVersion(updated, 'default_asset', operator)
+  // 默认声音变化 → 人物版本（L7）
+  await ensurePersonaVersion(persona, 'default_asset', operator)
   return (await getVoiceById(id))!
 }
 
@@ -587,10 +585,10 @@ export async function softDeleteVoice(id: string, operator: string): Promise<voi
   if (!voice) throw err.notFound('声音不存在')
   if (voice.deletedAt) return // 幂等
   if (VOICE_IN_PROGRESS.includes(voice.status) || voice.status === 'uncertain') {
-    throw err.invalidState(
-      voice.status === 'uncertain' ? '状态待核对，不能删除（请先核对）' : '声音克隆中，不能删除',
-      { status: voice.status },
-    )
+    // 待核对 → CLONE_UNCERTAIN（须先核对）；制作中 → CLONE_NOT_READY（任务书 §5.2）
+    throw voice.status === 'uncertain'
+      ? err.cloneUncertain('状态待核对，不能删除（请先核对）', { status: voice.status })
+      : err.cloneNotReady('声音克隆中，不能删除', { status: voice.status })
   }
   const persona = await getPersonaById(voice.personaId, true)
   if (persona?.defaultVoiceId === id) {
@@ -693,37 +691,26 @@ export async function createVoicePreview(
     }
   }
 
-  const newPreviewId = newId('pvp')
+  const id = newId('pvp')
   const now = new Date()
   const expires = new Date(now.getTime() + PREVIEW_TTL_MS)
   // 同（声音 + 参数 + 文本）唯一：重试 / 复发时重置为 running（幂等）
   await upsert(getDb(), {
     table: 'persona_voice_preview',
     row: {
-      id: newPreviewId,
+      id,
       voice_id: voiceId,
       params_hash: paramsHash,
       text_hash: textHash,
       text: cleanText,
-      vendor_task_id: null,
-      audio_key: null,
-      error: null,
       status: 'running',
       attempts: 0,
       created_at: toDb(now),
       expires_at: toDb(expires),
     },
     uniqueCols: ['voice_id', 'params_hash', 'text_hash'],
-    // created_at 一并重置：轮询时长上限按它计算，重新生成要重新计时
-    updateCols: ['status', 'vendor_task_id', 'audio_key', 'error', 'attempts', 'created_at', 'expires_at'],
+    updateCols: ['status', 'vendor_task_id', 'audio_key', 'error', 'attempts', 'expires_at'],
   })
-  // 冲突时（失败 / 过期后重新生成）沿用的是旧记录的 id，必须回查真实 id，否则后续入队和返回都指向不存在的记录
-  const saved = await db.get<{ id: string }>(
-    'SELECT `id` FROM `persona_voice_preview` WHERE `voice_id` = ? AND `params_hash` = ? AND `text_hash` = ?',
-    [voiceId, paramsHash, textHash],
-  )
-  if (!saved) throw new Error('试听记录写入失败')
-  const id = saved.id
   await recordOperation({
     operator,
     action: 'persona.voice_preview_create',
@@ -750,6 +737,16 @@ export function previewAudioTarget(preview: VoicePreview): { storageKey: string;
 
 /** 试听缓存清理（过期行，worker 周期调用） */
 export async function cleanExpiredPreviews(): Promise<number> {
-  const r = await getDb().run('DELETE FROM `persona_voice_preview` WHERE `expires_at` < ?', [toDb(utcNow())])
-  return r.affectedRows
+  // P2-7：连同存储里的试听音频一起删除，否则过期记录删了文件还留着
+  const db = getDb()
+  const now = toDb(utcNow())
+  const rows = await db.all<{ id: string; audio_key: string | null }>(
+    'SELECT `id`, `audio_key` FROM `persona_voice_preview` WHERE `expires_at` < ? LIMIT 500',
+    [now],
+  )
+  for (const r of rows) {
+    if (r.audio_key) await deleteObject(r.audio_key)
+    await db.run('DELETE FROM `persona_voice_preview` WHERE `id` = ?', [r.id])
+  }
+  return rows.length
 }

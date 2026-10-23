@@ -9,25 +9,34 @@
     "start": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:unit": "vitest run",
     "migrate": "tsx src/db/migrate-cli.ts",
     "smoke": "tsx scripts/smoke.ts",
     "smoke:copy": "tsx scripts/smoke-copy.ts",
     "smoke:personas": "tsx scripts/smoke-personas.ts",
     "check:mysql-ddl": "tsx scripts/check-mysql-ddl.ts",
     "check:mysql-ddl:self": "tsx scripts/check-mysql-ddl.ts --selftest",
+    "check:sql-columns": "tsx scripts/check-sql-columns.ts",
     "test:hifly:protocol": "tsx scripts/test-hifly-protocol.ts",
     "test:finstep:clean": "tsx scripts/test-finstep-clean.ts",
     "test:finstep": "tsx scripts/test-finstep.ts",
     "test:saturn:clean": "tsx scripts/test-saturn-clean.ts",
     "test:saturn": "tsx scripts/test-saturn.ts",
-    "check": "npm run typecheck && npm run check:mysql-ddl && npm run check:mysql-ddl:self && npm run test:hifly:protocol && npm run test:finstep:clean && npm run test:saturn:clean && npm run test:review && npm run test:persona:hash && npm run test:persona:regressions",
+    "check": "npm run typecheck && npm run test:unit && npm run check:sql-columns && npm run check:mysql-ddl && npm run check:mysql-ddl:self && npm run test:hifly:protocol && npm run test:persona:policy && npm run test:oss && npm run test:finstep:clean && npm run test:saturn:clean && npm run test:review && npm run test:personas && npm run test:persona:hash",
     "smoke:topics": "tsx scripts/smoke-topics.ts",
+    "smoke:all": "tsx scripts/run-smoke-all.ts",
     "fix:topic-status": "tsx scripts/fix-topic-status.ts",
     "clean:mock-news": "tsx scripts/clean-mock-news.ts",
+    "test:persona:policy": "node --import tsx scripts/test-persona-policy.ts",
+    "test:personas:acceptance": "node --import tsx scripts/test-personas-acceptance.ts",
+    "test:hifly": "node --import tsx scripts/test-hifly.ts",
+    "test:oss": "node --import tsx scripts/test-oss.ts",
+    "test:oss:real": "node --import tsx scripts/test-oss.ts --real",
     "test:review": "node --import tsx scripts/test-review-regressions.ts",
     "test:persona:hash": "node --import tsx scripts/test-persona-snapshot.ts",
-    "test:persona:regressions": "node --import tsx scripts/test-persona-regressions.ts",
-    "test:integration": "node --import tsx scripts/test-integration.ts"
+    "test:personas": "node --import tsx scripts/test-persona-regressions.ts",
+    "test:integration": "node --import tsx scripts/test-integration.ts",
+    "test:integration:real": "node --import tsx scripts/test-integration.ts --real"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
@@ -48,6 +57,7 @@
     "@types/node": "^22.9.0",
     "node-sql-parser": "^5.4.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^3.2.7"
   }
 }

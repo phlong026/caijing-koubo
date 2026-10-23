@@ -27,7 +27,8 @@ function bool(key: string, def: boolean): boolean {
 export const paths = {
   serverRoot,
   tempDir: path.resolve(serverRoot, str('TEMP_DIR', './.data/tmp')),
-  dataDir: path.resolve(serverRoot, './.data'),
+  // DATA_DIR 供测试隔离本地兜底存储（.data/oss）；缺省仍是 server/.data
+  dataDir: process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.resolve(serverRoot, './.data'),
 }
 
 export const config = {
@@ -79,6 +80,11 @@ export const config = {
     timeoutMs: num('DASHSCOPE_TIMEOUT_MS', 120000),
     llmUnitPrice: num('LLM_UNIT_PRICE', 0.004),
     asrUnitPrice: num('ASR_UNIT_PRICE', 0.0005),
+    /**
+     * P2-13a：ASR 按音频时长计费的单价（元 / 秒）。配置后提取成本 = 时长 × 单价，
+     * 未配置（0）时沿用按次计价 ASR_UNIT_PRICE。具体单价以百炼账单为准。
+     */
+    asrPricePerSec: num('ASR_PRICE_PER_SEC', 0),
   },
 
   oss: {
@@ -87,6 +93,14 @@ export const config = {
     accessKeyId: str('OSS_ACCESS_KEY_ID', ''),
     accessKeySecret: str('OSS_ACCESS_KEY_SECRET', ''),
     internal: bool('OSS_INTERNAL', false),
+    /** 数据面自定义端点（私有域名 / VPC 专线 / 本地仿真）；留空用 region 推导的官方域名 */
+    endpoint: str('OSS_ENDPOINT', ''),
+    /** 端点是绑定到 Bucket 的自定义域名（CNAME）时置 true：此时 URL 不再拼 bucket 前缀 */
+    cname: bool('OSS_CNAME', false),
+    /** 签名 URL 专用公网端点：飞影等外部服务必须能访问，OSS_INTERNAL=true 时不得走内网域名；留空 = 官方公网域名 */
+    signEndpoint: str('OSS_SIGN_ENDPOINT', ''),
+    /** 超过该大小改走分片上传（MB），避免把大视频整个读进内存 */
+    multipartThresholdMb: num('OSS_MULTIPART_THRESHOLD_MB', 50),
     prefix: str('OSS_PREFIX', 'benchmark-audio/'),
     signedUrlTtl: num('OSS_SIGNED_URL_TTL', 7200),
   },
@@ -187,7 +201,7 @@ export const config = {
     llmRetry: num('COPY_LLM_RETRY', 1),
     /**
      * 审核桩开关（W1）：开启时提交后自动模拟三关并开放人工裁决接口，仅供审核模块就绪前联调。
-     * 项目尚无登录鉴权、X-Operator 由请求方自填，开着桩等于任何人都能把文案批成通过，
+     * 桩裁决接口虽已限定审核员角色，但会跳过真实三关，
      * 因此生产环境默认关闭；关闭后审核单停在「已提交」，等待真实审核模块回写结果。
      */
     reviewStubEnabled: bool('REVIEW_STUB_ENABLED', str('NODE_ENV', 'development') !== 'production'),
@@ -213,6 +227,12 @@ export const config = {
     unitPrice: num('COPY_LLM_UNIT_PRICE', 0),
     inputPricePer1k: num('COPY_LLM_INPUT_PRICE_PER_1K', 0),
     outputPricePer1k: num('COPY_LLM_OUTPUT_PRICE_PER_1K', 0),
+    /**
+     * P0-4 合规闸门：COPY_LLM_* 指向第三方中转（如 ccg-cli.online）时，文案与人物档案会发往该服务。
+     * 生产环境必须显式设为 true（表示已获产品与合规书面批准）才启用，否则自动回退百炼；
+     * 开发环境不受影响。
+     */
+    complianceApproved: bool('COPY_LLM_COMPLIANCE_APPROVED', str('NODE_ENV', 'development') !== 'production'),
   },
 
   /**
@@ -242,6 +262,43 @@ export const config = {
     kosSharedAccountLimit: num('KOS_SHARED_ACCOUNT_LIMIT', 5),
   },
 
+  /**
+   * 登录与权限（P0-1）。
+   * 操作人一律取自登录令牌，不再信任请求头 X-Operator。
+   * 生产环境必须配置 AUTH_JWT_SECRET（≥32 字符），否则拒绝启动。
+   */
+  auth: {
+    jwtSecret: str('AUTH_JWT_SECRET', ''),
+    tokenTtlHours: num('AUTH_TOKEN_TTL_HOURS', 12),
+    cookieName: 'mw_token',
+    /** 库内没有任何账号时，用它创建首个管理员；开发环境缺省 admin / admin123 */
+    bootstrapAdminUser: str('AUTH_BOOTSTRAP_ADMIN_USER', 'admin'),
+    bootstrapAdminPassword: str('AUTH_BOOTSTRAP_ADMIN_PASSWORD', ''),
+    /** 连续失败多少次后锁定、锁定多久（分钟） */
+    maxLoginFailures: num('AUTH_MAX_LOGIN_FAILURES', 5),
+    lockMinutes: num('AUTH_LOCK_MINUTES', 5),
+  },
+  /** P2-12：计费 / 高成本接口按操作人限流；RATE_LIMIT_SCALE 整体放大或缩小各接口的每分钟次数 */
+  rateLimit: {
+    enabled: bool('RATE_LIMIT_ENABLED', true),
+    scale: num('RATE_LIMIT_SCALE', 1),
+  },
+  /** 允许跨域的前端来源（逗号分隔）；生产缺省为空 = 只允许同源 */
+  corsOrigins: str(
+    'CORS_ORIGINS',
+    str('NODE_ENV', 'development') === 'production' ? '' : 'http://localhost:5173,http://127.0.0.1:5173',
+  )
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+
+  /**
+   * 示例数据（P1-6）：示例人物「张经理（示例）」等及其占位授权。
+   * 占位授权没有实体材料却标记为「已核验」，会进入合规审计口径，因此生产缺省关闭；
+   * 关闭时启动会把已存在的示例人物归档、示例授权撤销（幂等）。
+   */
+  seedDemo: bool('SEED_DEMO', str('NODE_ENV', 'development') !== 'production'),
+
   defaultOperator: str('DEFAULT_OPERATOR', 'ops'),
   // P1-7：生产环境默认**关闭** mock 兜底；否则漏配 key 时会静默返回假账号/假视频/假转写。
   mockFallback: bool('MOCK_FALLBACK', str('NODE_ENV', 'development') !== 'production'),
@@ -270,12 +327,33 @@ export function hasTikHub(): boolean {
 export function hasDashScope(): boolean {
   return !!config.dashscope.apiKey
 }
-/** 文案二创是否已配置专用模型（三项齐备才算） */
+/** 文案二创是否启用专用模型：BASE_URL 与 API_KEY 齐备，且（生产环境）已通过合规批准 */
 export function hasCopyLlm(): boolean {
-  return !!(config.copyLlm.baseUrl && config.copyLlm.apiKey)
+  return !!(config.copyLlm.baseUrl && config.copyLlm.apiKey && config.copyLlm.complianceApproved)
 }
 export function hasOss(): boolean {
   return !!(config.oss.bucket && config.oss.accessKeyId && config.oss.accessKeySecret)
+}
+/** OSS 配置自检：返回问题清单（半配置、内网域名无法被外部访问等），启动时打印 */
+export function ossConfigIssues(): string[] {
+  const o = config.oss
+  const issues: string[] = []
+  const set = [o.bucket, o.accessKeyId, o.accessKeySecret].filter(Boolean).length
+  if (set > 0 && set < 3) {
+    issues.push('OSS 配置不完整：OSS_BUCKET / OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET 需同时填写，当前按「未配置」处理（回落本地存储）')
+  }
+  if (set === 3) {
+    if (!/^oss-[a-z0-9-]+$/.test(o.region) && !o.endpoint) {
+      issues.push(`OSS_REGION「${o.region}」格式应为 oss-cn-shanghai 这类，或改填 OSS_ENDPOINT`)
+    }
+    if (o.internal && !o.signEndpoint) {
+      issues.push('OSS_INTERNAL=true：数据面走内网，签名 URL 已强制改用公网域名；如需自定义公网域名请设置 OSS_SIGN_ENDPOINT')
+    }
+    if (o.signEndpoint && !/^https:\/\//i.test(o.signEndpoint)) {
+      issues.push('OSS_SIGN_ENDPOINT 必须是 https:// 开头，否则飞影自取会被判不可用并回落自上传')
+    }
+  }
+  return issues
 }
 /** FinStep 资讯接口是否可用（无 Key 时该源整体不启用，不影响其它资讯源） */
 export function hasFinStep(): boolean {

@@ -120,8 +120,9 @@ export const VENDOR_CODE_MESSAGES: Record<number, string> = {
 
 /** 业务码 → 统一错误码（L14） */
 export function vendorErrorOf(vendorCode: number, fallbackMessage?: string): ReturnType<typeof err.badRequest> {
-  const message = fallbackMessage || VENDOR_CODE_MESSAGES[vendorCode] || `飞影服务返回错误（业务码 ${vendorCode}）`
-  const details = { vendorCode }
+  // 已知业务码用本地中文映射（L14，界面可读）；厂商原话保留在 details.vendorMessage 供排查；未知业务码才直接展示厂商原话
+  const message = VENDOR_CODE_MESSAGES[vendorCode] || fallbackMessage || `飞影服务返回错误（业务码 ${vendorCode}）`
+  const details = { vendorCode, ...(fallbackMessage && fallbackMessage !== message ? { vendorMessage: fallbackMessage } : {}) }
   switch (vendorCode) {
     case 1002:
       return err.hiflyInsufficientCredit(message, details)
@@ -568,9 +569,10 @@ class HttpHiflyClient implements HiflyClient {
 
   /** PUT 原始字节（二进制超时；不走代理） */
   async uploadFile(ticket: HiflyUploadTicket, localPath: string): Promise<void> {
-    const buf = await fs.promises.readFile(localPath)
-    await axios.put(ticket.uploadUrl, buf, {
-      headers: { 'Content-Type': ticket.contentType, ...ticket.headers },
+    // P2-2：流式上传并显式带 Content-Length（预签名 PUT 需要），不整份读入内存
+    const { size } = await fs.promises.stat(localPath)
+    await axios.put(ticket.uploadUrl, fs.createReadStream(localPath), {
+      headers: { 'Content-Type': ticket.contentType, 'Content-Length': String(size), ...ticket.headers },
       timeout: config.hifly.binaryTimeoutMs,
       maxBodyLength: Infinity,
       maxContentLength: Infinity,

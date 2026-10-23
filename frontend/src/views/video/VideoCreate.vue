@@ -29,7 +29,11 @@
               v-for="m in modes"
               :key="m.key"
               class="p-4 rounded-[10px] border-2 cursor-pointer transition-colors"
-              :class="mode === m.key ? 'border-[color:var(--mw-primary)] bg-[color:var(--mw-primary-faint)]' : 'border-[var(--mw-border)] hover:border-[color:var(--mw-primary-soft)]'"
+              :class="
+                mode === m.key
+                  ? 'border-[color:var(--mw-primary)] bg-[color:var(--mw-primary-faint)]'
+                  : 'border-[var(--mw-border)] hover:border-[color:var(--mw-primary-soft)]'
+              "
               @click="mode = m.key"
             >
               <div class="flex items-center gap-2">
@@ -51,7 +55,11 @@
                 v-for="av in avatars"
                 :key="av.name"
                 class="p-3.5 rounded-[10px] border-2 cursor-pointer flex gap-3"
-                :class="avatar === av.name ? 'border-[color:var(--mw-primary)] bg-[color:var(--mw-primary-faint)]' : 'border-[var(--mw-border)] hover:border-[color:var(--mw-primary-soft)]'"
+                :class="
+                  avatar === av.name
+                    ? 'border-[color:var(--mw-primary)] bg-[color:var(--mw-primary-faint)]'
+                    : 'border-[var(--mw-border)] hover:border-[color:var(--mw-primary-soft)]'
+                "
                 @click="avatar = av.name"
               >
                 <ThumbBox :seed="av.name" :width="64" :height="64" />
@@ -73,7 +81,9 @@
                   <icon-sound :size="16" class="text-[color:var(--mw-primary)]" />
                   <span class="text-[13.5px]">小林 · 自录声音</span>
                   <div class="flex-1"></div>
-                  <a-button size="small" @click="$message.info('试听播放中（演示）')"><template #icon><icon-play-arrow /></template>试听</a-button>
+                  <a-button size="small" @click="$message.info('试听播放中（演示）')"
+                    ><template #icon><icon-play-arrow /></template>试听</a-button
+                  >
                 </div>
                 <span class="mw-tag mw-tag-green"><icon-check-circle :size="12" />试听已确认</span>
               </div>
@@ -100,7 +110,9 @@
               <div class="mw-form-row">
                 <div class="mw-form-label">声音</div>
                 <a-select v-model="mixVoice" :style="{ width: '220px' }" />
-                <a-button size="small" @click="$message.info('试听播放中（演示）')"><template #icon><icon-play-arrow /></template>试听</a-button>
+                <a-button size="small" @click="$message.info('试听播放中（演示）')"
+                  ><template #icon><icon-play-arrow /></template>试听</a-button
+                >
               </div>
               <div class="mw-form-row">
                 <div class="mw-form-label">字幕字体</div>
@@ -125,27 +137,48 @@
       <!-- ============ 右列：预览 ============ -->
       <div class="mw-card p-5">
         <div class="flex items-center justify-between mb-3">
-          <div class="text-[16px] font-semibold">基础视频已生成 <span class="mw-subtle font-normal">（示例）</span></div>
+          <div class="text-[16px] font-semibold">
+            基础视频已生成 <span class="mw-subtle font-normal">（示例）</span>
+          </div>
           <span class="mw-tag mw-tag-gray">模板示意</span>
         </div>
         <!-- 9:16 视频占位 -->
-        <div class="mx-auto relative rounded-[12px] overflow-hidden" style="width: 300px; aspect-ratio: 9/16; background: linear-gradient(160deg,#3c4a5d 0%,#5a6b80 55%,#8a97a8 100%)">
-          <div class="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/35 text-white text-[12px]">
-            <span class="w-4 h-4 rounded-full bg-[#1d4ed8] inline-flex items-center justify-center text-[9px]">林</span>小林科普
+        <div
+          class="mx-auto relative rounded-[12px] overflow-hidden"
+          style="
+            width: 300px;
+            aspect-ratio: 9/16;
+            background: linear-gradient(160deg, #3c4a5d 0%, #5a6b80 55%, #8a97a8 100%);
+          "
+        >
+          <div
+            class="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/35 text-white text-[12px]"
+          >
+            <span class="w-4 h-4 rounded-full bg-[#1d4ed8] inline-flex items-center justify-center text-[9px]">林</span
+            >小林科普
           </div>
           <div class="absolute inset-0 flex items-center justify-center">
-            <div class="w-14 h-14 rounded-full bg-white/25 backdrop-blur flex items-center justify-center cursor-pointer hover:bg-white/35 transition-colors" @click="$message.info('预览播放（演示）')">
-              <icon-play-arrow-fill :size="30" style="color:#fff" />
+            <div
+              class="w-14 h-14 rounded-full bg-white/25 backdrop-blur flex items-center justify-center cursor-pointer hover:bg-white/35 transition-colors"
+              @click="$message.info('预览播放（演示）')"
+            >
+              <icon-play-arrow-fill :size="30" style="color: #fff" />
             </div>
           </div>
           <div class="absolute bottom-10 inset-x-0 text-center">
-            <div class="inline-block px-2.5 py-1 rounded-[6px] bg-black/45 text-white text-[13px]">{{ previewSubtitle }}</div>
-            <div class="mt-1.5 inline-block px-2 py-0.5 rounded-[4px] bg-black/55 text-white/90 text-[10px]">基金有风险，投资需谨慎</div>
+            <div class="inline-block px-2.5 py-1 rounded-[6px] bg-black/45 text-white text-[13px]">
+              {{ previewSubtitle }}
+            </div>
+            <div class="mt-1.5 inline-block px-2 py-0.5 rounded-[4px] bg-black/55 text-white/90 text-[10px]">
+              基金有风险，投资需谨慎
+            </div>
           </div>
           <div class="absolute bottom-0 inset-x-0 px-3 pb-2.5">
             <div class="h-1 rounded bg-white/25 overflow-hidden"><div class="h-full w-1/5 bg-white"></div></div>
             <div class="flex items-center gap-2 text-white/85 text-[11px] mt-1.5">
-              <icon-play-arrow-fill :size="12" /><span>00:12 / 01:00</span><div class="flex-1"></div><icon-sound :size="12" /><icon-fullscreen :size="12" />
+              <icon-play-arrow-fill :size="12" /><span>00:12 / 01:00</span>
+              <div class="flex-1"></div>
+              <icon-sound :size="12" /><icon-fullscreen :size="12" />
             </div>
           </div>
         </div>
@@ -159,15 +192,26 @@
       <span class="mw-tag mw-tag-green"><icon-check-circle :size="12" />基础视频已生成</span>
       <span class="text-[var(--mw-border)]">|</span>
       <div class="flex items-center gap-2 text-[13px] text-[var(--mw-text2)]">
-        <span class="w-5 h-5 rounded-full border border-[var(--mw-border)] inline-flex items-center justify-center text-[11px]">1</span>{{ steps[0] }}
+        <span
+          class="w-5 h-5 rounded-full border border-[var(--mw-border)] inline-flex items-center justify-center text-[11px]"
+          >1</span
+        >{{ steps[0] }}
         <icon-right :size="13" class="text-[var(--mw-text3)]" />
-        <span class="w-5 h-5 rounded-full border border-[var(--mw-border)] inline-flex items-center justify-center text-[11px]">2</span>{{ steps[1] }}
+        <span
+          class="w-5 h-5 rounded-full border border-[var(--mw-border)] inline-flex items-center justify-center text-[11px]"
+          >2</span
+        >{{ steps[1] }}
         <icon-right :size="13" class="text-[var(--mw-text3)]" />
-        <span class="w-5 h-5 rounded-full border border-[var(--mw-border)] inline-flex items-center justify-center text-[11px]">3</span>{{ steps[2] }}
+        <span
+          class="w-5 h-5 rounded-full border border-[var(--mw-border)] inline-flex items-center justify-center text-[11px]"
+          >3</span
+        >{{ steps[2] }}
       </div>
       <div class="flex-1"></div>
       <a-button @click="$message.success('配置已保存（演示）')">保存配置</a-button>
-      <a-button type="primary" @click="$router.push('/video/edit')"><template #icon><icon-play-arrow /></template>进入视频剪辑</a-button>
+      <a-button type="primary" @click="$router.push('/video/edit')"
+        ><template #icon><icon-play-arrow /></template>进入视频剪辑</a-button
+      >
     </div>
     <div class="mw-corner-note">生成结果为设计示例，接口状态待确认 · 设计预览</div>
   </div>
@@ -182,7 +226,12 @@ import { IconUser, IconVideoCamera } from '@arco-design/web-vue/es/icon'
 const mode = ref<'avatar' | 'mix'>('avatar')
 const modes = [
   { key: 'avatar', name: '数字人口播', icon: IconUser, desc: '由数字人根据文案进行口播，快速生成品牌一致的视频。' },
-  { key: 'mix', name: '素材混剪', icon: IconVideoCamera, desc: '语音合成 + 按文案语义匹配素材包画面，合成无出镜视频。' },
+  {
+    key: 'mix',
+    name: '素材混剪',
+    icon: IconVideoCamera,
+    desc: '语音合成 + 按文案语义匹配素材包画面，合成无出镜视频。',
+  },
 ] as const
 
 const avatar = ref('小林 · 亲和科普')

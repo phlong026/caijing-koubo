@@ -44,7 +44,13 @@ export const brand = reactive<BrandConfig>({ ...brandPresets.default })
 /* ---------- 主题色工具 ---------- */
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '')
-  const v = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+  const v =
+    h.length === 3
+      ? h
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : h
   return [parseInt(v.slice(0, 2), 16), parseInt(v.slice(2, 4), 16), parseInt(v.slice(4, 6), 16)]
 }
 /** 颜色混合：t 为混入 b 的比例（0-1），返回 "r,g,b" 三元组 */
@@ -75,8 +81,16 @@ export function applyBrandTheme() {
   s.setProperty('--mw-primary-ring', `rgba(${mix(p, W, 0)}, 0.14)`)
   s.setProperty('--mw-primary-shadow', `rgba(${mix(p, B, 0)}, 0.3)`)
   const scale: [number, string, number][] = [
-    [1, W, 0.94], [2, W, 0.87], [3, W, 0.72], [4, W, 0.54], [5, W, 0.32],
-    [6, p, 0], [7, B, 0.08], [8, B, 0.18], [9, B, 0.3], [10, B, 0.45],
+    [1, W, 0.94],
+    [2, W, 0.87],
+    [3, W, 0.72],
+    [4, W, 0.54],
+    [5, W, 0.32],
+    [6, p, 0],
+    [7, B, 0.08],
+    [8, B, 0.18],
+    [9, B, 0.3],
+    [10, B, 0.45],
   ]
   for (const [i, base, t] of scale) {
     s.setProperty(`--arcoblue-${i}`, i === 6 ? mix(p, B, 0) : mix(p, base, t))
@@ -91,9 +105,7 @@ export function applyBrand() {
 
 export function setBrand(presetOrConfig: string | Partial<BrandConfig>) {
   const next =
-    typeof presetOrConfig === 'string'
-      ? brandPresets[presetOrConfig]
-      : { ...brandPresets.default, ...presetOrConfig }
+    typeof presetOrConfig === 'string' ? brandPresets[presetOrConfig] : { ...brandPresets.default, ...presetOrConfig }
   if (!next) return
   Object.assign(brand, next)
   applyBrand()

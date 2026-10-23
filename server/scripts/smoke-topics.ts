@@ -9,7 +9,9 @@
  * 用法：先启动 server，再执行 `npm run smoke:topics`
  * 说明：选题生成依赖 LLM，未配置真实 key 时走 mock（MOCK_FALLBACK），链路本身照常验证。
  */
+import { authHeader, initSmokeAuth } from './lib/smoke-auth.js'
 const BASE = process.env.SMOKE_BASE || 'http://127.0.0.1:8787/api'
+await initSmokeAuth(BASE)
 
 let passed = 0
 let failed = 0
@@ -29,7 +31,7 @@ async function req<T = any>(
   path: string,
   body?: unknown,
 ): Promise<{ status: number; data: T; raw: any }> {
-  const headers: Record<string, string> = { 'X-Operator': 'smoke-topics' }
+  const headers: Record<string, string> = { ...authHeader(method, path) }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   const res = await fetch(`${BASE}${path}`, {
     method,
@@ -62,13 +64,19 @@ async function main(): Promise<void> {
   const qBackend = health.raw?.data?.queue?.backend
   console.log(`  ℹ 队列后端：${qBackend}`)
 
+  // GET /personas 返回 { items, total }，默认只含可用人物（FR-X1）
   const personas = await req('GET', '/personas')
-  // FR-X1：/personas 返回 {items,total}（旧契约是数组）
-  const personaList: any[] = Array.isArray(personas.data) ? personas.data : (personas.data?.items ?? [])
-  const enabledPersona = personaList.find((p) => p.enabled)
+  // FR-X1：GET /personas 返回 {items,total}，默认仅含 usable 人物（兼容旧数组形态）
+  const personaList: any[] = Array.isArray(personas.data?.items)
+    ? personas.data.items
+    : Array.isArray(personas.data)
+      ? personas.data
+      : []
+  const enabledPersona = personaList.find((p) => p.usable ?? p.enabled)
   check('存在可用人物', !!enabledPersona, { count: personaList.length })
   if (!enabledPersona) {
     console.log('\n无可用人物，终止')
+    process.exitCode = 1
     return
   }
 
@@ -130,7 +138,6 @@ async function main(): Promise<void> {
   const ghost = await req('PATCH', `/topics/${t0.id}`, { personaIds: ['ps_ghost_not_exist'] })
   check(
     '分配不存在的人物被拒绝（404 PERSONA_NOT_FOUND）',
-    // FR-X2：人物校验统一走人物库判定
     ghost.status === 404 && ghost.raw?.error?.code === 'PERSONA_NOT_FOUND',
     ghost.raw,
   )

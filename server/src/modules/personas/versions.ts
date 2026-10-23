@@ -1,6 +1,6 @@
 import { getDb, type Db } from '../../db/index.js'
 import crypto from 'node:crypto'
-import { canonicalJson, jdec, jenc, newId } from '../../lib/util.js'
+import { jdec, jenc, newId } from '../../lib/util.js'
 import { toDb, utcNow } from '../../lib/time.js'
 import { isDuplicateKey } from '../../db/index.js'
 import { readProfile, type Persona } from './repo.js'
@@ -103,8 +103,7 @@ export async function buildSnapshot(
     description: persona.description,
     bindingMode: persona.bindingMode,
     profileRevision: persona.profileRevision,
-    // 必须 await：jdec 收到 Promise 会原样返回对象，readProfile 得到的永远是空档案
-    ipProfile: readProfile(jdec<unknown>(await awaitRawProfile(persona.id, db), null)),
+    ipProfile: readProfile(jdec<unknown>(awaitRawProfile(persona.id, db), null)),
     defaultAvatar,
     defaultVoice,
     authorizations: auths.map((a) => ({ id: a.id, scopes: a.scopes, expiresAt: a.expiresAt })),
@@ -116,9 +115,10 @@ async function awaitRawProfile(personaId: string, db: Db): Promise<unknown> {
   return row?.ip_profile ?? null
 }
 
-/** 规范化快照 JSON 的 SHA-256（嵌套字段同样参与，键顺序不影响） */
+/** 规范化 JSON 的 SHA-256 */
 export function snapshotHash(snapshot: Record<string, unknown>): string {
-  return crypto.createHash('sha256').update(canonicalJson(snapshot)).digest('hex')
+  const sorted = JSON.stringify(snapshot, Object.keys(snapshot).sort())
+  return crypto.createHash('sha256').update(sorted).digest('hex')
 }
 
 /**

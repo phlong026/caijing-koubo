@@ -87,7 +87,11 @@ export const TABLES: TableDef[] = [
       tint('enabled', 1),
       dt('created_at'),
     ],
-    indexes: [{ name: 'idx_rule_enabled', cols: ['enabled', 'priority'] }],
+    indexes: [
+      { name: 'idx_rule_enabled', cols: ['enabled', 'priority'] },
+      // P2-13b：同一分类同一关键词只保留一条（建索引前 dedupeBeforeUniqueIndexes 会清理存量重复）
+      { name: 'uq_rule_category_keyword', cols: ['category', 'keyword'], unique: true },
+    ],
     comment: 'FR-N2 分类关键词规则（配置表维护）',
   },
 
@@ -500,6 +504,7 @@ export const TABLES: TableDef[] = [
       vc('audio_key', 255, { nullable: true }),
       { name: 'error', type: 'text', nullable: true },
       int('attempts', 0),
+      dt('next_poll_at'), // P0-2：轮询排期，由 poll_sweep 到期入队
       dt('created_at'),
       dt('expires_at'),
     ],
@@ -528,6 +533,7 @@ export const TABLES: TableDef[] = [
       vc('revoked_by', 64, { nullable: true }),
       dt('revoked_at'),
       dt('remind_sent_at'), // 到期前 30 天提醒已发
+      dt('expired_notified_at'), // P2-6：到期通知只发一次
       vc('note', 255, { nullable: true }),
       vc('created_by', 64, { nullable: true }),
       dt('created_at'),
@@ -862,6 +868,25 @@ export const TABLES: TableDef[] = [
     uniques: [['copy_version_id']],
     indexes: [{ name: 'idx_review_status', cols: ['status'] }],
     comment: '审核单（所有权：审核模块；未就绪时由文案工坊桩建表 §5.3）',
+  },
+  {
+    name: 'app_user',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('username', 64),
+      vc('display_name', 64),
+      vc('password_hash', 255),
+      vc('role', 16, { def: 'ops' }), // ops | reviewer | admin
+      tint('enabled', 1),
+      int('token_version', 0), // 改密 / 停用时 +1，使已签发令牌失效
+      vc('created_by', 64, { nullable: true }),
+      dt('created_at'),
+      dt('updated_at'),
+      dt('last_login_at'),
+    ],
+    uniques: [['username']],
+    comment: '登录账号与角色（运营 / 审核 / 管理员）',
   },
   {
     name: 'schema_migrations',

@@ -1,99 +1,186 @@
 <template>
-  <div class="people-profile">
-    <div class="mw-form-row">
-      <div class="mw-form-label">角色类型</div>
-      <a-select v-model="form.role" allow-create allow-clear placeholder="选择或输入" :disabled="readonly" class="flex-1 min-w-0">
-        <a-option v-for="o in ipOptions.role" :key="o" :value="o">{{ o }}</a-option>
-      </a-select>
-    </div>
-    <div class="mw-form-row">
-      <div class="mw-form-label">专业方向</div>
-      <a-select v-model="form.serviceScope" allow-create allow-clear placeholder="选择或输入" :disabled="readonly" class="flex-1 min-w-0">
-        <a-option v-for="o in ipOptions.serviceScope" :key="o" :value="o">{{ o }}</a-option>
-      </a-select>
-    </div>
-    <div class="mw-form-row">
-      <div class="mw-form-label">表达风格</div>
-      <a-select v-model="form.expressionStyle" allow-create allow-clear placeholder="选择或输入" :disabled="readonly" class="flex-1 min-w-0">
-        <a-option v-for="o in ipOptions.expressionStyle" :key="o" :value="o">{{ o }}</a-option>
-      </a-select>
-    </div>
-    <div class="mw-form-row">
-      <div class="mw-form-label">内容方向</div>
-      <a-select
-        v-model="form.contentDirections"
-        multiple
-        allow-create
-        :limit="8"
-        :max-tag-count="3"
-        placeholder="最多 8 项"
-        :disabled="readonly"
-        class="flex-1"
+  <div>
+    <a-form :model="draft" layout="vertical" auto-label-width>
+      <a-form-item label="角色类型">
+        <a-auto-complete
+          v-model="draft.role"
+          :data="opt('roles')"
+          :max-length="160"
+          placeholder="如：基金经理 / 投资者教育专员（可自由输入）"
+        />
+      </a-form-item>
+      <a-form-item label="专业方向">
+        <a-auto-complete
+          v-model="draft.serviceScope"
+          :data="opt('serviceScopes')"
+          :max-length="600"
+          placeholder="如：宏观与市场解读、资产配置框架"
+        />
+      </a-form-item>
+      <a-form-item label="表达风格">
+        <a-auto-complete
+          v-model="draft.expressionStyle"
+          :data="opt('expressionStyles')"
+          :max-length="600"
+          placeholder="如：沉稳克制、数据先行"
+        />
+      </a-form-item>
+
+      <a-form-item label="内容方向（最多 8 项，每项 ≤20 字）">
+        <a-input-tag
+          v-model="draft.contentDirections"
+          :max-tag-count="8"
+          allow-clear
+          placeholder="回车添加"
+          aria-label="内容方向"
+        />
+        <div v-if="suggestDirections.length" class="mt-1 flex gap-1.5 flex-wrap">
+          <a-link v-for="d in suggestDirections" :key="d" @click="addDirection(d)">+ {{ d }}</a-link>
+        </div>
+      </a-form-item>
+
+      <a-form-item
+        label="内容配比（最多 6 项；填比例则全部必填且合计 100）"
+        :validate-status="mixError ? 'error' : undefined"
+        :help="mixError"
       >
-        <a-option v-for="o in ipOptions.contentDirection" :key="o" :value="o">{{ o }}</a-option>
-      </a-select>
+        <div v-for="(m, i) in draft.contentMix" :key="i" class="flex items-center gap-2 mb-1.5">
+          <a-input
+            v-model="m.label"
+            :max-length="20"
+            placeholder="标签，如：知识科普"
+            class="flex-1"
+            :input-attrs="{ 'aria-label': `配比标签 ${i + 1}` }"
+          />
+          <a-input-number
+            v-model="m.ratio"
+            :min="0"
+            :max="100"
+            :precision="0"
+            placeholder="比例%"
+            class="!w-[110px]"
+            :input-attrs="{ 'aria-label': `配比比例 ${i + 1}` }"
+          />
+          <a-button type="text" status="danger" :aria-label="`移除配比 ${i + 1}`" @click="draft.contentMix.splice(i, 1)"
+            ><icon-delete
+          /></a-button>
+        </div>
+        <a-button
+          size="small"
+          type="outline"
+          :disabled="draft.contentMix.length >= 6"
+          @click="draft.contentMix.push({ label: '', ratio: undefined })"
+        >
+          <template #icon><icon-plus /></template>添加
+        </a-button>
+      </a-form-item>
+
+      <a-collapse :default-active-key="[]" :bordered="false" class="mb-3">
+        <a-collapse-item key="persona" header="文案人设（注入文案改写，不得虚构经历 / 资质 / 承诺）">
+          <a-form-item label="目标受众"
+            ><a-textarea
+              v-model="draft.targetAudience"
+              :max-length="600"
+              show-word-limit
+              :auto-size="{ minRows: 2, maxRows: 5 }"
+          /></a-form-item>
+          <a-form-item label="受众需求"
+            ><a-textarea
+              v-model="draft.audienceNeeds"
+              :max-length="600"
+              show-word-limit
+              :auto-size="{ minRows: 2, maxRows: 5 }"
+          /></a-form-item>
+          <a-form-item label="事实背景（真实素材，防止模型虚构）"
+            ><a-textarea
+              v-model="draft.factualBackground"
+              :max-length="2000"
+              show-word-limit
+              :auto-size="{ minRows: 3, maxRows: 8 }"
+          /></a-form-item>
+          <a-form-item label="代表口播样稿（只学句式语气，不移植内容）"
+            ><a-textarea
+              v-model="draft.sampleScript"
+              :max-length="2000"
+              show-word-limit
+              :auto-size="{ minRows: 3, maxRows: 8 }"
+          /></a-form-item>
+          <a-form-item label="禁用表达（作为硬禁用词参与合规扫描与选题约束）">
+            <a-input-tag
+              v-model="draft.forbiddenClaims"
+              allow-clear
+              placeholder="回车添加，如：稳赚不赔"
+              aria-label="禁用表达"
+            />
+          </a-form-item>
+        </a-collapse-item>
+      </a-collapse>
+    </a-form>
+
+    <div class="flex items-center gap-2 mb-5">
+      <a-button type="primary" :disabled="!dirty" :loading="saving" @click="save">保存定位</a-button>
+      <a-button v-if="dirty" @click="reset">放弃修改</a-button>
+      <span class="mw-subtle">
+        <template v-if="dirty">有未保存的修改</template>
+        <template v-else>已保存 · 定位版本 {{ persona.profileRevision }}</template>
+      </span>
     </div>
-    <div class="mw-form-row items-start">
-      <div class="mw-form-label pt-1">内容配比</div>
-      <div class="flex-1 min-w-0">
-        <div v-for="(m, i) in form.contentMix" :key="i" class="flex items-center gap-1.5 mb-1.5">
-          <a-input v-model="m.label" size="small" :max-length="20" placeholder="标签" :disabled="readonly" class="flex-1" />
-          <a-input-number v-model="m.ratio" size="small" :min="0" :max="100" placeholder="%" :disabled="readonly" style="width: 76px" />
-          <a-button v-if="!readonly" size="mini" type="text" aria-label="移除配比项" @click="form.contentMix.splice(i, 1)"><icon-close /></a-button>
-        </div>
-        <div v-if="!readonly && form.contentMix.length < 6" class="flex gap-1.5 flex-wrap">
-          <span
-            v-for="p in mixPresets"
-            :key="p"
-            class="mw-tag mw-tag-gray cursor-pointer"
-            role="button"
-            @click="form.contentMix.push({ label: p, ratio: undefined })"
-          >+ {{ p }}</span>
-        </div>
-        <div class="mw-subtle mt-1">比例可不填；填写时每项都要填，合计 100。</div>
+
+    <a-divider />
+    <div class="space-y-3 text-[13px]">
+      <div class="flex items-center gap-2">
+        <span class="w-[72px] text-[var(--mw-text3)]">归属主体</span>
+        <span>{{ persona.ownerSubject || persona.name }}</span>
+        <span v-if="persona.bindingMode === 'shared'" class="mw-tag mw-tag-blue">共享</span>
+        <span v-else class="mw-tag mw-tag-gray">一对一</span>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="w-[72px] text-[var(--mw-text3)]">可用范围</span>
+        <template v-if="persona.bindings.length">
+          <span v-for="b in persona.bindings" :key="b.id" class="mw-tag mw-tag-gray"
+            >{{ PLATFORM_LABEL[b.platform] }} · {{ b.displayName }}</span
+          >
+        </template>
+        <span v-else class="mw-subtle">尚未绑定账号</span>
+        <a-button size="mini" type="text" :disabled="persona.status === 'archived'" @click="$emit('open-bindings')"
+          >管理</a-button
+        >
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="w-[72px] text-[var(--mw-text3)]">授权材料</span>
+        <span class="mw-tag" :class="authTag.cls">{{ authTag.text }}</span>
+        <span v-if="authTag.hint" class="mw-subtle">{{ authTag.hint }}</span>
+        <a-button size="mini" type="text" @click="$emit('open-authorizations')">授权管理</a-button>
       </div>
     </div>
 
-    <a-collapse :bordered="false" class="people-collapse mt-1">
-      <a-collapse-item key="persona" header="文案人设">
-        <div class="mw-form-row"><div class="mw-form-label">目标受众</div><a-input v-model="form.targetAudience" :max-length="80" :disabled="readonly" /></div>
-        <div class="mw-form-row items-start"><div class="mw-form-label pt-1">受众需求</div><a-textarea v-model="form.audienceNeeds" :auto-size="{ minRows: 2, maxRows: 4 }" :max-length="300" :disabled="readonly" /></div>
-        <div class="mw-form-row items-start"><div class="mw-form-label pt-1">事实背景</div><a-textarea v-model="form.factualBackground" :auto-size="{ minRows: 2, maxRows: 5 }" :max-length="1000" :disabled="readonly" /></div>
-        <div class="mw-form-row items-start"><div class="mw-form-label pt-1">口播样稿</div><a-textarea v-model="form.sampleScript" :auto-size="{ minRows: 3, maxRows: 6 }" :max-length="2000" :disabled="readonly" /></div>
-        <div class="mw-form-row items-start">
-          <div class="mw-form-label pt-1">禁用表达</div>
-          <a-input-tag v-model="form.forbiddenClaims" allow-clear unique-value placeholder="输入后回车" :disabled="readonly" />
-        </div>
-      </a-collapse-item>
-    </a-collapse>
-
-    <a-button
-      v-if="!readonly"
-      type="primary"
-      long
-      class="mt-3"
-      :disabled="!dirty"
-      :loading="saving"
-      @click="save"
-    >保存定位</a-button>
+    <a-modal
+      v-model:visible="conflictVisible"
+      title="已被其他人修改"
+      ok-text="载入最新"
+      cancel-text="继续编辑"
+      @ok="reload"
+    >
+      该人物的定位已在别处更新。载入最新会丢弃你当前未保存的修改；也可以先复制需要保留的内容再载入。
+    </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { Message, Modal } from '@arco-design/web-vue'
-import { ApiError } from '@/api/client'
-import { getPersonaVersions, savePersonaProfile, type IpProfile, type PersonaDetail, type PersonaOptions } from '@/api/personas'
+import { Message } from '@arco-design/web-vue'
+import { savePersonaProfile, type IpProfile, type PersonaDetail, type PersonaOptions } from '@/api/personas'
+import { AUTH_STATUS, fmtDate, isApiCode, PLATFORM_LABEL, toastError } from './shared'
 
-const props = defineProps<{ persona: PersonaDetail; options: PersonaOptions | null; readonly: boolean }>()
-const emit = defineEmits<{ (e: 'saved'): void; (e: 'reload'): void }>()
+const props = defineProps<{ persona: PersonaDetail; options: PersonaOptions | null }>()
+const emit = defineEmits<{
+  (e: 'saved'): void
+  (e: 'open-bindings'): void
+  (e: 'open-authorizations'): void
+  (e: 'reload'): void
+}>()
 
-interface MixRow {
-  label: string
-  ratio?: number
-}
-
-interface ProfileForm {
+interface Draft {
   role: string
   serviceScope: string
   expressionStyle: string
@@ -103,16 +190,10 @@ interface ProfileForm {
   sampleScript: string
   forbiddenClaims: string[]
   contentDirections: string[]
-  contentMix: MixRow[]
+  contentMix: Array<{ label: string; ratio?: number }>
 }
 
-const ipOptions = computed(() => props.options?.ipOptions ?? { role: [], serviceScope: [], expressionStyle: [], contentDirection: [] })
-const mixPresets = computed(() => {
-  const used = new Set(form.contentMix.map((m) => m.label))
-  return (props.options?.contentMixPresets ?? []).filter((p) => !used.has(p))
-})
-
-function toForm(p: IpProfile): ProfileForm {
+function fromProfile(p: IpProfile): Draft {
   return {
     role: p.role ?? '',
     serviceScope: p.serviceScope ?? '',
@@ -123,117 +204,116 @@ function toForm(p: IpProfile): ProfileForm {
     sampleScript: p.sampleScript ?? '',
     forbiddenClaims: [...(p.forbiddenClaims ?? [])],
     contentDirections: [...(p.contentDirections ?? [])],
-    contentMix: (p.contentMix ?? []).map((m) => ({ label: m.label, ratio: m.ratio ?? undefined })),
+    contentMix: (p.contentMix ?? []).map((m) => ({ label: m.label, ratio: m.ratio })),
   }
 }
 
-/** 规范化后比较：去首尾空白、去空项，与服务端 hash 口径一致，避免「没改也能保存」 */
-function normalize(f: ProfileForm): IpProfile {
-  const clean = (s: string) => s.trim()
-  return {
-    role: clean(f.role),
-    serviceScope: clean(f.serviceScope),
-    expressionStyle: clean(f.expressionStyle),
-    targetAudience: clean(f.targetAudience),
-    audienceNeeds: clean(f.audienceNeeds),
-    factualBackground: clean(f.factualBackground),
-    sampleScript: clean(f.sampleScript),
-    forbiddenClaims: f.forbiddenClaims.map(clean).filter(Boolean),
-    contentDirections: f.contentDirections.map(clean).filter(Boolean),
-    contentMix: f.contentMix
-      .filter((m) => clean(m.label))
-      .map((m) => (m.ratio === undefined || m.ratio === null ? { label: clean(m.label) } : { label: clean(m.label), ratio: m.ratio })),
-  }
-}
-
-const form = reactive<ProfileForm>(toForm(props.persona.ipProfile))
-const baseline = ref(JSON.stringify(normalize(form)))
-/** 表单载入时的 rev：保存时提交它而不是最新刷新到的 rev，别人改过就会触发冲突而不是被静默覆盖 */
-const baseRev = ref(props.persona.rev)
+const draft = reactive<Draft>(fromProfile(props.persona.ipProfile))
 const saving = ref(false)
+const conflictVisible = ref(false)
 
-const dirty = computed(() => JSON.stringify(normalize(form)) !== baseline.value)
+/** 序列化比较：规范化与后端一致（空串 / 空项不计） */
+function norm(d: Draft): string {
+  return JSON.stringify({
+    ...d,
+    forbiddenClaims: d.forbiddenClaims.map((s) => s.trim()).filter(Boolean),
+    contentDirections: d.contentDirections.map((s) => s.trim()).filter(Boolean),
+    contentMix: d.contentMix
+      .filter((m) => m.label.trim())
+      .map((m) => ({ label: m.label.trim(), ratio: m.ratio ?? null })),
+  })
+}
+const baseline = ref(norm(draft))
+const dirty = computed(() => norm(draft) !== baseline.value)
 
-/** 冲突后用户选择「载入最新」：下一次服务端数据到达时无条件覆盖本地修改 */
-let forceReset = false
-
-/** 切换人物或服务端数据变化时重置表单；同一人物有未保存修改时不覆盖（轮询刷新不打断编辑） */
+// 切换人物、或后端版本变化（保存 / 他处修改后刷新）时重置草稿；有未保存修改时不被轮询覆盖
 watch(
-  () => [props.persona.id, props.persona.rev] as const,
+  () => [props.persona.id, props.persona.profileRevision] as const,
   ([id], [prevId]) => {
-    if (id === prevId && dirty.value && !forceReset) return
-    forceReset = false
-    Object.assign(form, toForm(props.persona.ipProfile))
-    baseline.value = JSON.stringify(normalize(form))
-    baseRev.value = props.persona.rev
+    // 换人物：无条件重置；同一人物版本变化：仅在没有未保存修改时同步，避免轮询冲掉正在编辑的内容
+    if (id !== prevId || !dirty.value) reset()
   },
 )
 
-/** 保存接口只返回版本 id，版本号从版本列表取；取不到时不影响保存结果 */
-async function versionNoOf(versionId: string | null): Promise<string> {
-  if (!versionId) return '—'
-  try {
-    const list = await getPersonaVersions(props.persona.id)
-    return String(list.find((v) => v.id === versionId)?.versionNo ?? '—')
-  } catch {
-    return '—'
-  }
+function reset(): void {
+  Object.assign(draft, fromProfile(props.persona.ipProfile))
+  baseline.value = norm(draft)
 }
 
-function mixError(profile: IpProfile): string | null {
-  const mix = profile.contentMix ?? []
-  const withRatio = mix.filter((m) => m.ratio !== undefined)
-  if (!withRatio.length) return null
-  if (withRatio.length !== mix.length) return '内容配比：填写比例时每一项都要填'
-  const sum = withRatio.reduce((s, m) => s + (m.ratio ?? 0), 0)
-  return sum === 100 ? null : `内容配比合计为 ${sum}，需要等于 100`
+function opt(key: 'roles' | 'serviceScopes' | 'expressionStyles'): string[] {
+  const o = props.options?.ipOptions as Record<string, string[]> | undefined
+  return o?.[key] ?? []
 }
+
+const suggestDirections = computed(() => {
+  const defaults = props.options?.lineDefaultDirections?.[props.persona.line] ?? []
+  return defaults.filter((d) => !draft.contentDirections.includes(d)).slice(0, 6)
+})
+function addDirection(d: string): void {
+  if (draft.contentDirections.length < 8) draft.contentDirections.push(d)
+}
+
+const mixError = computed(() => {
+  const items = draft.contentMix.filter((m) => m.label.trim())
+  const withRatio = items.filter((m) => m.ratio !== undefined && m.ratio !== null)
+  if (!withRatio.length) return ''
+  if (withRatio.length !== items.length) return '填写了比例的话，所有配比项都需要填写比例'
+  const sum = withRatio.reduce((a, m) => a + Number(m.ratio), 0)
+  return sum === 100 ? '' : `比例合计需为 100（当前 ${sum}）`
+})
+
+const authTag = computed(() => {
+  if (props.persona.line === 'persona') {
+    const n = props.persona.authorizations.length
+    return { text: n ? '已留档' : '不强制', cls: 'mw-tag-gray', hint: '素人矩阵不强制授权' }
+  }
+  const auths = props.persona.authorizations
+  const valid = auths.filter((a) => a.status === 'verified')
+  if (valid.length) {
+    const sorted = valid.map((a) => a.expiresAt ?? '').sort()
+    const latest = sorted[sorted.length - 1]
+    const expiring = props.persona.extraTags.includes('auth_expiring')
+    return {
+      text: expiring ? '即将到期' : '已核验',
+      cls: expiring ? 'mw-tag-orange' : AUTH_STATUS.verified.cls,
+      hint: `至 ${fmtDate(latest)}`,
+    }
+  }
+  if (auths.some((a) => a.status === 'expired'))
+    return { text: AUTH_STATUS.expired.text, cls: AUTH_STATUS.expired.cls, hint: '' }
+  if (auths.some((a) => a.status === 'revoked'))
+    return { text: AUTH_STATUS.revoked.text, cls: AUTH_STATUS.revoked.cls, hint: '' }
+  if (auths.some((a) => a.status === 'pending'))
+    return { text: AUTH_STATUS.pending.text, cls: AUTH_STATUS.pending.cls, hint: '' }
+  return { text: '未上传', cls: 'mw-tag-yellow', hint: '需上传并核验授权后人物才可用' }
+})
 
 async function save(): Promise<void> {
-  const profile = normalize(form)
-  const invalid = mixError(profile)
-  if (invalid) {
-    Message.warning(invalid)
+  if (mixError.value) {
+    Message.warning(mixError.value)
     return
   }
   saving.value = true
   try {
-    const r = await savePersonaProfile(props.persona.id, profile, baseRev.value)
-    baseline.value = JSON.stringify(profile)
-    baseRev.value = r.persona.rev
-    Message.success(r.changed ? `已保存，生成人物版本 v${await versionNoOf(r.versionId)}` : '内容未变化，未生成新版本')
+    const clean = JSON.parse(norm(draft)) as Record<string, unknown>
+    // 比例统一还原：null 表示未填
+    clean.contentMix = (clean.contentMix as Array<{ label: string; ratio: number | null }>).map((m) =>
+      m.ratio === null ? { label: m.label } : m,
+    )
+    const r = await savePersonaProfile(props.persona.id, clean, props.persona.rev)
+    Message.success(r.changed ? `已保存，生成人物版本` : '内容没有变化')
+    baseline.value = norm(draft)
     emit('saved')
   } catch (e) {
-    if (e instanceof ApiError && e.code === 'PERSONA_CONFLICT') {
-      Modal.warning({
-        title: '人物已在别处修改',
-        content: '当前编辑基于旧数据。载入最新内容后，你的未保存修改会被丢弃。',
-        okText: '载入最新',
-        hideCancel: false,
-        onOk: () => {
-          forceReset = true
-          emit('reload')
-        },
-      })
-    } else {
-      Message.error((e as Error).message)
-    }
+    if (isApiCode(e, 'PERSONA_CONFLICT')) conflictVisible.value = true
+    else toastError(e)
   } finally {
     saving.value = false
   }
 }
-</script>
 
-<style scoped>
-.people-profile :deep(.mw-form-row) {
-  padding: 5px 0;
+function reload(): void {
+  emit('reload')
+  conflictVisible.value = false
 }
-.people-collapse :deep(.arco-collapse-item-header) {
-  padding-left: 0;
-  font-size: 13px;
-}
-.people-collapse :deep(.arco-collapse-item-content) {
-  padding: 0;
-  background: transparent;
-}
-</style>
+</script>

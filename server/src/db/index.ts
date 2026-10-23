@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import fs from 'node:fs'
 import path from 'node:path'
 import mysql from 'mysql2/promise'
-import { config, paths } from '../config.js'
+import { config } from '../config.js'
 import { logger } from '../log.js'
 
 export type Dialect = 'mysql' | 'sqlite'
@@ -285,7 +285,9 @@ let dbInstance: Db | null = null
 
 export async function initDb(): Promise<Db> {
   if (dbInstance) return dbInstance
-  const driver = config.db.driver
+  // P1-8：生产环境不允许静默退回 SQLite——MySQL 短暂不可用时切到本地库继续写入，
+  // 恢复后数据分散在两个库里难以合并。生产下 auto 按 mysql 处理，连接失败直接退出，交给进程守护重启。
+  const driver = config.env === 'production' && config.db.driver === 'auto' ? 'mysql' : config.db.driver
   if (driver === 'sqlite') {
     dbInstance = await createSqlite(config.db.sqlitePath)
     logger.info({ kind: 'sqlite', file: config.db.sqlitePath }, 'db.ready')
@@ -303,7 +305,7 @@ export async function initDb(): Promise<Db> {
         throw diag
       }
       logger.warn({ err: diag.detail, hint: diag.hint }, 'db.mysql_unavailable_fallback_sqlite')
-      dbInstance = await createSqlite(path.join(paths.dataDir, 'dev.db'))
+      dbInstance = await createSqlite(config.db.sqlitePath)
       return dbInstance
     }
   }

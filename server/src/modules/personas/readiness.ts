@@ -90,7 +90,7 @@ export async function checkReadiness(
     // 肖像授权有效（默认分身绑定）
     if (avatar) {
       const auths = await validAuthorizationsOf(personaId, db)
-      const authOk = auths.some((a) => a.id === avatar.authorization_id && a.scopes.includes('portrait'))
+      const authOk = auths.some((a) => a.scopes.includes('portrait'))
       checks.push(hard('portrait_auth', authOk, authOk ? '肖像授权有效' : '肖像授权缺失或已失效'))
     }
     // 默认声音 ready 且已确认
@@ -107,8 +107,14 @@ export async function checkReadiness(
     // 声音授权有效（默认声音绑定）
     if (voice) {
       const auths = await validAuthorizationsOf(personaId, db)
-      const authOk = auths.some((a) => a.id === voice.authorization_id && a.scopes.includes('voice'))
+      const authOk = auths.some((a) => a.scopes.includes('voice'))
       checks.push(hard('voice_auth', authOk, authOk ? '声音授权有效' : '声音授权缺失或已失效'))
+      // P2-1：共享人物的声音用于多个账号即构成声音共享（FR-V9），授权还须含「允许共享」。
+      // 与肖像 / 声音授权同口径：任一有效的声音授权含「允许共享」即可（补授权后旧声音无需重建）
+      if (persona.bindingMode === 'shared') {
+        const shareOk = auths.some((a) => a.scopes.includes('voice') && a.scopes.includes('share'))
+        checks.push(hard('voice_share_auth', shareOk, shareOk ? '声音共享授权有效' : '共享人物的声音授权须包含「允许共享」'))
+      }
     }
     // 飞影已配置（或 mock）
     const hiflyOk = hasHifly() || config.mockFallback
@@ -128,151 +134,100 @@ export async function checkReadiness(
 
 /* ── production-profile（FR-X5 / M3 契约）────────────────────── */
 
-export type ProductionPurpose = 'avatar_video' | 'mixcut'
-
-export interface ProductionAvatarProfile {
-  avatarId: string
-  vendorAvatarId: string
-  name: string
-  backgroundLabel: string | null
-  coverUrl: string | null
-  sourceWidth: number | null
-  sourceHeight: number | null
-}
-
-export interface ProductionVoiceProfile {
-  voiceId: string
-  vendorVoiceId: string
-  name: string
-  language: string
-  speechRate: number
-  volume: number
-  pitch: number
-  demoUrl: string | null
-}
-
 export interface ProductionProfile {
   personaId: string
-  purpose: ProductionPurpose
   versionId: string | null
   versionNo: number | null
   name: string
   line: string
   provider: 'hifly'
-  /** mixcut 恒为 null：混剪不使用数字人形象 */
-  avatar: ProductionAvatarProfile | null
-  /** 素人线无克隆声音时为 null：M3 用公共音色 / 预置配音兜底（Q12） */
-  voice: ProductionVoiceProfile | null
-}
-
-function toVoiceProfile(voice: Record<string, any>): ProductionVoiceProfile {
-  return {
-    voiceId: voice.id,
-    vendorVoiceId: voice.vendor_voice_id,
-    name: voice.name,
-    language: voice.language,
-    speechRate: Number(voice.speech_rate ?? 1),
-    volume: Number(voice.volume ?? 1),
-    pitch: Number(voice.pitch ?? 1),
-    demoUrl: voice.demo_key ? `/api/persona-voices/${voice.id}/demo` : null,
+  avatar: {
+    avatarId: string
+    vendorAvatarId: string
+    name: string
+    backgroundLabel: string | null
+    coverUrl: string | null
+    sourceWidth: number | null
+    sourceHeight: number | null
   }
-}
-
-function toAvatarProfile(avatar: Record<string, any>, asset: Record<string, any> | null | undefined): ProductionAvatarProfile {
-  return {
-    avatarId: avatar.id,
-    vendorAvatarId: avatar.vendor_avatar_id,
-    name: avatar.name,
-    backgroundLabel: avatar.background_label ?? null,
-    coverUrl: asset?.thumb_key ? `/api/persona-assets/${avatar.source_asset_id}/file?variant=thumb` : null,
-    sourceWidth: asset?.width === null || asset?.width === undefined ? null : Number(asset.width),
-    sourceHeight: asset?.height === null || asset?.height === undefined ? null : Number(asset.height),
+  voice: {
+    voiceId: string
+    vendorVoiceId: string
+    name: string
+    language: string
+    speechRate: number
+    volume: number
+    pitch: number
+    demoUrl: string | null
   }
-}
-
-async function loadDefaultVoice(personaId: string, defaultVoiceId: string | null, db: Db): Promise<Record<string, any> | null> {
-  if (!defaultVoiceId) return null
-  return (
-    (await db.get<Record<string, any>>(
-      'SELECT * FROM `persona_voice` WHERE `id` = ? AND `is_sample` = 0 AND `deleted_at` IS NULL',
-      [defaultVoiceId],
-    )) ?? null
-  )
 }
 
 /**
- * M3 取用契约。purpose=avatar_video（默认，数字人口播）：readiness(avatar_video) 硬项全过才返回分身 + 声音；
- * purpose=mixcut（混剪）：不取分身；经理 / KOS 须有已确认的克隆声音（Q12 本人声音口播），素人可空。
- * 可选 avatarId 指定非默认分身（视频创作屏的「背景」切换，L15）。
- * 硬项不过 → 409 PERSONA_NOT_READY（带 checks / 说明）。
+ * M3 取用契约。可选 ?avatarId= 指定非默认分身（视频创作屏的「背景」切换，L15）。
+ * readiness(avatar_video) 硬项不过 → 409 PERSONA_NOT_READY（带 checks）。
  */
-export async function getProductionProfile(
-  personaId: string,
-  opts: { avatarId?: string; purpose?: ProductionPurpose } = {},
-  db: Db = getDb(),
-): Promise<ProductionProfile> {
-  const purpose = opts.purpose ?? 'avatar_video'
-  const readiness = await checkReadiness(personaId, purpose === 'mixcut' ? 'mixcut' : 'avatar_video', db)
+export async function getProductionProfile(personaId: string, avatarId?: string, db: Db = getDb()): Promise<ProductionProfile> {
+  const readiness = await checkReadiness(personaId, 'avatar_video', db)
   if (!readiness.pass) {
-    throw err.personaNotReady(
-      purpose === 'mixcut' ? '人物不可用（已归档或停用）' : '人物尚未准备就绪（形象与声音未绑定）',
-      { checks: readiness.checks, status: readiness.status },
-    )
+    throw err.personaNotReady('人物尚未准备就绪（形象与声音未绑定）', {
+      checks: readiness.checks,
+      status: readiness.status,
+    })
   }
   const persona = (await getPersonaById(personaId, true))!
-  const version = persona.currentVersionId
-    ? await db.get<{ id: string; version_no: number }>('SELECT `id`, `version_no` FROM `persona_version` WHERE `id` = ?', [
-        persona.currentVersionId,
-      ])
-    : null
-  const base = {
-    personaId,
-    purpose,
-    versionId: persona.currentVersionId,
-    versionNo: version ? Number(version.version_no) : null,
-    name: persona.name,
-    line: persona.line,
-    provider: 'hifly' as const,
-  }
-
-  if (purpose === 'mixcut') {
-    const rule = LINE_RULES[persona.line]
-    const voice = await loadDefaultVoice(personaId, persona.defaultVoiceId, db)
-    const voiceUsable = !!voice && voice.status === 'ready' && !!voice.confirmed && !!voice.vendor_voice_id
-    if (voiceUsable) {
-      if (rule.authRequired) {
-        const auths = await validAuthorizationsOf(personaId, db)
-        if (!auths.some((a) => a.id === voice!.authorization_id && a.scopes.includes('voice'))) {
-          throw err.personaNotReady('声音授权缺失或已失效', { voiceId: voice!.id, status: readiness.status })
-        }
-      }
-      return { ...base, avatar: null, voice: toVoiceProfile(voice!) }
-    }
-    if (rule.authRequired) {
-      throw err.personaNotReady('混剪要求已确认的默认声音（口播须本人克隆声音）', { status: readiness.status })
-    }
-    return { ...base, avatar: null, voice: null }
-  }
-
-  const targetAvatarId = opts.avatarId || persona.defaultAvatarId!
+  const targetAvatarId = avatarId || persona.defaultAvatarId!
+  // P1-4：指定分身必须属于该人物——否则可用 B 人物的声音配 A 人物的分身生成视频（冒用肖像）。
+  // 肖像授权按「该人物任一有效肖像授权」判定（场景 3：补授权后旧分身无需重建），已由上面的 readiness 校验
   const avatar = await db.get<Record<string, any>>(
-    'SELECT * FROM `persona_avatar` WHERE `id` = ? AND `deleted_at` IS NULL',
-    [targetAvatarId],
+    'SELECT * FROM `persona_avatar` WHERE `id` = ? AND `persona_id` = ? AND `deleted_at` IS NULL',
+    [targetAvatarId, personaId],
   )
   if (!avatar || avatar.status !== 'ready' || !avatar.vendor_avatar_id) {
-    throw err.personaNotReady('指定分身不可用（非 ready 或缺少厂商标识）', { avatarId: targetAvatarId, status: avatar?.status ?? null })
+    throw err.personaNotReady('指定分身不可用（不属于该人物、非 ready 或缺少厂商标识）', {
+      avatarId: targetAvatarId,
+      status: avatar?.status ?? null,
+    })
   }
-  const voice = await loadDefaultVoice(personaId, persona.defaultVoiceId, db)
+  const voice = await db.get<Record<string, any>>(
+    'SELECT * FROM `persona_voice` WHERE `id` = ? AND `is_sample` = 0 AND `deleted_at` IS NULL',
+    [persona.defaultVoiceId!],
+  )
   if (!voice || voice.status !== 'ready' || !voice.confirmed || !voice.vendor_voice_id) {
     throw err.personaNotReady('默认声音不可用（未就绪 / 未确认）')
   }
   const asset = await db.get<Record<string, any>>('SELECT `thumb_key`, `width`, `height` FROM `persona_asset` WHERE `id` = ?', [
     avatar.source_asset_id,
   ])
+  const version = await db.get<{ id: string; version_no: number }>(
+    'SELECT `id`, `version_no` FROM `persona_version` WHERE `id` = ?',
+    [persona.currentVersionId ?? ''],
+  )
   return {
-    ...base,
-    avatar: toAvatarProfile(avatar, asset),
-    voice: toVoiceProfile(voice),
+    personaId,
+    versionId: persona.currentVersionId,
+    versionNo: version ? Number(version.version_no) : null,
+    name: persona.name,
+    line: persona.line,
+    provider: 'hifly',
+    avatar: {
+      avatarId: avatar.id,
+      vendorAvatarId: avatar.vendor_avatar_id,
+      name: avatar.name,
+      backgroundLabel: avatar.background_label ?? null,
+      coverUrl: asset?.thumb_key ? `/api/persona-assets/${avatar.source_asset_id}/file?variant=thumb` : null,
+      sourceWidth: asset?.width === null || asset?.width === undefined ? null : Number(asset.width),
+      sourceHeight: asset?.height === null || asset?.height === undefined ? null : Number(asset.height),
+    },
+    voice: {
+      voiceId: voice.id,
+      vendorVoiceId: voice.vendor_voice_id,
+      name: voice.name,
+      language: voice.language,
+      speechRate: Number(voice.speech_rate ?? 1),
+      volume: Number(voice.volume ?? 1),
+      pitch: Number(voice.pitch ?? 1),
+      demoUrl: voice.demo_key ? `/api/persona-voices/${voice.id}/demo` : null,
+    },
   }
 }
 

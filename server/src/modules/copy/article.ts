@@ -25,7 +25,7 @@ const MAGIC: Record<string, Array<{ offset: number; bytes: number[] }>> = {
   '.md': [],
 }
 
-const TEXT_EXT = new Set(['.txt', '.md', '.markdown'])
+const TEXT_EXT = new Set(['.txt', '.md'])
 
 export interface ParsedArticle {
   plainText: string
@@ -82,9 +82,26 @@ export async function parseArticleBuffer(ext: string, buffer: Buffer): Promise<P
   } else if (ext === '.pdf') {
     text = await parsePdf(buffer)
   } else {
-    text = buffer.toString('utf8')
+    text = decodeText(buffer)
   }
   return buildOutline(ext, text)
+}
+
+/**
+ * P2-13c：纯文本 / Markdown 解码。Windows 记事本保存的中文 .txt 常是 GBK，原先一律按 UTF-8 解码会乱码。
+ * 顺序：BOM（UTF-8 / UTF-16）→ 严格 UTF-8 → GB18030（兼容 GBK / GB2312）。
+ */
+export function decodeText(buffer: Buffer): string {
+  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    return buffer.subarray(3).toString('utf8')
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) return new TextDecoder('utf-16le').decode(buffer.subarray(2))
+  if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) return new TextDecoder('utf-16be').decode(buffer.subarray(2))
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer)
+  } catch {
+    return new TextDecoder('gb18030').decode(buffer)
+  }
 }
 
 /* ── docx（mammoth，按标题样式 H1–H3 切分）────────────────────────── */
@@ -176,7 +193,7 @@ export function buildOutline(ext: string, raw: string): ParsedArticle {
     throw err.articleNoText('未识别到文字，请粘贴文本后重试（扫描版 PDF 请先转换为可复制文本）')
   }
 
-  const isMd = ext === '.md' || ext === '.markdown' || ext === '.docx'
+  const isMd = ext === '.md' || ext === '.docx'
   const outline: OutlineNode[] = []
   const lines = text.split('\n')
 
@@ -272,7 +289,7 @@ export async function saveArticle(
   return { articleId: id, outline: input.parsed.outline, wordCount: input.parsed.wordCount }
 }
 
-/** 临时目录（30 天清理由运维策略执行，此处仅负责写入） */
+/** 文章原件临时目录（保留 30 天，由 cleanupTempFiles 每日清理） */
 export function articleTempDir(): string {
   const dir = path.join(paths.tempDir, 'articles')
   fs.mkdirSync(dir, { recursive: true })
@@ -293,4 +310,43 @@ export function parsePastedText(text: string): ParsedArticle {
   const t = String(text ?? '')
   if (!t.trim()) throw err.articleNoText('粘贴内容为空')
   return buildOutline('.txt', t)
+}
+
+/**
+ * P2-13c：临时文件清理（原注释写「由运维策略执行」，代码里没有任何实现）。
+ *  - 文章原件：超过 30 天删除，并把对应 article_source.storage_path 置空；
+ *  - 临时目录根下的上传 / 转码残留（进程中断留下的）：超过 2 天删除。
+ */
+export async function cleanupTempFiles(now = Date.now()): Promise<{ articles: number; stray: number }> {
+  const { getDb } = await import('../../db/index.js')
+  // 只删本服务生成的文件（newId 形如 前缀_十六进制；文章原件为 时间戳_f_十六进制），TEMP_DIR 误配成 /tmp 等共享目录时也不会误删
+  const OWN_FILE = /^([a-z]{1,10}_[0-9a-f]{12,}|\d{13}_f_[0-9a-f]{12,})/
+  const removeOlder = async (dir: string, maxAgeMs: number, onRemoved?: (full: string) => Promise<void>) => {
+    let n = 0
+    let entries: fs.Dirent[] = []
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return 0
+    }
+    for (const e of entries) {
+      if (!e.isFile() || !OWN_FILE.test(e.name)) continue
+      const full = path.join(dir, e.name)
+      try {
+        if (now - fs.statSync(full).mtimeMs <= maxAgeMs) continue
+        fs.unlinkSync(full)
+        n += 1
+        await onRemoved?.(full)
+      } catch {
+        /* 并发删除等：跳过 */
+      }
+    }
+    return n
+  }
+  const articles = await removeOlder(articleTempDir(), 30 * 86_400_000, async (full) => {
+    await getDb().run('UPDATE `article_source` SET `storage_path` = NULL WHERE `storage_path` = ?', [full])
+  })
+  const stray = await removeOlder(paths.tempDir, 2 * 86_400_000)
+  if (articles || stray) logger.info({ articles, stray }, 'temp.cleaned')
+  return { articles, stray }
 }

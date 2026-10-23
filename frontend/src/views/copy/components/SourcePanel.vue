@@ -69,10 +69,17 @@
       <div v-if="c.status === 'in_review'" class="mt-3 px-3 py-2 rounded-lg bg-[#fdf4e3] text-[12px] text-[#a26a08]">
         文案正在审核中，内容已锁定，不可编辑。
       </div>
-      <div v-else-if="c.status === 'rejected'" class="mt-3 px-3 py-2 rounded-lg bg-[#fdeeee] text-[12px] text-[#c03e35]">
-        审核未通过<template v-if="c.rejectReason">：{{ c.rejectReason }}</template>，修改后可重新提交。
+      <div
+        v-else-if="c.status === 'rejected'"
+        class="mt-3 px-3 py-2 rounded-lg bg-[#fdeeee] text-[12px] text-[#c03e35]"
+      >
+        审核未通过<template v-if="c.rejectReason">：{{ c.rejectReason }}</template
+        >，修改后可重新提交。
       </div>
-      <div v-else-if="c.status === 'approved'" class="mt-3 px-3 py-2 rounded-lg bg-[#e9f7ef] text-[12px] text-[#12805c]">
+      <div
+        v-else-if="c.status === 'approved'"
+        class="mt-3 px-3 py-2 rounded-lg bg-[#e9f7ef] text-[12px] text-[#12805c]"
+      >
         已审核通过。再次编辑将回到「修订中」，并保留原通过版本。
       </div>
     </template>
@@ -98,19 +105,6 @@ const personaName = computed(() => {
 const summary = computed(() => store.detail?.sourceSummary ?? null)
 const article = computed(() => store.detail?.article ?? null)
 const topic = computed(() => store.detail?.topic ?? null)
-
-const sourceColor = computed(() => {
-  switch (c.value?.source) {
-    case 'benchmark':
-      return 'orangered'
-    case 'article':
-      return 'purple'
-    case 'manual':
-      return 'gray'
-    default:
-      return 'arcoblue'
-  }
-})
 
 const keywordList = computed(() =>
   (c.value?.keywords ?? '')

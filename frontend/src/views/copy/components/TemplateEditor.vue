@@ -1,11 +1,5 @@
 <template>
-  <a-drawer
-    :visible="visible"
-    :width="720"
-    title="文案配置"
-    unmount-on-close
-    @cancel="emit('update:visible', false)"
-  >
+  <a-drawer :visible="visible" :width="720" title="文案配置" unmount-on-close @cancel="emit('update:visible', false)">
     <a-tabs v-model:active-key="tab" size="medium" class="mw-tabs">
       <!-- 模板 -->
       <a-tab-pane key="templates" title="内容模板">
@@ -92,11 +86,19 @@
     </a-tabs>
 
     <!-- 模板编辑 -->
-    <a-modal v-model:visible="tplModal.visible" :title="tplModal.id ? '编辑模板' : '新建模板'" :width="640" :footer="false" unmount-on-close>
+    <a-modal
+      v-model:visible="tplModal.visible"
+      :title="tplModal.id ? '编辑模板' : '新建模板'"
+      :width="640"
+      :footer="false"
+      unmount-on-close
+    >
       <a-form :model="tplModal" layout="vertical">
         <a-form-item label="名称" required><a-input v-model="tplModal.name" /></a-form-item>
         <a-form-item label="一句话说明"><a-input v-model="tplModal.description" /></a-form-item>
-        <a-form-item label="结构提示"><a-input v-model="tplModal.structureHint" placeholder="开场 / 要点 / 收尾" /></a-form-item>
+        <a-form-item label="结构提示"
+          ><a-input v-model="tplModal.structureHint" placeholder="开场 / 要点 / 收尾"
+        /></a-form-item>
         <a-form-item label="风险提示话术">
           <a-textarea v-model="tplModal.riskHint" :auto-size="{ minRows: 2, maxRows: 4 }" />
         </a-form-item>
@@ -111,7 +113,13 @@
     </a-modal>
 
     <!-- 风格编辑 -->
-    <a-modal v-model:visible="styleModal.visible" :title="styleModal.id ? '编辑风格' : '新建风格'" :width="640" :footer="false" unmount-on-close>
+    <a-modal
+      v-model:visible="styleModal.visible"
+      :title="styleModal.id ? '编辑风格' : '新建风格'"
+      :width="640"
+      :footer="false"
+      unmount-on-close
+    >
       <a-form :model="styleModal" layout="vertical">
         <a-form-item label="名称" required><a-input v-model="styleModal.name" /></a-form-item>
         <a-form-item label="适用线">
