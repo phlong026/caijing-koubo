@@ -336,7 +336,7 @@ console.log('\n[8.4] 取消与停止等待')
 // 周期 sweep（registerVideoModule 的 repeatable job）可能在「创建 → 取消」之间把 waiting
 // 抢先推进到 submitting，run-smoke-all 高负载下尤甚；这里重试拿一个仍处于 waiting 的任务
 // 再取消，保证断言确定性。不驱动 sweep：waiting → preparing 只发生在 sweep。
-let j10aCancel: Awaited<ReturnType<typeof api>> | null = null
+let j10aCancel: { status: number; data: any; raw: any } | null = null
 for (let i = 0; i < 6 && !j10aCancel; i++) {
   const cand = await newJob(`j10a-${i}`)
   const row = await api('GET', `/video/jobs/${cand.id}`)

@@ -18,6 +18,7 @@ const PUBLIC_ROUTES = new Set(['GET /health', 'GET /api/health', 'POST /api/auth
 
 const REVIEWERS: Role[] = ['reviewer', 'admin']
 const ADMINS: Role[] = ['admin']
+const OPERATORS: Role[] = ['ops', 'admin'] // 发布管理：运营 / 管理员可写（审核无发布权，A3）
 
 /** 方法 + Fastify 路由模板（含 /api 前缀）→ 允许的角色 */
 export const ROLE_RULES: Record<string, Role[]> = {
@@ -48,6 +49,21 @@ export const ROLE_RULES: Record<string, Role[]> = {
   'POST /api/news/rules': ADMINS,
   'DELETE /api/news/rules/:id': ADMINS,
   'POST /api/copy/llm/ping': ADMINS,
+  // 发布管理（任务书 §6）：运营 / 管理员可写；审核角色只读；删除仅管理员（Q10）
+  'POST /api/platform-accounts': OPERATORS,
+  'PATCH /api/platform-accounts/:id': OPERATORS,
+  'DELETE /api/platform-accounts/:id': ADMINS,
+  'POST /api/platform-accounts/:id/login-sessions': OPERATORS,
+  'POST /api/platform-accounts/:id/check-login': OPERATORS,
+  'POST /api/publish-plans': OPERATORS,
+  'POST /api/publish-plans/:id/schedule': OPERATORS,
+  'POST /api/publish-plans/:id/execute-now': OPERATORS,
+  'POST /api/publish-plans/:id/review-confirm': REVIEWERS,
+  'POST /api/publish-plans/:id/cancel': OPERATORS,
+  'POST /api/publish-logs': OPERATORS,
+  'POST /api/publish-logs/:id/retry': OPERATORS,
+  'POST /api/publish-logs/:id/recheck': OPERATORS,
+  'POST /api/publish-logs/:id/manual-result': OPERATORS,
 }
 
 /**

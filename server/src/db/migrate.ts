@@ -7,6 +7,7 @@ import { newId } from '../lib/util.js'
 import { toDb, utcNow } from '../lib/time.js'
 import { seedCopyWorkshop, seedPersonaExtensions } from './seed-copy.js'
 import { seedVideoModule } from './seed-video.js'
+import { migratePublishAccounts } from './seed-publish.js'
 
 export interface Migration {
   version: string
@@ -438,6 +439,11 @@ export const migrations: Migration[] = [
     version: '007_video_seed',
     name: '视频创作：关键词组与示例素材包种子（V0）',
     up: seedVideoModule,
+  },
+  {
+    version: '008_publish_account_backfill',
+    name: '发布管理：存量人物绑定回填 platform_account_id（M4 迁移，AC-0.2）',
+    up: migratePublishAccounts,
   },
 ]
 

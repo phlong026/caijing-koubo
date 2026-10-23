@@ -29,6 +29,10 @@ export const paths = {
   tempDir: path.resolve(serverRoot, str('TEMP_DIR', './.data/tmp')),
   // DATA_DIR 供测试隔离本地兜底存储（.data/oss）；缺省仍是 server/.data
   dataDir: process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.resolve(serverRoot, './.data'),
+  // 发布管理的持久化浏览器上下文根目录（PB3：每账号一目录，Cookie/登录态留在目录内不入库）
+  browserData: process.env.PUBLISH_BROWSER_DATA_DIR
+    ? path.resolve(process.env.PUBLISH_BROWSER_DATA_DIR)
+    : path.resolve(serverRoot, './.data/browser-data'),
 }
 
 export const config = {
@@ -318,6 +322,41 @@ export const config = {
      * 精确对账不在一期，§1.2）
      */
     creditsPerSec: num('VIDEO_CREDITS_PER_SEC', 0.5),
+  },
+
+  /**
+   * 发布管理模块（任务书 §4.2 / PU0）。
+   * 引擎抽象见 modules/publish/engine.ts：真实引擎平移 AI-Studio Playwright 流程，
+   * mock 引擎（MOCK_FALLBACK=true 且未配置 PUBLISH_HEADLESS 环境时自动兜底）支持故障注入。
+   */
+  publish: {
+    /** 服务端浏览器形态（PB2）：headless 默认开；PU9 灰度首验不过则回退 headful+Xvfb */
+    headless: bool('PUBLISH_HEADLESS', true),
+    /** 全局并发浏览器上下文上限（PB9，按服务器内存复核） */
+    maxContexts: num('PUBLISH_MAX_CONTEXTS', 3),
+    /** 空闲上下文自动关闭（毫秒） */
+    idleCloseMs: num('PUBLISH_IDLE_CLOSE_MS', 600000),
+    /** 获取上下文排队超时（毫秒）：超时任务回 scheduled 下轮再试，不失败 */
+    acquireTimeoutMs: num('PUBLISH_ACQUIRE_TIMEOUT_MS', 300000),
+    /** 每账号每日发布上限（PB8）：单独重发占用额度，补录不占用 */
+    dailyLimitPerAccount: num('PUBLISH_DAILY_LIMIT_PER_ACCOUNT', 5),
+    /** 发布确认窗口（毫秒，FR-E1）：平移 AI-Studio waitForPublishConfirmation 的 15 分钟 */
+    confirmTimeoutMs: num('PUBLISH_CONFIRM_TIMEOUT_MS', 900000),
+    /** confirming 卡死 sweep 兜底（毫秒，FR-E3）：只兜 worker 崩溃异常，引擎 15 分钟自行落定 */
+    confirmSweepMs: num('PUBLISH_CONFIRM_SWEEP_MS', 1200000),
+    /** 验证码人工窗口（毫秒，PB10）：verification_required 保留上下文等待人工 */
+    manualWindowMs: num('PUBLISH_MANUAL_WINDOW_MS', 1800000),
+    /** 登录会话超时（毫秒，FR-L1）与轮询节奏（publish-login-sweep） */
+    loginSessionTimeoutMs: num('PUBLISH_LOGIN_SESSION_TIMEOUT_MS', 7200000),
+    loginPollIntervalMs: num('PUBLISH_LOGIN_POLL_INTERVAL_MS', 15000),
+    /** 发布 sweep 扫描周期（毫秒）：到期计划 / 重试 / 窗口超时 / 守护（§3.5） */
+    sweepIntervalMs: num('PUBLISH_SWEEP_INTERVAL_MS', 60000),
+    /** 失败自动重试延迟（毫秒，PB6：1 次 / 5 分钟） */
+    retryDelayMs: num('PUBLISH_RETRY_DELAY_MS', 300000),
+    /** schedule 最早可定时间（毫秒，FR-C3：≥ now + 1min） */
+    minScheduleAheadMs: num('PUBLISH_MIN_SCHEDULE_AHEAD_MS', 60000),
+    /** executing 计划卡死守护阈值（毫秒） */
+    planStuckMs: num('PUBLISH_PLAN_STUCK_MS', 7200000),
   },
 
   /**

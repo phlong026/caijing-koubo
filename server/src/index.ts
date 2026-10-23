@@ -13,6 +13,7 @@ import { registerExtractWorker } from './modules/benchmark/extract.js'
 import { registerCopyWorker } from './modules/copy/worker.js'
 import { resumeStubSubmissions } from './modules/copy/review.js'
 import { registerPersonaModule } from './modules/personas/index.js'
+import { registerPublishModule } from './modules/publish/index.js'
 import { checkFfmpeg } from './media/pipeline.js'
 import { ossStatus } from './integrations/aliyun-oss/client.js'
 import { describeUpstream } from './integrations/tikhub/client.js'
@@ -171,6 +172,8 @@ async function main(): Promise<void> {
   // 视频创作模块：video-generate worker + video-poll-sweep + 启动 reconcile（FR-P6）
   const { registerVideoModule } = await import('./modules/video/index.js')
   await registerVideoModule().catch((e) => logger.error({ err: (e as Error).message }, 'video.module.register_failed'))
+  // 发布管理模块：publish-login worker + login/main 双 sweep（PU1；PU4 扩展 execute）
+  await registerPublishModule().catch((e) => logger.error({ err: (e as Error).message }, 'publish.module.register_failed'))
   // 审核桩在进程内推进，重启后续推未走完三关的桩审核单（P2-19）
   await resumeStubSubmissions().catch((e) => logger.error({ err: (e as Error).message }, 'review.stub.resume_scan_failed'))
 

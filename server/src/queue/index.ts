@@ -82,6 +82,10 @@ export const QUEUE_NAMES = {
   // ── 视频创作模块（任务书 §5.4 / V0）──
   videoGenerate: 'video-generate',
   videoPollSweep: 'video-poll-sweep',
+  // ── 发布管理模块（任务书 §4.2 / PU0）──
+  publishExecute: 'publish-execute',
+  publishSweep: 'publish-sweep',
+  publishLogin: 'publish-login',
 } as const
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES]

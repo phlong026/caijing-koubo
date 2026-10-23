@@ -572,14 +572,18 @@ export const TABLES: TableDef[] = [
       vc('platform', 16), // douyin|xiaohongshu|kuaishou|shipinhao
       vc('account_key', 128),
       vc('display_name', 60),
+      vc('platform_account_id', 40, { nullable: true }), // 发布管理（M4）迁移：指向 platform_account.id；读取判定顺序 = 外键优先、account_key 兜底
       vc('created_by', 64, { nullable: true }),
       dt('created_at'),
       dt('released_at'),
       vc('active_key', 160, { nullable: true }), // platform:account_key（解绑置 NULL）
     ],
     uniques: [['active_key']],
-    indexes: [{ name: 'idx_pbind_persona', cols: ['persona_id'] }],
-    comment: '账号绑定（L11，M4 迁 platform_account 外键）',
+    indexes: [
+      { name: 'idx_pbind_persona', cols: ['persona_id'] },
+      { name: 'idx_pbind_account', cols: ['platform_account_id'] },
+    ],
+    comment: '账号绑定（L11，M4 已迁 platform_account 外键，account_key 兜底）',
   },
   {
     name: 'persona_version',
@@ -1065,6 +1069,123 @@ export const TABLES: TableDef[] = [
       dt('updated_at'),
     ],
     comment: '混剪关键词组（R6 结构平移）',
+  },
+  // ── 发布管理模块（任务书 §4.1，PU0）──────────────────────────────
+  {
+    name: 'platform_account',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('platform', 16), // douyin|xiaohongshu|kuaishou|shipinhao
+      vc('line', 16), // manager|kos|persona（决定可用平台矩阵 PB1）
+      vc('display_name', 60),
+      vc('uid', 128, { nullable: true }), // 平台侧账号标识，登录确认后回填（唯一约束在 MySQL/SQLite 对 NULL 不生效）
+      vc('avatar_url', 255, { nullable: true }),
+      vc('login_status', 16, { def: 'pending_login' }), // pending_login|active|expired|failed|disabled
+      dt('last_checked_at'),
+      dt('login_expires_at'),
+      vc('owner_id', 64, { nullable: true }), // 归属运营（PB13：一期共享池，仅审计）
+      vc('data_dir', 255, { nullable: true }), // 持久化浏览器上下文目录（PB3：凭证留存处，不入库 Cookie）
+      tint('enabled', 1),
+      vc('remark', 255, { nullable: true }),
+      vc('created_by', 64, { nullable: true }),
+      dt('created_at'),
+      dt('updated_at'),
+      dt('deleted_at'),
+    ],
+    uniques: [['platform', 'uid']],
+    indexes: [
+      { name: 'idx_pacct_list', cols: ['platform', 'login_status', 'enabled'] },
+      { name: 'idx_pacct_line', cols: ['line'] },
+    ],
+    comment: '平台账号矩阵（A8：账号独立于人物；绑定表以 platform_account_id 外键指向本表）',
+  },
+  {
+    name: 'publish_login_session',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('account_id', 40),
+      vc('status', 16, { def: 'waiting_scan' }), // waiting_scan|scanned|confirmed|failed|expired
+      vc('qr_object_key', 255, { nullable: true }), // 二维码截图 OSS 对象键（签名 URL 下发）
+      dt('next_poll_at'),
+      int('poll_attempts', 0),
+      dt('expires_at'),
+      vc('error', 255, { nullable: true }),
+      dt('created_at'),
+      dt('updated_at'),
+    ],
+    indexes: [
+      { name: 'idx_plogin_account', cols: ['account_id', 'status'] },
+      { name: 'idx_plogin_poll', cols: ['status', 'next_poll_at'] },
+    ],
+    comment: '扫码登录会话（FR-L1：next_poll_at + publish-login-sweep 轮询，重启续跑）',
+  },
+  {
+    name: 'publish_plan',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('copy_id', 40),
+      vc('copy_version_id', 40, { nullable: true }),
+      vc('video_job_id', 64, { nullable: true }),
+      int('base_video_version_no', 0),
+      vc('title', 255),
+      { name: 'description', type: 'text', nullable: true },
+      { name: 'tags', type: 'json', nullable: true }, // string[]
+      vc('cover_object_key', 255, { nullable: true }),
+      vc('cover_source', 16, { def: 'first_frame' }), // first_frame | custom
+      vc('title_hash', 64, { nullable: true }),
+      vc('review_state', 16, { def: 'none' }), // none|needs_review|confirmed（FR-R1）
+      vc('review_by', 64, { nullable: true }),
+      dt('review_at'),
+      vc('status', 16, { def: 'draft' }), // draft|scheduled|executing|cancelling|completed|partial|failed|cancelled
+      dt('scheduled_at'),
+      dt('completed_at'),
+      vc('created_by', 64, { nullable: true }),
+      dt('created_at'),
+      dt('updated_at'),
+      dt('deleted_at'),
+    ],
+    indexes: [
+      { name: 'idx_pplan_status', cols: ['status', 'scheduled_at'] },
+      { name: 'idx_pplan_copy', cols: ['copy_id'] },
+    ],
+    comment: '发布计划（PB12：绑定已过审文案；review_state 拦截实质修改未确认的单）',
+  },
+  {
+    name: 'publish_log',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('plan_id', 40, { nullable: true }), // 补录记录可空（PB14）
+      vc('platform', 16),
+      vc('account_id', 40),
+      vc('source', 8, { def: 'auto' }), // auto | manual
+      vc('status', 24, { def: 'scheduled' }), // scheduled|uploading|confirming|published|failed|failed_final|verification_required|manual_pending|cancelled（无 queued/retrying）
+      int('attempt', 0), // worker 开始执行时 +1；补录 = 0
+      vc('title', 255, { nullable: true }),
+      { name: 'description', type: 'text', nullable: true },
+      { name: 'tags', type: 'json', nullable: true },
+      vc('cover_object_key', 255, { nullable: true }),
+      dt('scheduled_at'),
+      dt('retry_at'), // failed(attempt=1) 的自动重试到期时间（FR-S1，sweep 到期 CAS 回 scheduled）
+      dt('started_at'),
+      dt('finished_at'),
+      dt('window_expires_at'), // verification_required 人工窗口截止（FR-S3）
+      vc('video_url', 500, { nullable: true }),
+      vc('external_video_id', 64, { nullable: true }),
+      vc('error_code', 64, { nullable: true }),
+      vc('error_message', 500, { nullable: true }),
+      dt('created_at'),
+      dt('updated_at'),
+    ],
+    indexes: [
+      { name: 'idx_plog_plan', cols: ['plan_id'] },
+      { name: 'idx_plog_sweep', cols: ['status', 'scheduled_at'] },
+      { name: 'idx_plog_account', cols: ['account_id', 'status'] },
+    ],
+    comment: '分平台发布记录（A5 三态；单平台失败自动重试一次）',
   },
   {
     name: 'schema_migrations',

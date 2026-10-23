@@ -69,6 +69,21 @@ export type ErrorCode =
   | 'VIDEO_DURATION_INVALID' // 时长校验不过
   | 'MEDIA_EMPTY' // 媒体为空
   | 'MATERIAL_PACK_EMPTY' // 素材包无可用素材
+  // ── 发布管理（任务书 §6.3）──
+  | 'PLATFORM_LINE_FORBIDDEN' // 线×平台矩阵越权（PB1）
+  | 'ACCOUNT_NOT_FOUND'
+  | 'ACCOUNT_IN_USE' // 有进行中发布 / 被人物绑定引用（FR-A4）
+  | 'ACCOUNT_NOT_ACTIVE' // 账号非 active 不可发布
+  | 'PUBLISH_RATE_LIMITED' // 每账号每日发布上限（PB8）
+  | 'PUBLISH_CONTEXT_BUSY' // 上下文创建失败（仅浏览器启动异常场景）
+  | 'PUBLISH_PLAN_NOT_FOUND'
+  | 'PUBLISH_PLAN_NOT_CANCELLABLE'
+  | 'PUBLISH_LOG_NOT_FOUND'
+  | 'PUBLISH_LOG_NOT_RETRYABLE' // 当前状态不允许重发 / 标记
+  | 'PUBLISH_NOT_CONFIRMED' // 引擎仍在确认窗口，不可重发
+  | 'REVIEW_REQUIRED' // 实质修改未经审核确认（FR-R2）
+  | 'LOGIN_SESSION_EXPIRED' // 登录会话已过期 / 失败
+  | 'LOGIN_QR_FAILED' // 二维码获取失败
 
 export class ApiError extends Error {
   readonly code: ErrorCode
@@ -206,6 +221,33 @@ export const err = {
   mediaEmpty: (msg = '媒体文件为空或不可读', details?: unknown) => new ApiError('MEDIA_EMPTY', msg, 400, details),
   materialPackEmpty: (msg = '素材包没有可用素材，请先导入', details?: unknown) =>
     new ApiError('MATERIAL_PACK_EMPTY', msg, 409, details),
+
+  /* ── 发布管理专属错误码（任务书 §6.3）────────────────────────────── */
+  platformLineForbidden: (msg = '该生产线不可发布到此平台', details?: unknown) =>
+    new ApiError('PLATFORM_LINE_FORBIDDEN', msg, 409, details),
+  accountNotFound: (msg = '平台账号不存在') => new ApiError('ACCOUNT_NOT_FOUND', msg, 404),
+  accountInUse: (msg = '账号有进行中的发布或被人物绑定引用，无法删除', details?: unknown) =>
+    new ApiError('ACCOUNT_IN_USE', msg, 409, details),
+  accountNotActive: (msg = '账号未就绪（未登录 / 已过期 / 已停用），不能用于发布', details?: unknown) =>
+    new ApiError('ACCOUNT_NOT_ACTIVE', msg, 409, details),
+  publishRateLimited: (msg = '该账号今日发布数已达上限', details?: unknown) =>
+    new ApiError('PUBLISH_RATE_LIMITED', msg, 409, details),
+  publishContextBusy: (msg = '发布浏览器上下文创建失败，请稍后重试', details?: unknown) =>
+    new ApiError('PUBLISH_CONTEXT_BUSY', msg, 503, details),
+  publishPlanNotFound: (msg = '发布计划不存在') => new ApiError('PUBLISH_PLAN_NOT_FOUND', msg, 404),
+  publishPlanNotCancellable: (msg = '当前状态的发布计划不可取消', details?: unknown) =>
+    new ApiError('PUBLISH_PLAN_NOT_CANCELLABLE', msg, 409, details),
+  publishLogNotFound: (msg = '发布记录不存在') => new ApiError('PUBLISH_LOG_NOT_FOUND', msg, 404),
+  publishLogNotRetryable: (msg = '当前状态的发布记录不可执行此操作', details?: unknown) =>
+    new ApiError('PUBLISH_LOG_NOT_RETRYABLE', msg, 409, details),
+  publishNotConfirmed: (msg = '发布仍在确认中，请等待结果或使用重新检测', details?: unknown) =>
+    new ApiError('PUBLISH_NOT_CONFIRMED', msg, 409, details),
+  reviewRequired: (msg = '标题或封面有实质修改，需审核确认后才能发布', details?: unknown) =>
+    new ApiError('REVIEW_REQUIRED', msg, 409, details),
+  loginSessionExpired: (msg = '登录会话已过期，请重新发起扫码', details?: unknown) =>
+    new ApiError('LOGIN_SESSION_EXPIRED', msg, 409, details),
+  loginQrFailed: (msg = '获取登录二维码失败，请重试', details?: unknown) =>
+    new ApiError('LOGIN_QR_FAILED', msg, 502, details),
 }
 
 export function isApiError(e: unknown): e is ApiError {
