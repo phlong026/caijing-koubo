@@ -49,6 +49,26 @@ export type ErrorCode =
   | 'HIFLY_COMPLIANCE_REJECTED'
   | 'HIFLY_BAD_REQUEST'
   | 'HIFLY_UNAVAILABLE'
+  // ── 视频创作（任务书 §6.3）──
+  | 'VIDEO_MODE_NOT_ALLOWED' // 素人线口播（A5）
+  | 'VIDEO_PRECHECK_FAILED' // data 带 checks（含人物库 readiness 项）
+  | 'VIDEO_AVATAR_UNAVAILABLE' // 所选分身不属于该人物或非 ready
+  | 'VIDEO_PERSONA_CHANGED' // 提交前复核不一致（V7）
+  | 'VIDEO_TEXT_TOO_LONG' // >10000 字或预估 >180 秒
+  | 'VIDEO_JOB_ACTIVE' // 同 copy 已有进行中任务
+  | 'VIDEO_JOB_LIMIT' // 单 copy 版本上限
+  | 'VIDEO_NOT_READY' // 基础视频未完成，取用被拒
+  | 'VIDEO_ENGINE_UNAVAILABLE' // 飞影未配置且非 MOCK
+  | 'VIDEO_VENDOR_REJECTED' // 飞影业务码拒绝，data 带 vendorCode
+  | 'VIDEO_SUBMISSION_UNKNOWN' // 提交结果未知（V4）
+  | 'VIDEO_POLL_TIMEOUT' // 轮询超窗（2 小时转人工）
+  | 'VIDEO_SAVE_FAILED' // 已出片但下载/校验/入库失败
+  | 'VIDEO_RESULT_URL_BLOCKED' // 结果地址未过防 SSRF 校验
+  | 'VIDEO_STREAM_MISSING' // 缺视频/音频流
+  | 'VIDEO_DIMENSIONS_INVALID' // 规格不符
+  | 'VIDEO_DURATION_INVALID' // 时长校验不过
+  | 'MEDIA_EMPTY' // 媒体为空
+  | 'MATERIAL_PACK_EMPTY' // 素材包无可用素材
 
 export class ApiError extends Error {
   readonly code: ErrorCode
@@ -147,6 +167,45 @@ export const err = {
   hiflyBadRequest: (msg: string, details?: unknown) => new ApiError('HIFLY_BAD_REQUEST', msg, 400, details),
   hiflyUnavailable: (msg = '飞影服务暂不可用', details?: unknown) =>
     new ApiError('HIFLY_UNAVAILABLE', msg, 502, details),
+
+  /* ── 视频创作专属错误码（任务书 §6.3）────────────────────────────── */
+  videoModeNotAllowed: (msg = '素人矩阵不使用数字人口播，请改用素材混剪', details?: unknown) =>
+    new ApiError('VIDEO_MODE_NOT_ALLOWED', msg, 409, details),
+  videoPrecheckFailed: (msg = '配置检查未通过，请先处理红叉项', details?: unknown) =>
+    new ApiError('VIDEO_PRECHECK_FAILED', msg, 409, details),
+  videoAvatarUnavailable: (msg = '所选分身不可用（不属于该人物或未就绪）', details?: unknown) =>
+    new ApiError('VIDEO_AVATAR_UNAVAILABLE', msg, 409, details),
+  videoPersonaChanged: (msg = '人物形象或声音在排队期间被修改，已停止提交；请重新生成', details?: unknown) =>
+    new ApiError('VIDEO_PERSONA_CHANGED', msg, 409, details),
+  videoTextTooLong: (msg = '口播文本超出上限', details?: unknown) =>
+    new ApiError('VIDEO_TEXT_TOO_LONG', msg, 413, details),
+  videoJobActive: (msg = '该文案已有进行中的视频任务', details?: unknown) =>
+    new ApiError('VIDEO_JOB_ACTIVE', msg, 409, details),
+  videoJobLimit: (msg = '该文案的基础视频版本数已达上限，请先归档旧版本', details?: unknown) =>
+    new ApiError('VIDEO_JOB_LIMIT', msg, 409, details),
+  videoNotReady: (msg = '基础视频尚未完成', details?: unknown) =>
+    new ApiError('VIDEO_NOT_READY', msg, 409, details),
+  videoEngineUnavailable: (msg = '数字人引擎不可用（飞影未配置且未开启 MOCK）', details?: unknown) =>
+    new ApiError('VIDEO_ENGINE_UNAVAILABLE', msg, 503, details),
+  videoVendorRejected: (msg: string, details?: unknown) =>
+    new ApiError('VIDEO_VENDOR_REJECTED', msg, 422, details),
+  videoSubmissionUnknown: (msg = '提交结果待确认，重新生成可能产生额外费用', details?: unknown) =>
+    new ApiError('VIDEO_SUBMISSION_UNKNOWN', msg, 409, details),
+  videoPollTimeout: (msg = '数字人服务任务超过自动轮询窗口，已转入人工核对', details?: unknown) =>
+    new ApiError('VIDEO_POLL_TIMEOUT', msg, 409, details),
+  videoSaveFailed: (msg = '视频已生成，但保存失败，请重试下载', details?: unknown) =>
+    new ApiError('VIDEO_SAVE_FAILED', msg, 409, details),
+  videoResultUrlBlocked: (msg = '结果视频地址未通过安全校验，已拒绝下载', details?: unknown) =>
+    new ApiError('VIDEO_RESULT_URL_BLOCKED', msg, 502, details),
+  videoStreamMissing: (msg = '成片缺少视频或音频流', details?: unknown) =>
+    new ApiError('VIDEO_STREAM_MISSING', msg, 502, details),
+  videoDimensionsInvalid: (msg = '成片规格不符（应为 1080×1920 竖屏）', details?: unknown) =>
+    new ApiError('VIDEO_DIMENSIONS_INVALID', msg, 502, details),
+  videoDurationInvalid: (msg = '成片时长校验未通过', details?: unknown) =>
+    new ApiError('VIDEO_DURATION_INVALID', msg, 502, details),
+  mediaEmpty: (msg = '媒体文件为空或不可读', details?: unknown) => new ApiError('MEDIA_EMPTY', msg, 400, details),
+  materialPackEmpty: (msg = '素材包没有可用素材，请先导入', details?: unknown) =>
+    new ApiError('MATERIAL_PACK_EMPTY', msg, 409, details),
 }
 
 export function isApiError(e: unknown): e is ApiError {

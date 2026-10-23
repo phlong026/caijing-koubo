@@ -79,6 +79,9 @@ export const QUEUE_NAMES = {
   personaAssetProcess: 'persona-asset-process',
   personaClone: 'persona-clone',
   personaAuthExpiry: 'persona-auth-expiry',
+  // ── 视频创作模块（任务书 §5.4 / V0）──
+  videoGenerate: 'video-generate',
+  videoPollSweep: 'video-poll-sweep',
 } as const
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES]

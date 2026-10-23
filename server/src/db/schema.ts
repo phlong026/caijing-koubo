@@ -888,6 +888,184 @@ export const TABLES: TableDef[] = [
     uniques: [['username']],
     comment: '登录账号与角色（运营 / 审核 / 管理员）',
   },
+  // ── 视频创作（任务书 §4.1）──────────────────────────────────────
+  {
+    name: 'video_job',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('copy_id', 40),
+      vc('copy_version_id', 40),
+      int('copy_version_no'),
+      int('version_no'), // 在 copy 内单调递增（V1：重新生成永远新建版本）
+      vc('persona_id', 40),
+      vc('persona_version_id', 40, { nullable: true }), // FR-S2 可追溯
+      vc('line', 16, { nullable: true }), // 冗余人物所属线：素人线口播拦截
+      vc('mode', 16, { def: 'avatar' }), // avatar | mixcut
+      vc('gen_mode', 8, { nullable: true }), // tts | audio（仅 avatar；Q3 备选 B）
+      vc('provider', 16, { def: 'hifly' }),
+      vc('phase', 24, { def: 'waiting' }), // §3.1 阶段机
+      int('progress_floor', 0), // 进度下限（单调不回退）
+      vc('status_message', 200, { nullable: true }),
+      vc('error_code', 64, { nullable: true }),
+      { name: 'error_detail', type: 'text', nullable: true },
+      { name: 'config_snapshot', type: 'json' }, // FR-A6 不可变快照
+      { name: 'text_snapshot', type: 'json' }, // FR-P1 segments + submit_text
+      vc('text_hash', 64, { nullable: true }),
+      vc('avatar_id', 40, { nullable: true }), // 人物库 persona_avatar.id（删除守卫）
+      vc('voice_id', 40, { nullable: true }), // 人物库 persona_voice.id（删除守卫）
+      vc('vendor_title', 40, { nullable: true }), // 飞影后台检索标题（V14）
+      vc('short_ref', 8, { nullable: true }),
+      vc('remote_task_id', 128, { nullable: true }),
+      { name: 'remote_result_url', type: 'text', nullable: true }, // 临时地址，仅排障引用
+      int('remote_duration_sec', 0, { nullable: true }),
+      int('submit_attempts', 0),
+      dt('submitted_at'),
+      dt('next_poll_at'),
+      int('poll_failures', 0),
+      int('expected_gen_seconds', 0, { nullable: true }),
+      vc('tts_audio_id', 40, { nullable: true }), // 复用的配音缓存
+      { name: 'timeline', type: 'json', nullable: true },
+      vc('timeline_source', 16, { nullable: true }), // aligned | estimated | measured
+      { name: 'align_score', type: 'decimal', len: 4, scale: 3, nullable: true },
+      { name: 'replacements', type: 'json', nullable: true }, // FR-M4 替换点
+      vc('result_key', 512, { nullable: true }),
+      vc('cover_key', 512, { nullable: true }),
+      int('duration_ms', 0),
+      int('width', 0),
+      int('height', 0),
+      big('size_bytes', 0),
+      tint('is_mock', 0),
+      { name: 'credits_estimated', type: 'decimal', len: 12, scale: 2, def: 0 },
+      vc('idempotency_key', 64, { nullable: true }),
+      vc('request_hash', 64, { nullable: true }),
+      dt('queued_at'),
+      dt('started_at'),
+      dt('finished_at'),
+      vc('created_by', 64, { nullable: true }),
+      dt('created_at'),
+      dt('updated_at'),
+      dt('archived_at'),
+    ],
+    uniques: [['copy_id', 'version_no'], ['short_ref'], ['idempotency_key']],
+    indexes: [
+      { name: 'idx_vjob_phase_poll', cols: ['phase', 'next_poll_at'] },
+      { name: 'idx_vjob_copy', cols: ['copy_id', 'created_at'] },
+      { name: 'idx_vjob_persona', cols: ['persona_id', 'phase'] },
+      { name: 'idx_vjob_avatar', cols: ['avatar_id', 'phase'] },
+      { name: 'idx_vjob_voice', cols: ['voice_id', 'phase'] },
+    ],
+    comment: '视频任务（一次基础视频生成 = 一个版本，V1）',
+  },
+  {
+    name: 'video_job_event',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('video_job_id', 40),
+      vc('from_phase', 24, { nullable: true }),
+      vc('to_phase', 24),
+      vc('error_code', 64, { nullable: true }),
+      { name: 'detail', type: 'json', nullable: true }, // FR-P8：ASR 原始结果等排障信息
+      vc('operator', 64, { nullable: true }),
+      dt('created_at'),
+    ],
+    indexes: [{ name: 'idx_vjevt_job', cols: ['video_job_id', 'created_at'] }],
+    comment: '视频任务阶段流水（排障与任务中心时间线）',
+  },
+  {
+    name: 'video_tts_audio',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('identity', 64), // SHA-256(text_hash, vendor_voice_id, voice_params, 切句规则版本)
+      vc('provider', 16, { def: 'hifly' }),
+      vc('vendor_voice_id', 128),
+      { name: 'voice_params', type: 'json' },
+      vc('text_hash', 64),
+      { name: 'remote_task_ids', type: 'json', nullable: true },
+      vc('status', 16, { def: 'running' }), // running | ready | failed
+      vc('storage_key', 512, { nullable: true }),
+      int('duration_ms', 0, { nullable: true }),
+      { name: 'timeline', type: 'json', nullable: true },
+      vc('timeline_source', 16, { nullable: true }),
+      int('segment_count', 0),
+      dt('created_at'),
+      dt('last_used_at'),
+    ],
+    uniques: [['identity']],
+    comment: '混剪配音整轨缓存（FR-P2 / AC-T5，复用记 0 积分）',
+  },
+  {
+    name: 'video_config',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('copy_id', 40),
+      vc('mode', 16, { def: 'avatar' }),
+      vc('avatar_id', 40, { nullable: true }),
+      vc('background_asset_id', 40, { nullable: true }), // 混剪底板：人物库 persona_asset.id
+      vc('voice_source', 16, { nullable: true }), // persona | public（素人线 Q12）
+      vc('public_voice_id', 128, { nullable: true }),
+      { name: 'mixcut', type: 'json', nullable: true }, // 素材包/关键词组/显示方式
+      vc('updated_by', 64, { nullable: true }),
+      dt('updated_at'),
+    ],
+    uniques: [['copy_id']],
+    comment: '按 copy 记忆的创作配置（FR-C4）',
+  },
+  {
+    name: 'material_pack',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('name', 128),
+      vc('line', 16, { nullable: true }),
+      vc('source_path', 512, { nullable: true }), // 目录或 zip 来源
+      int('item_count', 0),
+      tint('enabled', 1),
+      vc('created_by', 64, { nullable: true }),
+      dt('created_at'),
+      dt('updated_at'),
+    ],
+    comment: '素材包桩（所有权：素材库，§2.5 FR-S4）',
+  },
+  {
+    name: 'material_item',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('pack_id', 40),
+      vc('storage_key', 512),
+      tint('is_image', 0),
+      int('duration_ms', 0, { nullable: true }),
+      int('width', 0, { nullable: true }),
+      int('height', 0, { nullable: true }),
+      vc('thumb_key', 512, { nullable: true }),
+      { name: 'tags', type: 'json', nullable: true },
+      tint('enabled', 1),
+    ],
+    indexes: [{ name: 'idx_mitem_pack', cols: ['pack_id', 'enabled'] }],
+    comment: '素材包条目（混剪素材，含时长与缩略图）',
+  },
+  {
+    name: 'material_keyword_group',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('name', 128),
+      { name: 'keywords', type: 'json' }, // string[]
+      { name: 'pack_ids', type: 'json' }, // string[]：组 → 素材包映射
+      int('duration_min_ms', 800),
+      int('duration_max_ms', 3000),
+      vc('selection_mode', 16, { def: 'random' }), // random | sequential
+      tint('enabled', 1),
+      int('sort', 0),
+      vc('updated_by', 64, { nullable: true }),
+      dt('updated_at'),
+    ],
+    comment: '混剪关键词组（R6 结构平移）',
+  },
   {
     name: 'schema_migrations',
     pk: 'version',

@@ -168,6 +168,9 @@ async function main(): Promise<void> {
   await registerPersonaModule().catch((e) =>
     logger.error({ err: (e as Error).message }, 'persona.module.register_failed'),
   )
+  // 视频创作模块：video-generate worker + video-poll-sweep + 启动 reconcile（FR-P6）
+  const { registerVideoModule } = await import('./modules/video/index.js')
+  await registerVideoModule().catch((e) => logger.error({ err: (e as Error).message }, 'video.module.register_failed'))
   // 审核桩在进程内推进，重启后续推未走完三关的桩审核单（P2-19）
   await resumeStubSubmissions().catch((e) => logger.error({ err: (e as Error).message }, 'review.stub.resume_scan_failed'))
 

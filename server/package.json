@@ -36,7 +36,9 @@
     "test:persona:hash": "node --import tsx scripts/test-persona-snapshot.ts",
     "test:personas": "node --import tsx scripts/test-persona-regressions.ts",
     "test:integration": "node --import tsx scripts/test-integration.ts",
-    "test:integration:real": "node --import tsx scripts/test-integration.ts --real"
+    "test:integration:real": "node --import tsx scripts/test-integration.ts --real",
+    "smoke:video": "tsx scripts/smoke-video.ts",
+    "test:video:align": "tsx scripts/test-video-align.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",

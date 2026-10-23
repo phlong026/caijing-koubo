@@ -7,6 +7,7 @@ import { registerCopyRoutes } from './modules/copy-contract/routes.js'
 import { registerCopyWorkshopRoutes, registerCopyLlmRoutes } from './modules/copy/routes.js'
 import { registerBenchmarkRoutes } from './modules/benchmark/routes.js'
 import { registerCostRoutes } from './modules/metrics/routes.js'
+import { registerVideoRoutes } from './modules/video/routes.js'
 import { listOperations } from './modules/audit/repo.js'
 import { ok } from './app.js'
 
@@ -22,6 +23,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   registerCopyRoutes(app)
   registerBenchmarkRoutes(app)
   registerCostRoutes(app)
+  registerVideoRoutes(app)
 
   /** D14 操作日志查询（合规审计，仅管理员，见 auth/guard.ROLE_RULES） */
   app.get('/operations', async (req) => ok(await listOperations((req.query ?? {}) as Record<string, unknown>)))

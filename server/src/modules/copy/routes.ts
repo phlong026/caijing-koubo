@@ -299,7 +299,10 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
       detail.copy.source === 'article' && detail.copy.sourceRefId
         ? await getArticle(detail.copy.sourceRefId)
         : null
-    return ok({ ...detail, generations, variants, article })
+    // FR-X3：视频创作只读冗余（文案步骤条第 4 步点亮与「去视频创作」入口用）
+    const { getLatestVideoJobBrief } = await import('../video/service.js')
+    const latestVideoJob = await getLatestVideoJobBrief(id).catch(() => null)
+    return ok({ ...detail, generations, variants, article, latestVideoJob })
   })
 
   app.post('/copy', async (req) => {

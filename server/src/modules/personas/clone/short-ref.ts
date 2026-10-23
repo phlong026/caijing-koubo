@@ -22,7 +22,7 @@ export function deriveShortRef(seed: string): string {
   return out
 }
 
-export type RefTable = 'persona_avatar' | 'persona_voice'
+export type RefTable = 'persona_avatar' | 'persona_voice' | 'video_job'
 
 /** 生成库内唯一的短引用（确定性派生，冲突时加盐重试，兜底随机） */
 export async function uniqueShortRef(table: RefTable, recordId: string): Promise<string> {

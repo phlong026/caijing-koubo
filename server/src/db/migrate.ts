@@ -6,6 +6,7 @@ import { config } from '../config.js'
 import { newId } from '../lib/util.js'
 import { toDb, utcNow } from '../lib/time.js'
 import { seedCopyWorkshop, seedPersonaExtensions } from './seed-copy.js'
+import { seedVideoModule } from './seed-video.js'
 
 export interface Migration {
   version: string
@@ -432,6 +433,11 @@ export const migrations: Migration[] = [
     version: '006_stub_authorizations',
     name: '人物库：桩人物示例授权（FR-L6，§3.2 派生可用）',
     up: seedStubAuthorizations,
+  },
+  {
+    version: '007_video_seed',
+    name: '视频创作：关键词组与示例素材包种子（V0）',
+    up: seedVideoModule,
   },
 ]
 

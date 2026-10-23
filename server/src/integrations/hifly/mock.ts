@@ -125,6 +125,8 @@ function queryTask(taskId: string): HiflyTaskResult {
   t.polls += 1
   if (t.polls < POLLS_TO_DONE) t.state = 'PROCESSING'
   else t.state = 'DONE'
+  // mock 成片时长 = 生成 URL 里携带的预估秒数（与 writeDemoVideo 一致，归档校验用）
+  const dur = t.result.videoUrl ? mockUrlDurationSec(t.result.videoUrl) : null
   return {
     state: t.state,
     taskId,
@@ -133,6 +135,7 @@ function queryTask(taskId: string): HiflyTaskResult {
     demoUrl: t.result.demoUrl ?? null,
     videoUrl: t.result.videoUrl ?? null,
     audioUrl: t.result.audioUrl ?? null,
+    durationSec: t.state === 'DONE' && dur ? dur : null,
     failReason: null,
     vendorCode: null,
     raw: { mock: true, polls: t.polls },
@@ -150,7 +153,7 @@ function writeDemoWav(destPath: string, seconds = 1.5): void {
   buffer.write('fmt ', 12)
   buffer.writeUInt32LE(16, 16)
   buffer.writeUInt16LE(1, 20) // PCM
-  buffer.writeUInt16LE(1, 22) // mono
+  buffer.writeUInt16LE(1, 22)
   buffer.writeUInt32LE(sampleRate, 24)
   buffer.writeUInt32LE(sampleRate * 2, 28)
   buffer.writeUInt16LE(2, 32)
@@ -163,6 +166,64 @@ function writeDemoWav(destPath: string, seconds = 1.5): void {
   }
   fs.mkdirSync(path.dirname(destPath), { recursive: true })
   fs.writeFileSync(destPath, buffer)
+}
+
+/**
+ * mock 成片 URL：携带按字数预估的时长（AC-E6「时长与字数预估一致」），
+ * download 时由 ffmpeg 生成 1080×1920 色块 + 提示音轨的真视频。
+ */
+function mockVideoUrl(...seeds: Array<string | undefined>): string {
+  // 文本种子是最后一个非 mock:// 的入参（create_by_tts 的 text / create_by_audio 的 audioUrl）
+  let text = ''
+  for (const s of seeds) if (s && !s.startsWith('mock://')) text = s
+  const chars = text.replace(/\s+/g, '').length
+  const sec = Math.max(3, Math.round(chars / config.copy.charsPerSec))
+  return `mock://video/${detId('mock_video', ...seeds)}.mp4?dur=${sec}`
+}
+
+function mockUrlDurationSec(url: string): number {
+  const m = /[?&]dur=(\d+)/.exec(url)
+  return m ? Math.max(3, Number(m[1])) : 5
+}
+
+/** ffmpeg 生成 mock 成片：1080×1920、H.264/AAC/+faststart、时长 = 预估口播时长 */
+async function writeDemoVideo(destPath: string, seconds: number): Promise<void> {
+  fs.mkdirSync(path.dirname(destPath), { recursive: true })
+  const dur = String(seconds)
+  const { spawn } = await import('node:child_process')
+  await new Promise<void>((resolve, reject) => {
+    const p = spawn('ffmpeg', [
+      '-y',
+      '-v',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=c=0x223344:s=1080x1920:d=' + dur,
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440:duration=' + dur,
+      '-shortest',
+      '-r',
+      '30',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-pix_fmt',
+      'yuv420p',
+      '-c:a',
+      'aac',
+      '-movflags',
+      '+faststart',
+      destPath,
+    ])
+    let stderr = ''
+    p.stderr.on('data', (d) => (stderr += String(d)))
+    p.on('error', (e) => reject(new Error(`[mock] ffmpeg 不可用：${e.message}`)))
+    p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`[mock] 成片生成失败：${stderr.slice(-300)}`))))
+  })
 }
 
 class MockHiflyClient implements HiflyClient {
@@ -245,9 +306,11 @@ class MockHiflyClient implements HiflyClient {
     volume?: number
     pitch?: number
     aigcFlag?: number
+    stShow?: 0
+    callRef?: { refType?: string; refId?: string }
   }): Promise<HiflyAccept> {
     applyInjection('video.create')
-    const videoUrl = `mock://video/${detId('mock_video', input.avatarId, input.voiceId, input.text)}.mp4`
+    const videoUrl = mockVideoUrl(input.avatarId, input.voiceId, input.text)
     const taskId = registerTask('video', clipTitle(input.title), { videoUrl })
     return { taskId, raw: { mock: true } }
   }
@@ -260,12 +323,12 @@ class MockHiflyClient implements HiflyClient {
     aigcFlag?: number
   }): Promise<HiflyAccept> {
     applyInjection('video.create')
-    const videoUrl = `mock://video/${detId('mock_video', input.avatarId, input.audioUrl ?? input.fileId)}.mp4`
+    const videoUrl = mockVideoUrl(input.avatarId, input.audioUrl ?? input.fileId ?? '')
     const taskId = registerTask('video', clipTitle(input.title), { videoUrl })
     return { taskId, raw: { mock: true } }
   }
 
-  async videoTask(taskId: string): Promise<HiflyTaskResult> {
+  async videoTask(taskId: string, _callRef?: { refType?: string; refId?: string }): Promise<HiflyTaskResult> {
     applyInjection('video.task')
     return queryTask(taskId)
   }
@@ -302,6 +365,10 @@ class MockHiflyClient implements HiflyClient {
 
   async download(url: string, destPath: string): Promise<void> {
     applyInjection('download')
+    if (url.startsWith('mock://video/')) {
+      await writeDemoVideo(destPath, mockUrlDurationSec(url))
+      return
+    }
     if (url.startsWith('mock://')) {
       writeDemoWav(destPath)
       return

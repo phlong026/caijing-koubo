@@ -52,6 +52,8 @@ export interface HiflyTaskResult {
   demoUrl?: string | null
   videoUrl?: string | null
   audioUrl?: string | null
+  /** 飞影报告的成片时长（秒；video/task 返回 duration，FR-P4 时长校验用） */
+  durationSec?: number | null
   failReason?: string | null
   vendorCode?: number | null
   raw: Record<string, unknown>
@@ -251,6 +253,10 @@ export interface HiflyClient {
     volume?: number
     pitch?: number
     aigcFlag?: number
+    /** 字幕参数白名单（V14）：视频创作模块只允许 st_show=0（字幕在剪辑模块添加） */
+    stShow?: 0
+    /** 调用归属覆盖（FR-P8：视频任务传 { refType: 'video_job', refId: jobId }，缺省 persona_avatar） */
+    callRef?: { refType?: string; refId?: string }
   }): Promise<HiflyAccept>
   createVideoByAudio(input: {
     title: string
@@ -259,7 +265,7 @@ export interface HiflyClient {
     fileId?: string
     aigcFlag?: number
   }): Promise<HiflyAccept>
-  videoTask(taskId: string): Promise<HiflyTaskResult>
+  videoTask(taskId: string, callRef?: { refType?: string; refId?: string }): Promise<HiflyTaskResult>
   createAudioByTts(input: {
     voiceId: string
     text: string
@@ -477,9 +483,15 @@ class HttpHiflyClient implements HiflyClient {
     volume?: number
     pitch?: number
     aigcFlag?: number
+    stShow?: 0
+    callRef?: { refType?: string; refId?: string }
   }): Promise<HiflyAccept> {
     if (input.text.length > MAX_TTS_CHARS) {
       throw err.hiflyBadRequest(`口播文本超过 ${MAX_TTS_CHARS} 字上限`, { length: input.text.length })
+    }
+    // validate_oral_subtitle 白名单（V14）：仅放行 st_show=0，其余值一律拒绝
+    if (input.stShow !== undefined && input.stShow !== 0) {
+      throw err.hiflyBadRequest('字幕参数仅支持 st_show=0（字幕在剪辑模块添加）', { stShow: input.stShow })
     }
     const data = await this.postJson(
       PATHS.videoCreateByTts,
@@ -492,8 +504,9 @@ class HttpHiflyClient implements HiflyClient {
         volume: input.volume ?? 1.0,
         pitch: input.pitch ?? 1.0,
         aigc_flag: input.aigcFlag ?? config.hifly.aigcFlag,
+        st_show: input.stShow ?? 0,
       },
-      { kind: 'create', refType: 'persona_avatar' },
+      { kind: 'create', refType: input.callRef?.refType ?? 'persona_avatar', refId: input.callRef?.refId },
     )
     return { taskId: String(data.task_id ?? data.taskId ?? ''), raw: data }
   }
@@ -518,8 +531,12 @@ class HttpHiflyClient implements HiflyClient {
     return { taskId: String(data.task_id ?? data.taskId ?? ''), raw: data }
   }
 
-  async videoTask(taskId: string): Promise<HiflyTaskResult> {
-    const data = await this.postJson(PATHS.videoTask, { task_id: taskId }, { kind: 'query', refType: 'persona_avatar' })
+  async videoTask(taskId: string, callRef?: { refType?: string; refId?: string }): Promise<HiflyTaskResult> {
+    const data = await this.postJson(
+      PATHS.videoTask,
+      { task_id: taskId },
+      { kind: 'query', refType: callRef?.refType ?? 'persona_avatar', refId: callRef?.refId },
+    )
     return this.mapTask(data, taskId)
   }
 
@@ -610,6 +627,7 @@ class HttpHiflyClient implements HiflyClient {
 
   private mapTask(data: Record<string, unknown>, taskId: string): HiflyTaskResult {
     const state = mapTaskState(data.status ?? data.state)
+    const durationRaw = Number(data.duration ?? data.duration_sec ?? data.durationSec)
     return {
       state,
       taskId: String(data.task_id ?? taskId),
@@ -618,6 +636,7 @@ class HttpHiflyClient implements HiflyClient {
       demoUrl: pickUrl(data, 'demo_url', 'demoUrl', 'audio_url', 'audioUrl', 'audio_Url'),
       videoUrl: pickUrl(data, 'video_url', 'videoUrl', 'video_Url'),
       audioUrl: pickUrl(data, 'audio_url', 'audioUrl', 'audio_Url'),
+      durationSec: Number.isFinite(durationRaw) && durationRaw > 0 ? durationRaw : null,
       failReason: (data.fail_reason as string) ?? (data.failReason as string) ?? (data.message as string) ?? null,
       vendorCode: toNum(data.code),
       raw: data,

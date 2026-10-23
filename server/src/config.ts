@@ -263,6 +263,64 @@ export const config = {
   },
 
   /**
+   * 飞影成片结果域名白名单（FR-P4 防 SSRF：`video_Url` 只允许这些主机）。
+   * PoC 记录实际域名后配置；未配置时放行 `*.hifly.cc` 与 `*.hiflycdn.com` 一类已知后缀。
+   */
+  videoResultHosts: str('HIFLY_RESULT_HOSTS', '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+
+  /**
+   * 视频创作模块（任务书 §3.3 生成参数基线）。
+   * 计价与生成耗时系数按 PoC 实测修订（V3 交付物）。
+   */
+  video: {
+    /** 口播时长上限（秒，Q11）与提交文本上限（飞影 create_by_tts 10000 字） */
+    maxSeconds: num('VIDEO_MAX_SECONDS', 180),
+    maxTextChars: 10000,
+    /** 输出规格（Q7）：规范化目标 */
+    outputWidth: num('VIDEO_OUTPUT_WIDTH', 1080),
+    outputHeight: num('VIDEO_OUTPUT_HEIGHT', 1920),
+    outputFps: num('VIDEO_OUTPUT_FPS', 30),
+    /** 飞影侧全局生成并发（A6）与本地阶段 worker 并发（下载/校验/对齐/合成） */
+    genConcurrency: num('VIDEO_GEN_CONCURRENCY', 3),
+    workerConcurrency: num('VIDEO_WORKER_CONCURRENCY', 2),
+    /** 轮询间隔（video-poll-sweep 扫描周期）与查询异常退避序列 */
+    pollIntervalMs: num('VIDEO_POLL_INTERVAL_MS', 10000),
+    pollBackoffMs: [5000, 10000, 20000, 30000],
+    /** 1001/1015（并发/提交数上限）延后重排秒数与最大重排次数 */
+    submitResecSec: num('VIDEO_SUBMIT_REQUEUE_SEC', 60),
+    submitResecMax: num('VIDEO_SUBMIT_REQUEUE_MAX', 5),
+    /** 单 copy 基础视频版本上限 */
+    jobLimitPerCopy: num('VIDEO_JOB_LIMIT_PER_COPY', 10),
+    /** 成片下载上限（MB）与时长校验容差（毫秒） */
+    archiveMaxMb: num('VIDEO_ARCHIVE_MAX_MB', 512),
+    durationToleranceMs: num('VIDEO_DURATION_TOLERANCE_MS', 1000),
+    /** 时间轴对齐分数阈值（FR-P5） */
+    alignMinScore: num('VIDEO_ALIGN_MIN_SCORE', 0.85),
+    /** 超长句二次切分上限（字符，FR-P1） */
+    sentenceMaxChars: num('VIDEO_SENTENCE_MAX', 120),
+    /** Q3=B 音频驱动时的句间隔（毫秒） */
+    sentenceGapMs: num('VIDEO_SENTENCE_GAP_MS', 120),
+    /** 切句与配音缓存身份的规则版本（规则变更即失效旧缓存） */
+    segmentationVersion: str('VIDEO_SEGMENTATION_VERSION', 'v1'),
+    /**
+     * 生成进度估算：样本 <3 时预计生成秒数 = max(genSecondsMin, 预计秒 × genSecondsFactor)
+     * （FR-A7，PoC 实测前默认 max(180, 预计秒 × 4)）
+     */
+    genSecondsFactor: num('VIDEO_GEN_SECONDS_FACTOR', 4),
+    genSecondsMin: num('VIDEO_GEN_SECONDS_MIN', 180),
+    /** 进度样本保留条数（按飞影最近 N 次生成耗时中位数自适应） */
+    progressSamples: num('VIDEO_PROGRESS_SAMPLES', 10),
+    /**
+     * 预估积分 = creditsPerSec × 成片秒数（PoC 计价规则，未定前仅供界面展示，
+     * 精确对账不在一期，§1.2）
+     */
+    creditsPerSec: num('VIDEO_CREDITS_PER_SEC', 0.5),
+  },
+
+  /**
    * 登录与权限（P0-1）。
    * 操作人一律取自登录令牌，不再信任请求头 X-Operator。
    * 生产环境必须配置 AUTH_JWT_SECRET（≥32 字符），否则拒绝启动。

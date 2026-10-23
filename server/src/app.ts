@@ -128,6 +128,10 @@ export async function buildApp(): Promise<FastifyInstance> {
     // 队列统计不再依赖 redisUp：内存后端下 queues 依然有意义（waiting/active/completed/failed）
     const queues = await queueStats().catch(() => ({}))
     const queueBackend = getQueueBackend()
+    // AC-0.5：视频创作段的 ffmpeg/ffprobe 与飞影 / ASR 配置状态（脱敏，失败不阻断健康判定）
+    const video = await import('./modules/video/routes.js')
+      .then((m) => m.videoHealth())
+      .catch(() => null)
     // 判定口径：**DB 可用即视为服务可用**（200）。
     // Redis 只影响「队列后端选型」：Redis 可用走 BullMQ（持久、跨进程），
     // 不可用则切进程内队列（memory）——异步链路仍可跑，但不持久化、仅单实例消费。
@@ -143,6 +147,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         redis: { up: redisUp, host: config.redis.host, port: config.redis.port },
         queue: { backend: queueBackend, stats: queues },
         queues,
+        video,
         ...(degraded
           ? {
               hint:

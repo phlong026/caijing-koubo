@@ -37,6 +37,10 @@ const router = createRouter({
           meta: { title: '文案工坊' },
         },
         {
+          path: 'video',
+          redirect: { name: 'videoCreate' },
+        },
+        {
           path: 'video/create',
           name: 'videoCreate',
           component: () => import('@/views/video/VideoCreate.vue'),
