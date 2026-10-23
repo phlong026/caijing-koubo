@@ -500,6 +500,16 @@ async function main(): Promise<void> {
   check('未就绪人物 production-profile 409 PERSONA_NOT_READY', profileB.status === 409 && profileB.raw?.error?.code === 'PERSONA_NOT_READY', profileB.raw)
   check('409 带 checks 明细', Array.isArray(profileB.raw?.error?.details?.checks), profileB.raw?.error?.details)
 
+  // mixcut 取用（视频创作 V0 前置）：只要声音、不要分身
+  const profileMixA = await req('GET', `/personas/${idA}/production-profile?purpose=mixcut`)
+  check(
+    'mixcut 取用 200：无分身、有声音',
+    profileMixA.status === 200 && profileMixA.data?.avatar === null && !!profileMixA.data?.voice?.vendorVoiceId,
+    profileMixA.raw,
+  )
+  const profileMixB = await req('GET', `/personas/${idB}/production-profile?purpose=mixcut`)
+  check('素人 mixcut 取用：分身与声音均可空（M3 公共音色兜底）', profileMixB.status === 200 && profileMixB.data?.avatar === null && profileMixB.data?.voice === null, profileMixB.raw)
+
   /* [9] 对接文案工坊（AC-X2） */
   console.log('[9] 对接文案工坊（人物校验）')
   const copyOk = await req('POST', '/copy', { source: 'manual', title: '冒烟文案-正常', personaIds: [idB] })

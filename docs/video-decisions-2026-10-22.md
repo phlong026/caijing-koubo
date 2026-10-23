@@ -31,7 +31,7 @@
 
 ## 三、对人物库的前置改动（本次核查发现，开工 V0 时一起做）
 
-1. **`production-profile?purpose=mixcut` 未实现**：`server/src/modules/personas/readiness.ts` 的 `getProductionProfile` 固定按 `avatar_video` 判定，混剪（只要声音、不要分身）会被误拒。V0 需补。
+1. **`production-profile?purpose=mixcut` 未实现**：`server/src/modules/personas/readiness.ts` 的 `getProductionProfile` 固定按 `avatar_video` 判定，混剪（只要声音、不要分身）会被误拒。V0 需补。**✅ 已于 2026-10-23 完成**（`?purpose=mixcut`：经理/KOS 要求已确认克隆声音，素人声音可空由公共音色兜底；回归测试与 smoke 已覆盖并纳入 `test:integration`）。
 2. **分身 / 声音删除守卫未接入**：任务书 FR-V8 / FR-C5「被进行中视频任务引用不可删」需要视频模块提供 `isAvatarInUse / isVoiceInUse`，人物库软删时调用。V1 交付。
 3. **飞影客户端已具备**：`integrations/hifly/client.ts` 已有 `createVideoByTts`、`createAudioByTts`、`videoTask`，V3 可直接用，无需另写。
 4. **人物版本已可用于冻结**：本次修复后，默认分身 / 默认声音 / 声音参数 / IP 定位任一变化都会生成新版本（此前默认声音变化不出版本、嵌套字段变化不参与 hash），视频任务按 `versionId` 冻结快照的前提已具备。

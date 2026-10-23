@@ -27,6 +27,8 @@ const { createPersona, saveProfile, getPersonaById } = await import('../src/modu
 const { buildSnapshot } = await import('../src/modules/personas/versions.js')
 const { createVoicePreview, getVoicePreview } = await import('../src/modules/personas/clone/voices.js')
 const { pollPreview } = await import('../src/modules/personas/clone/worker.js')
+const { getProductionProfile } = await import('../src/modules/personas/readiness.js')
+const { ensurePersonaVersion } = await import('../src/modules/personas/versions.js')
 const { config } = await import('../src/config.js')
 
 setQueueBackend('memory')
@@ -91,8 +93,50 @@ try {
     assert.match(after?.error ?? '', /超时/)
   })
 
+  await test('mixcut 取用：只有就绪声音、无分身也能取到 production-profile', async () => {
+    // 种一条有效授权（portrait + voice），与 insertReadyVoice 硬编码的 authorization_id='a' 对齐
+    await db.run(
+      `INSERT INTO \`persona_authorization\` (\`id\`, \`persona_id\`, \`grantor_name\`, \`scopes\`, \`file_key\`,
+        \`file_mime\`, \`file_size\`, \`file_sha256\`, \`expires_at\`, \`status\`, \`verified_by\`, \`verified_at\`, \`created_by\`)
+       VALUES ('a', ?, '测试授权人', '["portrait","voice"]', 'seed/a.pdf', 'application/pdf', 0, '${'0'.repeat(64)}',
+        '2099-12-31 23:59:59', 'verified', 'test', '${new Date().toISOString().slice(0, 19).replace('T', ' ')}', 'test')`,
+      [persona.id],
+    )
+    await insertReadyVoice(persona.id)
+    // 先设为默认声音，readiness/production-profile 只看 default_voice_id；版本由路由层保存定位后创建，这里对齐生产行为
+    await db.run('UPDATE `persona` SET `default_voice_id` = ? WHERE `id` = ?', [
+      (await db.get<{ id: string }>('SELECT `id` FROM `persona_voice` WHERE `persona_id` = ?', [persona.id]))!.id,
+      persona.id,
+    ])
+    await ensurePersonaVersion((await getPersonaById(persona.id, true))!, 'profile', 'test')
+    const profile = await getProductionProfile(persona.id, { purpose: 'mixcut' })
+    assert.equal(profile.purpose, 'mixcut')
+    assert.equal(profile.avatar, null)
+    assert.equal(profile.voice?.vendorVoiceId, 'mock_voice_x')
+    assert.ok(profile.versionId, 'mixcut 也应携带版本 id 供任务冻结')
+  })
+
+  await test('mixcut 取用：素人无克隆声音时 voice 为空（M3 用公共音色兜底）', async () => {
+    const lay = await createPersona({ name: '素人混剪人物', line: 'persona', operator: 'test' })
+    const profile = await getProductionProfile(lay.id, { purpose: 'mixcut' })
+    assert.equal(profile.purpose, 'mixcut')
+    assert.equal(profile.voice, null)
+    assert.equal(profile.avatar, null)
+  })
+
+  await test('mixcut 取用：经理线无克隆声音仍被拒（数字人口播必须本人声音）', async () => {
+    const mgr = await createPersona({ name: '经理混剪人物', line: 'manager', operator: 'test' })
+    await assert.rejects(() => getProductionProfile(mgr.id, { purpose: 'mixcut' }), /声音/)
+  })
+
+  await test('avatar_video 取用仍要求默认分身就绪（回归守卫）', async () => {
+    await assert.rejects(() => getProductionProfile(persona.id), /未准备就绪/)
+  })
+
   console.log(`人物库回归：${passed} 组通过`)
 } finally {
   await closeAll()
   rmSync(temp, { recursive: true, force: true })
 }
+// 成功才会执行到这里；事件循环上有残留句柄（内存队列轮询），不显式退出进程会挂住
+process.exit(0)

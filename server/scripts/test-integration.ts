@@ -28,6 +28,7 @@ const { registerTopicJobs } = await import('../src/modules/topics/jobs.js')
 const { registerBenchmarkJobs } = await import('../src/modules/benchmark/sweep.js')
 const { registerExtractWorker } = await import('../src/modules/benchmark/extract.js')
 const { registerCopyWorker } = await import('../src/modules/copy/worker.js')
+const { registerPersonaModule } = await import('../src/modules/personas/index.js')
 const { createTopic } = await import('../src/modules/topics/repo.js')
 const { buildApp } = await import('../src/app.js')
 
@@ -63,6 +64,8 @@ try {
   await registerBenchmarkJobs()
   await registerExtractWorker()
   registerCopyWorker()
+  // 人物库模块：素材处理 / 克隆执行 / 授权到期扫描（smoke-personas 依赖，否则任务永远 pending）
+  await registerPersonaModule()
   await fetchAndStore()
   await createTopic({ source: 'manual', title: '尚未分配人物的集成测试选题' })
   const address = await app.listen({ host: '127.0.0.1', port: serve ? 9897 : 0 })
@@ -82,7 +85,8 @@ try {
     await runSmoke('smoke.ts', base)
     await runSmoke('smoke-topics.ts', base)
     await runSmoke('smoke-copy.ts', base)
-    console.log('All three isolated HTTP smoke suites passed')
+    await runSmoke('smoke-personas.ts', base)
+    console.log('All HTTP smoke suites passed')
   }
 } finally {
   await app.close()
