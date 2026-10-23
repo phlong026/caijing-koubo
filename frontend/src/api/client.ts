@@ -11,18 +11,21 @@ export type PageResult<T> = {
 export class ApiError extends Error {
   readonly code: string
   readonly status?: number
+  /** 服务端附带的结构化明细（如人物库重复制作的 requireConfirm） */
+  readonly details?: unknown
 
-  constructor(code: string, message: string, status?: number) {
+  constructor(code: string, message: string, status?: number, details?: unknown) {
     super(message)
     this.name = 'ApiError'
     this.code = code
     this.status = status
+    this.details = details
   }
 }
 
 type ApiEnvelope<T> =
   | { ok: true; data: T }
-  | { ok: false; error: { code: string; message: string } }
+  | { ok: false; error: { code: string; message: string; details?: unknown } }
 
 export type QueryValue = string | number | boolean | null | undefined
 
@@ -78,14 +81,14 @@ export async function request<T>(path: string, init: RequestInit = {}, query?: R
 
   if (!response.ok) {
     if (isEnvelope(payload) && !payload.ok) {
-      throw new ApiError(payload.error.code, payload.error.message, response.status)
+      throw new ApiError(payload.error.code, payload.error.message, response.status, payload.error.details)
     }
     const hint = response.status >= 500 ? '服务暂时不可用，请稍后重试' : '请求失败'
     throw new ApiError(`http_${response.status}`, `${hint}（${response.status}）`, response.status)
   }
 
   if (!isEnvelope(payload)) throw new ApiError('invalid_response', '服务端返回格式不正确', response.status)
-  if (!payload.ok) throw new ApiError(payload.error.code, payload.error.message, response.status)
+  if (!payload.ok) throw new ApiError(payload.error.code, payload.error.message, response.status, payload.error.details)
   return payload.data as T
 }
 

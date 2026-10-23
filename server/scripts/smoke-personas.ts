@@ -299,6 +299,8 @@ async function main(): Promise<void> {
 
   const thumb = await fetch(`${BASE}/persona-assets/${photoId}/file?variant=thumb`, { headers: { 'X-Operator': 'smoke' } })
   check('缩略图可流式读取（200 + 图片类型）', thumb.status === 200 && (thumb.headers.get('content-type') ?? '').startsWith('image/'), thumb.status)
+  const thumbBytes = (await thumb.arrayBuffer()).byteLength
+  check('缩略图响应体非空', thumbBytes > 0, thumbBytes)
 
   const dupAsset = await reqMultipart(`/personas/${idA}/assets`, { kind: 'photo' }, {
     buf: photo,
@@ -429,6 +431,8 @@ async function main(): Promise<void> {
 
   const demo = await fetch(`${BASE}/persona-voices/${voiceId}/demo`, { headers: { 'X-Operator': 'smoke' } })
   check('厂商试听可播放（200 + audio）', demo.status === 200 && (demo.headers.get('content-type') ?? '').startsWith('audio/'), demo.status)
+  const demoBytes = (await demo.arrayBuffer()).byteLength
+  check('厂商试听响应体非空', demoBytes > 0, demoBytes)
 
   const confirm = await req('POST', `/persona-voices/${voiceId}/confirm`)
   check('确认声音（FR-V5）200', confirm.status === 200 && confirm.data?.confirmed === true, confirm.raw)
@@ -451,12 +455,22 @@ async function main(): Promise<void> {
   check('试听 ready 且可播放（AC-V7）', previewReady?.status === 'ready' && !!previewReady?.audioKey, previewReady?.status)
   const previewFile = await fetch(`${BASE}/persona-voice-previews/${previewId}/file`, { headers: { 'X-Operator': 'smoke' } })
   check('试听音频可读取', previewFile.status === 200 && (previewFile.headers.get('content-type') ?? '').startsWith('audio/'), previewFile.status)
+  const previewBytes = (await previewFile.arrayBuffer()).byteLength
+  check('试听音频响应体非空', previewBytes > 0, previewBytes)
 
   const previewCache = await req('POST', `/persona-voices/${voiceId}/preview`, { text: '大家好，欢迎来到我的频道，今天聊聊家庭理财。' })
   check('同参数同文本试听走缓存（AC-V7）', previewCache.data?.cached === true, previewCache.data)
 
   const setDefaultVoice = await req('POST', `/persona-voices/${voiceId}/set-default`)
   check('设置默认声音 200', setDefaultVoice.status === 200, setDefaultVoice.raw)
+  // L7：默认声音变化必须产生人物版本，且快照里带上这条声音（视频创作按版本冻结）
+  const versionsAfterVoice = await req('GET', `/personas/${idA}/versions`)
+  const latestVersion = await req('GET', `/persona-versions/${versionsAfterVoice.data?.[0]?.id}`)
+  check(
+    '默认声音变化产生版本且快照含该声音',
+    latestVersion.data?.trigger === 'default_asset' && latestVersion.data?.snapshot?.defaultVoice?.id === voiceId,
+    { trigger: latestVersion.data?.trigger, defaultVoice: latestVersion.data?.snapshot?.defaultVoice },
+  )
 
   /* [8] readiness / production-profile（AC-X4 / X5） */
   console.log('[8] readiness 与 production-profile')
@@ -494,7 +508,8 @@ async function main(): Promise<void> {
   const copyDisabled = await req('POST', '/copy', { source: 'manual', title: '冒烟文案-停用', personaIds: [idB] })
   check('停用人物创建文案被拒（409）', copyDisabled.status === 409, copyDisabled.raw)
   check('拒绝消息含「已停用」', String(copyDisabled.raw?.error?.message ?? '').includes('已停用'), copyDisabled.raw?.error?.message)
-  await req('POST', `/personas/${idB}/enable`)
+  const reEnabled = await req('POST', `/personas/${idB}/enable`)
+  check('停用后可重新启用（AC-L4）', reEnabled.status === 200 && reEnabled.data?.usable === true, reEnabled.raw)
   await req('POST', `/personas/${idB}/archive`, { force: true })
   const copyArchived = await req('POST', '/copy', { source: 'manual', title: '冒烟文案-归档', personaIds: [idB] })
   check('归档人物创建文案被拒（PERSONA_ARCHIVED）', copyArchived.status === 409 && copyArchived.raw?.error?.code === 'PERSONA_ARCHIVED', copyArchived.raw)

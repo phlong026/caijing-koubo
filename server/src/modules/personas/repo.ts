@@ -339,7 +339,8 @@ export async function setPersonaEnabled(id: string, enabled: boolean, operator: 
   if (!current) throw err.personaNotFound()
   if (current.archivedAt) throw err.personaArchived()
   if (enabled) {
-    const derived = await derivePersonaStatus(current)
+    // 按「启用之后」的状态判定：用当前记录（enabled=0）判定会恒得 disabled，停用后再也启用不了
+    const derived = await derivePersonaStatus({ ...current, enabled: true })
     if (!derived.usable) {
       throw err.conflict(`人物当前不可用，不能启用：${derived.reasons.map((r) => r.message).join('；')}`, {
         reasons: derived.reasons,

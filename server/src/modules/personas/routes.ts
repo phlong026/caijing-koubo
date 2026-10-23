@@ -211,7 +211,7 @@ async function streamStorage(
   filename: string,
   range: string | undefined,
   audit: { action: string; targetType: string; targetId: string; operator: string; detail?: Record<string, unknown> } | null,
-): Promise<void> {
+): Promise<import('fastify').FastifyReply> {
   const res = await getObjectStream(storageKey, range)
   if (!res) throw err.notFound('文件不存在或已被清理')
   if (audit) {
@@ -231,7 +231,9 @@ async function streamStorage(
     if (res.contentLength != null) headers['Content-Length'] = String(res.contentLength)
     reply.headers(headers)
   }
-  reply.send(res.stream as any)
+  // 必须把 reply 返回给 async 路由：只调用 send 而让处理函数 resolve undefined，
+  // Fastify 会按空响应结束（Content-Length: 0），图片 / 音视频全部读不到内容
+  return reply.send(res.stream as any)
 }
 
 /* ── 工具 ──────────────────────────────────────────────────────── */
@@ -280,6 +282,13 @@ async function decoratePersona(p: Persona) {
   const cover = p.coverAssetId
     ? await db.get<{ thumb_key: string | null }>('SELECT `thumb_key` FROM `persona_asset` WHERE `id` = ?', [p.coverAssetId])
     : null
+  // 卡片封面优先用默认分身素材的封面帧，并显示其时长角标（FR-L1）
+  const avatarSource = p.defaultAvatarId
+    ? await db.get<{ id: string; thumb_key: string | null; duration_ms: number | null }>(
+        'SELECT s.`id`, s.`thumb_key`, s.`duration_ms` FROM `persona_avatar` a JOIN `persona_asset` s ON s.`id` = a.`source_asset_id` WHERE a.`id` = ? AND a.`deleted_at` IS NULL',
+        [p.defaultAvatarId],
+      )
+    : null
   return {
     ...p,
     status: derived.status,
@@ -294,6 +303,13 @@ async function decoratePersona(p: Persona) {
       bindings: Number(bindingCount?.c ?? 0),
     },
     coverUrl: cover?.thumb_key ? `/api/persona-assets/${p.coverAssetId}/file?variant=thumb` : null,
+    defaultAvatarPreview: avatarSource
+      ? {
+          assetId: avatarSource.id,
+          coverUrl: avatarSource.thumb_key ? `/api/persona-assets/${avatarSource.id}/file?variant=thumb` : null,
+          durationMs: avatarSource.duration_ms === null ? null : Number(avatarSource.duration_ms),
+        }
+      : null,
     currentVersionId: p.currentVersionId,
   }
 }
@@ -696,7 +712,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
             operator: req.operator,
             detail: { assetId: id, kind: asset.kind, variant },
           }
-    await streamStorage(reply, target.storageKey, target.filename, range, audit)
+    return streamStorage(reply, target.storageKey, target.filename, range, audit)
   })
 
   /* ── 授权与 consent ─────────────────────────────────────────── */
@@ -758,7 +774,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
     const auth = await getAuthorizationById(id)
     if (!auth) throw err.notFound('授权记录不存在')
     const target = authorizationFileTarget(auth)
-    await streamStorage(reply, target.storageKey, target.filename, req.headers.range, {
+    return streamStorage(reply, target.storageKey, target.filename, req.headers.range, {
       action: 'persona.sensitive_access',
       targetType: 'persona',
       targetId: auth.personaId,
@@ -985,7 +1001,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
     const preview = await getVoicePreview(id)
     if (!preview) throw err.notFound('试听记录不存在')
     const target = previewAudioTarget(preview)
-    await streamStorage(reply, target.storageKey, target.filename, req.headers.range, null)
+    return streamStorage(reply, target.storageKey, target.filename, req.headers.range, null)
   })
 
   app.get('/persona-voices/:id/demo', async (req, reply) => {
@@ -993,7 +1009,7 @@ export function registerPersonaRoutes(app: FastifyInstance): void {
     const voice = await getVoiceById(id)
     if (!voice) throw err.notFound('声音不存在')
     if (!voice.demoKey) throw err.notFound('试听音频尚未归档')
-    await streamStorage(reply, voice.demoKey, `${voice.name || '试听'}.mp3`, req.headers.range, null)
+    return streamStorage(reply, voice.demoKey, `${voice.name || '试听'}.mp3`, req.headers.range, null)
   })
 
   app.patch('/persona-voices/:id', async (req) => {

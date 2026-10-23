@@ -31,6 +31,23 @@ export function pageResult<T>(items: T[], total: number, p: PageQuery): PageResu
 }
 
 /** JSON 列读写 */
+/**
+ * 规范化 JSON：对象键递归排序，数组保持原顺序，用于内容 hash。
+ * 不能用 JSON.stringify(obj, keys) 的数组参数：它是作用于所有层级的白名单，
+ * 会把嵌套对象里不在顶层键名中的字段整个丢掉。
+ */
+export function canonicalJson(value: unknown): string {
+  const sort = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sort)
+    if (v && typeof v === 'object') {
+      const o = v as Record<string, unknown>
+      return Object.fromEntries(Object.keys(o).sort().map((k) => [k, sort(o[k])]))
+    }
+    return v
+  }
+  return JSON.stringify(sort(value))
+}
+
 export function jenc(v: unknown): string | null {
   if (v === undefined || v === null) return null
   return JSON.stringify(v)

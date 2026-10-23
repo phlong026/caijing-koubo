@@ -48,6 +48,8 @@ export interface PersonaListItem {
   extraTags: PersonaExtraTag[]
   counts: { photos: number; avatars: number; voices: number; bindings: number }
   coverUrl: string | null
+  /** 默认分身素材的封面帧与时长（卡片封面优先用它） */
+  defaultAvatarPreview?: { assetId: string; coverUrl: string | null; durationMs: number | null } | null
 }
 
 export interface PersonaListQuery {
@@ -108,20 +110,182 @@ export function savePersonaProfile(id: string, ipProfile: unknown, rev?: number)
   )
 }
 
+export type AssetStatus = 'uploaded' | 'processing' | 'pending_review' | 'approved' | 'rejected' | 'failed'
+export type AuthorizationStatus = 'pending' | 'verified' | 'rejected' | 'revoked' | 'expired'
+export type Platform = 'douyin' | 'xiaohongshu' | 'kuaishou' | 'shipinhao'
+
+export interface QualityIssue {
+  code: string
+  message: string
+}
+
+export interface PersonaAsset {
+  id: string
+  personaId: string
+  kind: AssetKind
+  name: string
+  backgroundLabel: string | null
+  status: AssetStatus
+  thumbKey: string | null
+  compatKey: string | null
+  mime: string
+  sizeBytes: number
+  width: number | null
+  height: number | null
+  durationMs: number | null
+  fps: number | null
+  quality: { hard: QualityIssue[]; soft: QualityIssue[] } | null
+  tags: string[]
+  reviewReason: string | null
+  reviewedBy: string | null
+  error: string | null
+  processing: boolean
+  createdAt: string | null
+}
+
+export interface PersonaAuthorization {
+  id: string
+  personaId: string
+  grantorName: string
+  scopes: AuthorizationScope[]
+  effectiveFrom: string | null
+  expiresAt: string | null
+  status: AuthorizationStatus
+  decisionReason: string | null
+  verifiedBy: string | null
+  verifiedAt: string | null
+  note: string | null
+  createdBy: string | null
+  createdAt: string | null
+}
+
+export interface AccountBinding {
+  id: string
+  platform: Platform
+  accountKey: string
+  displayName: string
+}
+
+export interface PersonaVersion {
+  id: string
+  versionNo: number
+  trigger: string
+  createdBy: string | null
+  createdAt: string | null
+}
+
+export interface PersonaReminder {
+  id: string
+  personaId: string
+  kind: string
+  message: string
+  readAt: string | null
+  createdAt: string | null
+}
+
+export type AvatarWithSource = PersonaAvatar & {
+  coverUrl: string | null
+  sourceWidth: number | null
+  sourceHeight: number | null
+  sourceDurationMs: number | null
+}
+
+export interface PersonaDetail extends PersonaListItem {
+  authorizations: PersonaAuthorization[]
+  bindings: AccountBinding[]
+  assets: PersonaAsset[]
+  avatars: AvatarWithSource[]
+  voices: PersonaVoice[]
+  voiceSamples: PersonaVoice[]
+  versions: PersonaVersion[]
+}
+
 export function getPersonaDetail(id: string) {
-  return apiGet<PersonaListItem & {
-    authorizations: unknown[]
-    bindings: unknown[]
-    assets: unknown[]
-    avatars: unknown[]
-    voices: unknown[]
-    voiceSamples: unknown[]
-    versions: unknown[]
-  }>(`/personas/${id}`)
+  return apiGet<PersonaDetail>(`/personas/${id}`)
 }
 
 export function getPersonaVersions(id: string) {
-  return apiGet<Array<{ id: string; versionNo: number; trigger: string; createdAt: string | null }>>(`/personas/${id}/versions`)
+  return apiGet<PersonaVersion[]>(`/personas/${id}/versions`)
+}
+
+export function getPersonaStats() {
+  return apiGet<{ lines: Record<PersonaLine, number>; total: number; unreadReminders: number }>('/personas/stats')
+}
+
+export interface PersonaOptions {
+  ipOptions: Record<'role' | 'serviceScope' | 'expressionStyle' | 'contentDirection', string[]>
+  lineLabels: Record<PersonaLine, string>
+  lineRules: Record<PersonaLine, {
+    label: string
+    avatarAllowed: boolean
+    voiceAllowed: boolean
+    authRequired: boolean
+    bindingModes: BindingMode[]
+    defaultBindingMode: BindingMode
+    accountLimit: number
+  }>
+  lineDefaultDirections: Record<PersonaLine, string[]>
+  lineDefaultForbidden: Record<PersonaLine, string[]>
+  contentMixPresets: string[]
+  uploadLimits: Record<string, { exts: string[]; maxBytes: number }>
+  platformLabels: Record<Platform, string>
+  voiceLanguages: Array<{ code: string; label: string }>
+  consentTextVersion: string
+  consentTexts: Record<'AVATAR_CLONE' | 'VOICE_CLONE', { title: string; body: string }>
+  hifly: { configured: boolean; mock: boolean; credit: number | null; creditError: string | null }
+}
+
+export function getPersonaOptions() {
+  return apiGet<PersonaOptions>('/personas/options')
+}
+
+/* ── 素材管理 ───────────────────────────────────────────────── */
+
+export function patchAsset(assetId: string, input: { name?: string; backgroundLabel?: string; tags?: string[] }) {
+  return apiPatch<PersonaAsset>(`/persona-assets/${assetId}`, input)
+}
+
+export function reviewAsset(assetId: string, decision: 'approved' | 'rejected', reason?: string) {
+  return apiPost<PersonaAsset>(`/persona-assets/${assetId}/review`, { decision, reason })
+}
+
+export function setCoverAsset(assetId: string) {
+  return apiPost<{ coverAssetId: string }>(`/persona-assets/${assetId}/set-cover`)
+}
+
+export function deleteAsset(assetId: string) {
+  return apiDel<{ deleted: boolean }>(`/persona-assets/${assetId}`)
+}
+
+/** 素材文件地址（后端流式代理；compat / original 会记敏感访问审计） */
+export function assetFileUrl(assetId: string, variant: 'thumb' | 'compat' | 'original' = 'thumb'): string {
+  return `/api/persona-assets/${assetId}/file?variant=${variant}`
+}
+
+export function voiceDemoUrl(voiceId: string): string {
+  return `/api/persona-voices/${voiceId}/demo`
+}
+
+export function voicePreviewFileUrl(previewId: string): string {
+  return `/api/persona-voice-previews/${previewId}/file`
+}
+
+export function authorizationFileUrl(authId: string): string {
+  return `/api/persona-authorizations/${authId}/file`
+}
+
+/* ── 账号绑定 / 提醒 ─────────────────────────────────────────── */
+
+export function setPersonaAccounts(id: string, accounts: Array<{ platform: Platform; accountKey: string; displayName: string }>) {
+  return apiPut<AccountBinding[]>(`/personas/${id}/accounts`, { accounts })
+}
+
+export function getReminders(unread = false) {
+  return apiGet<{ items: PersonaReminder[]; unread: number }>('/persona-reminders', unread ? { unread: '1' } : undefined)
+}
+
+export function readAllReminders() {
+  return apiPost<{ read: number }>('/persona-reminders/read-all')
 }
 
 /* ── readiness / production-profile（FR-X4 / FR-X5）──────────── */

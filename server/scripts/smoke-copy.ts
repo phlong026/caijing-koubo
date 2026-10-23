@@ -509,7 +509,8 @@ if (!genOnly) {
   const cand = (await req('GET', '/topics?status=candidate&pageSize=1')).data?.items?.[0]
   if (cand) {
     const bad = await req('PATCH', `/topics/${cand.id}`, { personaIds: ['ps_not_exist'] })
-    check('分配不存在的人物返回 400', bad.status === 400, { status: bad.status, code: bad.error?.code })
+    // FR-X2：人物校验统一走人物库判定，不存在返回 404 PERSONA_NOT_FOUND
+    check('分配不存在的人物被拒（404 PERSONA_NOT_FOUND）', bad.status === 404 && bad.error?.code === 'PERSONA_NOT_FOUND', { status: bad.status, code: bad.error?.code })
   } else {
     console.log('  ⏭  库内没有 candidate 选题（先跑一次 npm run smoke），跳过分配校验')
   }

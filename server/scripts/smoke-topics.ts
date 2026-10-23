@@ -63,7 +63,8 @@ async function main(): Promise<void> {
   console.log(`  ℹ 队列后端：${qBackend}`)
 
   const personas = await req('GET', '/personas')
-  const personaList: any[] = Array.isArray(personas.data) ? personas.data : []
+  // FR-X1：/personas 返回 {items,total}（旧契约是数组）
+  const personaList: any[] = Array.isArray(personas.data) ? personas.data : (personas.data?.items ?? [])
   const enabledPersona = personaList.find((p) => p.enabled)
   check('存在可用人物', !!enabledPersona, { count: personaList.length })
   if (!enabledPersona) {
@@ -128,8 +129,9 @@ async function main(): Promise<void> {
   console.log('\n=== 2. 人物校验（本轮修复回归）===')
   const ghost = await req('PATCH', `/topics/${t0.id}`, { personaIds: ['ps_ghost_not_exist'] })
   check(
-    '分配不存在的人物被拒绝',
-    ghost.status === 400 && ghost.raw?.error?.code === 'bad_request',
+    '分配不存在的人物被拒绝（404 PERSONA_NOT_FOUND）',
+    // FR-X2：人物校验统一走人物库判定
+    ghost.status === 404 && ghost.raw?.error?.code === 'PERSONA_NOT_FOUND',
     ghost.raw,
   )
   check('错误信息点明人物不存在', /人物不存在/.test(ghost.raw?.error?.message ?? ''), ghost.raw?.error?.message)
@@ -141,7 +143,8 @@ async function main(): Promise<void> {
   const disabled = personaList.find((p) => !p.enabled)
   if (disabled) {
     const r = await req('PATCH', `/topics/${t0.id}`, { personaIds: [disabled.id] })
-    check('分配已停用人物被拒绝', r.status === 400, r.raw)
+    // 停用属于状态冲突（与文案创建一致返回 409）
+    check('分配已停用人物被拒绝', r.status === 409, r.raw)
   } else {
     console.log('  ⏭  无已停用人物，跳过停用校验')
   }

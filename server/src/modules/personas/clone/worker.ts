@@ -2,11 +2,11 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { getDb } from '../../../db/index.js'
 import { memEnqueue } from '../../../queue/memory.js'
-import { enqueue, QUEUE_NAMES, dedupOpts, getQueueBackend, registerWorker } from '../../../queue/index.js'
+import { enqueue, QUEUE_NAMES, getQueueBackend, registerWorker } from '../../../queue/index.js'
 import { config, paths } from '../../../config.js'
 import { logger } from '../../../log.js'
 import { err } from '../../../errors.js'
-import { toDb, utcNow } from '../../../lib/time.js'
+import { fromDb, toDb, utcNow } from '../../../lib/time.js'
 import { recordOperation } from '../../audit/repo.js'
 import { getObjectStream, isOssEnabled, putObjectFromFile } from '../../../integrations/aliyun-oss/client.js'
 import {
@@ -29,7 +29,7 @@ import { deliverMaterial } from './transfer.js'
  * 职责：提交（submit）→ 轮询（poll）→ 归档；不确定态核对（reconcile）。
  * 规则：
  *  - 提交步骤**不自动重试**：失败即 failed / uncertain（L9）；
- *  - 轮询按 next_poll_at 重新入队，15s 起指数退避至 2min；
+ *  - 轮询由任务自身按退避延迟重新入队（15s 起指数退避至 2min）；next_poll_at 仅记录，暂无兜底扫描；
  *  - 轮询超过 2 小时（config.hifly.pollMaxAgeMs）→ uncertain；
  *  - 飞影调用一律在事务外（db.tx 不可嵌套）；
  *  - 状态推进全部带 WHERE status 守卫（CAS），影响行数 ≠1 时回查判定。
@@ -54,7 +54,13 @@ async function scheduleJob(jobName: string, data: CloneJob, dedupId: string, del
     timer.unref?.()
     return
   }
-  await enqueue(QUEUE_NAMES.personaClone, jobName, data, { ...dedupOpts(dedupId), delay: Math.max(0, delayMs) })
+  // 去重键只在延迟等待期的前半段有效（ttl = delay / 2）：轮询任务执行中给自己排下一轮时，
+  // 同 id 的键已过期，不会被 BullMQ 当重复丢弃；等待期内紧接着的重复投递（如手动刷新）仍被挡住。
+  // 留一半余量是为了 worker 与 Redis 时钟不一致时，任务提前到期也不会撞上未过期的键。
+  // 用 dedupOpts 的「直到任务结束」语义会让轮询链在第一次「处理中」后静默断掉。
+  const delay = Math.max(1, delayMs)
+  const ttl = Math.max(1, Math.floor(delay / 2))
+  await enqueue(QUEUE_NAMES.personaClone, jobName, data, { deduplication: { id: dedupId, ttl }, delay })
 }
 
 /** 轮询退避：15s 起，按 attempts 指数退避，上限 2min（FR-C2） */
@@ -687,6 +693,19 @@ export async function pollPreview(previewId: string): Promise<void> {
   const db = getDb()
   const row = await db.get<Record<string, any>>('SELECT * FROM `persona_voice_preview` WHERE `id` = ?', [previewId])
   if (!row || row.status !== 'running' || !row.vendor_task_id) return
+  // 与分身 / 声音一致的轮询时长上限：超过即转失败，避免查询一直出错时无限重排
+  const createdIso = fromDb(row.created_at)
+  const startedAt = createdIso ? new Date(createdIso).getTime() : Date.now()
+  if (Date.now() - startedAt > config.hifly.pollMaxAgeMs) {
+    await db.run('UPDATE `persona_voice_preview` SET `status` = ?, `error` = ? WHERE `id` = ? AND `status` = ?', [
+      'failed',
+      '试听生成超时，请重新生成',
+      previewId,
+      'running',
+    ])
+    logger.warn({ previewId, vendorTaskId: row.vendor_task_id }, 'persona.clone.preview_timeout')
+    return
+  }
   const client = resolveHiflyClient()
   const tempFiles: string[] = []
   try {
@@ -714,15 +733,12 @@ export async function pollPreview(previewId: string): Promise<void> {
       await db.run('UPDATE `persona_voice_preview` SET `status` = ?, `error` = ? WHERE `id` = ?', ['failed', message, previewId])
     } else {
       const attempts = Number(row.attempts ?? 0) + 1
-      await db.run('UPDATE `persona_voice_preview` SET `attempts` = ?, `updated_at` = ? WHERE `id` = ?', [
-        attempts,
-        toDb(utcNow()),
-        previewId,
-      ])
+      // persona_voice_preview 没有 updated_at 列，只记轮询次数
+      await db.run('UPDATE `persona_voice_preview` SET `attempts` = ? WHERE `id` = ?', [attempts, previewId])
       await scheduleJob('preview_poll', { kind: 'preview', recordId: previewId }, `preview-poll-${previewId}`, pollDelayOf(attempts))
     }
   } catch (e) {
-    logger.debug({ previewId, err: (e as Error).message }, 'persona.clone.preview_poll_retry')
+    logger.warn({ previewId, err: (e as Error).message }, 'persona.clone.preview_poll_retry')
     await scheduleJob('preview_poll', { kind: 'preview', recordId: previewId }, `preview-poll-${previewId}`, pollDelayOf(2))
   } finally {
     await cleanup(tempFiles)

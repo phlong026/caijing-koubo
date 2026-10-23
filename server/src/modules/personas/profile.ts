@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { err } from '../../errors.js'
+import { canonicalJson } from '../../lib/util.js'
 import type { IpProfile } from './repo.js'
 
 /**
@@ -145,8 +146,7 @@ export function normalizeProfileInput(raw: unknown): IpProfile {
 
 /** 规范化 JSON 的 SHA-256（键排序稳定，用于「内容未变不升版本」） */
 export function profileHash(profile: IpProfile): string {
-  const canonical = JSON.stringify(profile, Object.keys(profile).sort())
-  return crypto.createHash('sha256').update(canonical).digest('hex')
+  return crypto.createHash('sha256').update(canonicalJson(profile)).digest('hex')
 }
 
 /** camelCase 对外 → snake_case 入库 */

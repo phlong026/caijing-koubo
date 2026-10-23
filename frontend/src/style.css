@@ -404,8 +404,11 @@ body {
    ============================================================ */
 .people-tabs .arco-tabs-tab {
   padding: 8px 0;
-  margin-right: 10px;
+  margin: 0 10px 0 0;
   font-size: 13px;
+}
+.people-tabs .arco-tabs-tab:last-child {
+  margin-right: 0;
 }
 
 /* ============================================================
