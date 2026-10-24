@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { config } from '../../config.js'
 import type { PlatformAccount } from './types.js'
+import { createRealEngine, realEngineActiveFor, realEngineStatus } from '../../integrations/publish/index.js'
 
 /**
  * PublishEngine（PB6）：发布引擎适配层，接口与视频创作 AvatarVideoEngine 同构。
@@ -196,14 +197,35 @@ export function createMockPublishEngine(): PublishEngine {
 let cached: PublishEngine | null = null
 
 /**
- * 解析发布引擎：真实 Playwright 引擎（PU2/PU3 平移）就位前一律 mock；
- * 就位后按「平台实现存在 + 非 MOCK」切换。与 hifly resolveClient 同构。
+ * 解析发布引擎（PU2/PU3 接线）：路由引擎按 account.platform 分流——
+ * 已平移平台（douyin）且真实引擎生效（realEngineActiveFor）→ Playwright 真实链路；
+ * 未平移平台 / mock 模式 → mock 引擎（dev 联调与冒烟不受影响）。
+ * MOCK_FALLBACK=false 时未平移平台在真实模式下由 integrations 层明确抛
+ * PUBLISH_PLATFORM_NOT_MIGRATED，不会静默假成功。
+ *
+ * integrations/publish 顶层对 playwright 是懒加载（browser.ts 动态 import），
+ * 此处静态 import 不引入浏览器依赖。
  */
 export function resolvePublishEngine(): PublishEngine {
   if (cached) return cached
-  // PU2 前只有 mock；真实引擎落地后在此按 config.publish.headless / mockFallback 分流
-  cached = createMockPublishEngine()
+  cached = createRoutingPublishEngine()
   return cached
+}
+
+function createRoutingPublishEngine(): PublishEngine {
+  const mock = createMockPublishEngine()
+  const real = createRealEngine()
+  const pick = (platform: string): PublishEngine => (realEngineActiveFor(platform) ? real : mock)
+  return {
+    // mock 标记实时判定：任一已平移平台真实生效即为「非 mock」（health / 发布页提示条用）
+    get mock() {
+      return !realEngineActiveFor('douyin')
+    },
+    startLogin: (account) => pick(account.platform).startLogin(account),
+    pollLogin: (account) => pick(account.platform).pollLogin(account),
+    checkLogin: (account) => pick(account.platform).checkLogin(account),
+    publish: (account, input) => pick(account.platform).publish(account, input),
+  }
 }
 
 /** 测试钩子：重置引擎缓存（注入引擎替换后生效） */
@@ -211,7 +233,17 @@ export function resetPublishEngine(): void {
   cached = null
 }
 
-export function publishEngineStatus(): { mock: boolean; headless: boolean; maxContexts: number } {
+export function publishEngineStatus(): {
+  mock: boolean
+  headless: boolean
+  maxContexts: number
+  realEngine: { migrated: string[]; playwright: boolean; mode: string }
+} {
   const e = resolvePublishEngine()
-  return { mock: e.mock, headless: config.publish.headless, maxContexts: config.publish.maxContexts }
+  return {
+    mock: e.mock,
+    headless: config.publish.headless,
+    maxContexts: config.publish.maxContexts,
+    realEngine: realEngineStatus(),
+  }
 }

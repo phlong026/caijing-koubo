@@ -357,6 +357,11 @@ export const config = {
     minScheduleAheadMs: num('PUBLISH_MIN_SCHEDULE_AHEAD_MS', 60000),
     /** executing 计划卡死守护阈值（毫秒） */
     planStuckMs: num('PUBLISH_PLAN_STUCK_MS', 7200000),
+    /**
+     * 真实发布引擎（PU2/PU3）：auto（默认）= MOCK_FALLBACK=true 时全 mock、false 时已平移平台走真实；
+     * 显式 true / false 覆盖 auto（如开发机临时验证真实引擎）。未平移平台在非 mock 模式下明确报错。
+     */
+    realEngine: str('PUBLISH_REAL_ENGINE', 'auto'),
   },
 
   /**
