@@ -31,15 +31,14 @@ describe('extractVideoIdFromUrl（A11 平移）', () => {
   })
 })
 
-describe('平台平移状态（PU2 douyin + PU3 shipinhao/xiaohongshu；kuaishou 待扩展）', () => {
-  it('MIGRATED_PLATFORMS：douyin / shipinhao / xiaohongshu', () => {
-    expect(MIGRATED_PLATFORMS).toEqual(['douyin', 'shipinhao', 'xiaohongshu'])
+describe('平台平移状态（PU2 douyin + PU3 三平台，四平台齐）', () => {
+  it('MIGRATED_PLATFORMS：四平台', () => {
+    expect(MIGRATED_PLATFORMS).toEqual(['douyin', 'kuaishou', 'shipinhao', 'xiaohongshu'])
   })
-  it('isMigrated：已平移 true，kuaishou false', () => {
-    expect(isMigrated('douyin')).toBe(true)
-    expect(isMigrated('shipinhao')).toBe(true)
-    expect(isMigrated('xiaohongshu')).toBe(true)
-    expect(isMigrated('kuaishou')).toBe(false)
+  it('isMigrated：四平台均 true', () => {
+    for (const p of ['douyin', 'kuaishou', 'shipinhao', 'xiaohongshu']) {
+      expect(isMigrated(p)).toBe(true)
+    }
   })
   it('realEngineStatus 报告平移明细与模式', () => {
     const s = realEngineStatus()

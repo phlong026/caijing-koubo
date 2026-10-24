@@ -18,15 +18,17 @@ import { acquireContext, closeContext, playwrightInstalled } from './browser.js'
 import { checkLoginStatus, detectLoggedIn, extractNickname, extractQrPng, gotoWithRetry, newOrExistingPage } from './login.js'
 import { PLATFORM_URLS, type PublishPlatform } from './selectors.js'
 import { publishToDouyin, type PlatformPublishParams } from './douyin.js'
+import { publishToKuaishou } from './kuaishou.js'
 import { publishToShipinhao } from './shipinhao.js'
 import { publishToXiaohongshu } from './xiaohongshu.js'
 
-/** 已完成 Playwright 平移的平台（PU2 douyin + PU3 shipinhao/xiaohongshu；kuaishou 待扩展） */
-export const MIGRATED_PLATFORMS: PublishPlatform[] = ['douyin', 'shipinhao', 'xiaohongshu']
+/** 已完成 Playwright 平移的平台（PU2 douyin + PU3 kuaishou/shipinhao/xiaohongshu，四平台齐） */
+export const MIGRATED_PLATFORMS: PublishPlatform[] = ['douyin', 'kuaishou', 'shipinhao', 'xiaohongshu']
 
 type PublishFlow = (ctx: import('./browser.js').BrowserContext, params: PlatformPublishParams) => Promise<import('./douyin.js').PlatformPublishResult>
 const PUBLISH_FLOWS: Partial<Record<PublishPlatform, PublishFlow>> = {
   douyin: publishToDouyin,
+  kuaishou: publishToKuaishou,
   shipinhao: publishToShipinhao,
   xiaohongshu: publishToXiaohongshu,
 }
