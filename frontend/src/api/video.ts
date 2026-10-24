@@ -249,9 +249,7 @@ export function getVideoOptions(): Promise<VideoOptions> {
   return apiGet('/video/options')
 }
 
-export function getVideoCopies(
-  query?: Record<string, QueryValue>,
-): Promise<{
+export function getVideoCopies(query?: Record<string, QueryValue>): Promise<{
   items: Array<{
     id: string
     title: string | null
@@ -304,9 +302,7 @@ export function listVideoJobs(query?: Record<string, QueryValue>): Promise<{ ite
   return apiGet('/video/jobs', query)
 }
 
-export function getVideoJob(
-  id: string,
-): Promise<
+export function getVideoJob(id: string): Promise<
   JobSummary & {
     snapshot: unknown
     textSnapshot: { segments: TimelineItem[]; charCount: number; estSeconds: number } | null

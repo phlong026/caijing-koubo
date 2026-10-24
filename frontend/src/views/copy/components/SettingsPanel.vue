@@ -12,7 +12,9 @@
       <div class="creative-requirements">
         <div class="flex items-center justify-between mb-1">
           <span class="text-[13px] text-[#4a5872]">本次创作要求</span>
-          <span class="mw-subtle tabular-nums">{{ (model.instructions ?? '').length }}/{{ limits.maxInstructions }}</span>
+          <span class="mw-subtle tabular-nums"
+            >{{ (model.instructions ?? '').length }}/{{ limits.maxInstructions }}</span
+          >
         </div>
         <a-textarea
           v-model="model.instructions"
@@ -26,7 +28,13 @@
       <div class="mw-form-row items-start">
         <label class="mw-form-label pt-1" for="copy-template">内容模板</label>
         <div class="flex-1 min-w-0">
-          <a-select id="copy-template" v-model="model.templateId" :disabled="readonly" placeholder="选择内容模板" class="w-full">
+          <a-select
+            id="copy-template"
+            v-model="model.templateId"
+            :disabled="readonly"
+            placeholder="选择内容模板"
+            class="w-full"
+          >
             <a-option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</a-option>
           </a-select>
           <p v-if="currentTemplate" class="mw-subtle mt-2 leading-relaxed">{{ currentTemplate.description }}</p>
@@ -56,7 +64,9 @@
         <span class="mw-form-label pt-1">目标时长</span>
         <div class="flex-1">
           <a-radio-group v-model="model.durationTier" type="button" :disabled="readonly" size="small">
-            <a-radio v-for="d in durationTiers" :key="d.key" :value="d.key" :aria-label="d.name">{{ d.name.includes('（') ? d.name.split('（')[1].replace('）', '').replace(/\s/g, '') : d.name }}</a-radio>
+            <a-radio v-for="d in durationTiers" :key="d.key" :value="d.key" :aria-label="d.name">{{
+              d.name.includes('（') ? d.name.split('（')[1].replace('）', '').replace(/\s/g, '') : d.name
+            }}</a-radio>
           </a-radio-group>
 
           <!-- 自定义秒数 -->
@@ -71,8 +81,7 @@
             />
             <span class="mw-subtle">秒</span>
             <span class="mw-subtle">
-              {{ limits.customDurationMin }}–{{ limits.customDurationMax }} 秒，
-              约 {{ wordRangeText }}
+              {{ limits.customDurationMin }}–{{ limits.customDurationMax }} 秒， 约 {{ wordRangeText }}
             </span>
           </div>
           <div v-else class="mt-1.5 mw-subtle">约 {{ wordRangeText }}</div>
@@ -112,9 +121,7 @@
           <icon-exclamation-circle-fill v-else style="color: #b95f1d" />
           <span class="flex-1 font-medium text-[#2b3752]">{{ genStatusText }}</span>
           <span v-if="isGenerating" class="mw-subtle tabular-nums">{{ elapsedText }}</span>
-          <span class="mw-subtle tabular-nums">
-            {{ doneCount }}/{{ store.activeGeneration.count }}
-          </span>
+          <span class="mw-subtle tabular-nums"> {{ doneCount }}/{{ store.activeGeneration.count }} </span>
         </div>
 
         <!-- 进度条 -->
@@ -157,20 +164,28 @@
       </div>
     </a-spin>
     <div class="copy-generate-actions">
-      <div v-if="store.settingsError" role="alert" class="settings-error"><span>{{ store.settingsError }}</span><a-link @click="store.saveCreativeSettings()">重试</a-link></div>
+      <div v-if="store.settingsError" role="alert" class="settings-error">
+        <span>{{ store.settingsError }}</span
+        ><a-link @click="store.saveCreativeSettings()">重试</a-link>
+      </div>
       <div v-if="model.count > 1" class="mw-subtle">按误区、场景、问答等不同方向生成 {{ model.count }} 篇</div>
-      <a-button type="primary" long :loading="store.generating" :disabled="!canGenerate" @click="onGenerate"><template #icon><icon-edit /></template>生成文案</a-button>
-      <span v-if="draftLimitReached" class="mw-subtle">已有 {{ store.drafts.length }} 篇，本次最多可生成 {{ Math.max(0, limits.maxDrafts-store.drafts.length) }} 篇，请减少份数</span>
+      <a-button type="primary" long :loading="store.generating" :disabled="!canGenerate" @click="onGenerate"
+        ><template #icon><icon-edit /></template>生成文案</a-button
+      >
+      <span v-if="draftLimitReached" class="mw-subtle"
+        >已有 {{ store.drafts.length }} 篇，本次最多可生成
+        {{ Math.max(0, limits.maxDrafts - store.drafts.length) }} 篇，请减少份数</span
+      >
       <span v-if="readonly" class="mw-subtle">审核中不可生成新稿</span>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
-import type { DurationTier, CreativeSettings } from '@/api/copy'
+import type { CreativeSettings } from '@/api/copy'
 
 const emit = defineEmits<{ (e: 'preview', settings: CreativeSettings): void }>()
 const store = useCopyStore()
@@ -296,7 +311,8 @@ const progressHint = computed(() => {
   if (g.status === 'pending') return '正在排队，请稍候'
   if (genStatus.value === 'done') return '新稿已添加，可打开查看'
   if (genStatus.value === 'partial' || genStatus.value === 'failed') return '可查看失败原因后重试'
-  if (doneCount.value > 0) return `已产出 ${doneCount.value} 份，剩余 ${Math.max(0, (g.count ?? 0) - doneCount.value)} 份正在写`
+  if (doneCount.value > 0)
+    return `已产出 ${doneCount.value} 份，剩余 ${Math.max(0, (g.count ?? 0) - doneCount.value)} 份正在写`
   return '正在整理素材并撰写文案，请稍候'
 })
 
@@ -322,7 +338,10 @@ watch(
 )
 
 async function onGenerate(): Promise<void> {
-  if (!(await store.saveCreativeSettings())) { Message.error(store.settingsError || '请补全创作设置'); return }
+  if (!(await store.saveCreativeSettings())) {
+    Message.error(store.settingsError || '请补全创作设置')
+    return
+  }
   if (model.durationTier === 'custom' && !model.durationSeconds) {
     Message.warning('请填写自定义时长（秒）')
     return
@@ -371,7 +390,9 @@ async function onGenerate(): Promise<void> {
 .gen-panel {
   background: #f8fafd;
   border-color: #eef2f8;
-  transition: background 0.25s ease, border-color 0.25s ease;
+  transition:
+    background 0.25s ease,
+    border-color 0.25s ease;
 }
 .gen-running {
   background: var(--mw-primary-faint);

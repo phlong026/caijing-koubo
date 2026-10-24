@@ -9,15 +9,18 @@
     <a-spin :loading="loading" class="w-full">
       <a-empty v-if="!loading && !items.length" description="暂无版本记录" />
 
-      <div class="flex items-center gap-3 mb-4"><a-checkbox v-model="onlyCurrent">只看当前候选稿</a-checkbox><span class="mw-subtle">{{ visibleItems.length }} 个版本</span></div>
+      <div class="flex items-center gap-3 mb-4">
+        <a-checkbox v-model="onlyCurrent">只看当前候选稿</a-checkbox
+        ><span class="mw-subtle">{{ visibleItems.length }} 个版本</span>
+      </div>
       <div v-if="items.length" class="space-y-2.5">
-        <div
-          v-for="v in visibleItems"
-          :key="v.id"
-          class="version-row"
-          :class="{ expanded: expandedId === v.id }"
-        >
-          <button type="button" class="flex items-center gap-2 cursor-pointer w-full border-0 bg-transparent p-0 text-left" :aria-expanded="expandedId === v.id" @click="toggle(v.id)">
+        <div v-for="v in visibleItems" :key="v.id" class="version-row" :class="{ expanded: expandedId === v.id }">
+          <button
+            type="button"
+            class="flex items-center gap-2 cursor-pointer w-full border-0 bg-transparent p-0 text-left"
+            :aria-expanded="expandedId === v.id"
+            @click="toggle(v.id)"
+          >
             <a-tag :color="originColor(v.origin)" size="small">{{ originLabel(v.origin) }}</a-tag>
             <span class="text-[13px] font-medium text-[#131f38]">第 {{ v.versionNo }} 版</span>
             <span v-if="v.isLocked" class="mw-tag mw-tag-blue">已提审</span>
@@ -27,7 +30,9 @@
             <icon-down class="text-[#9aa6ba] transition-transform" :class="{ 'rotate-180': expandedId === v.id }" />
           </button>
 
-          <div class="mw-subtle mt-2">{{ v.draftName || store.drafts.find(d=>d.id===v.draftId)?.name || '候选稿' }}</div>
+          <div class="mw-subtle mt-2">
+            {{ v.draftName || store.drafts.find((d) => d.id === v.draftId)?.name || '候选稿' }}
+          </div>
           <!-- 版本摘要 -->
           <div v-if="v.title" class="mt-1.5 text-[13px] text-[#4a5872] pl-1">{{ v.title }}</div>
 
@@ -68,17 +73,15 @@
     <a-modal v-model:visible="diffVisible" title="版本对比" :width="720" :footer="false" unmount-on-close>
       <div v-if="diffLoading" class="py-12 text-center"><a-spin /></div>
       <div v-else-if="diff" class="space-y-2 max-h-[480px] overflow-auto">
-        <div
-          v-for="(d, i) in diff.sections"
-          :key="i"
-          class="diff-row"
-          :class="`diff-${d.change}`"
-        >
+        <div v-for="(d, i) in diff.sections" :key="i" class="diff-row" :class="`diff-${d.change}`">
           <div class="flex items-center gap-2 mb-1">
             <a-tag :color="diffColor(d.change)" size="small">{{ diffLabel(d.change) }}</a-tag>
             <span class="text-[13px] font-medium text-[#131f38]">第 {{ i + 1 }} 段</span>
           </div>
-          <div v-if="d.change !== 'added'" class="text-[12px] leading-[1.75] text-[#9aa6ba] line-through whitespace-pre-wrap">
+          <div
+            v-if="d.change !== 'added'"
+            class="text-[12px] leading-[1.75] text-[#9aa6ba] line-through whitespace-pre-wrap"
+          >
             {{ d.base || '（空）' }}
           </div>
           <div v-if="d.change !== 'removed'" class="text-[13px] leading-[1.75] text-[#3c4a63] whitespace-pre-wrap">
@@ -99,8 +102,10 @@ import { copyApi, type CopyVersion, type Section, type VersionOrigin } from '@/a
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: 'update:visible', v: boolean): void }>()
 const store = useCopyStore()
-const onlyCurrent=ref(true)
-const visibleItems=computed(()=>onlyCurrent.value?items.value.filter(v=>v.draftId===store.editor?.draftId):items.value)
+const onlyCurrent = ref(true)
+const visibleItems = computed(() =>
+  onlyCurrent.value ? items.value.filter((v) => v.draftId === store.editor?.draftId) : items.value,
+)
 
 const loading = ref(false)
 const items = ref<CopyVersion[]>([])

@@ -65,7 +65,9 @@ export const useBenchmarkStore = defineStore('benchmark', () => {
   const showPlayCount = ref(false)
   const videoFilter = ref<BenchmarkVideoQuery>({ dataSource: 'real' })
   let videoRequest = 0
-  const realAccounts = computed(() => accounts.value.filter((a) => !(a.addedBy === 'smoke' && a.nickname?.startsWith('示例账号_'))))
+  const realAccounts = computed(() =>
+    accounts.value.filter((a) => !(a.addedBy === 'smoke' && a.nickname?.startsWith('示例账号_'))),
+  )
 
   /* ── 告警 ─────────────────────────────── */
   const alerts = ref<Alert[]>([])
@@ -122,11 +124,18 @@ export const useBenchmarkStore = defineStore('benchmark', () => {
 
   /* ── 视频 ─────────────────────────────── */
   async function loadVideos(partial?: BenchmarkVideoQuery): Promise<void> {
-    if (partial) { videoFilter.value = { ...videoFilter.value, ...partial }; videoPage.value = 1 }
+    if (partial) {
+      videoFilter.value = { ...videoFilter.value, ...partial }
+      videoPage.value = 1
+    }
     const request = ++videoRequest
     videosLoading.value = true
     try {
-      const res = await getBenchmarkVideos({ ...videoFilter.value, page: videoPage.value, pageSize: videoPageSize.value })
+      const res = await getBenchmarkVideos({
+        ...videoFilter.value,
+        page: videoPage.value,
+        pageSize: videoPageSize.value,
+      })
       if (request !== videoRequest) return
       videos.value = res.items
       videoTotal.value = res.total

@@ -45,9 +45,9 @@
       </div>
     </a-spin>
     <div class="mt-3 flex items-center justify-end gap-2">
-      <a-button size="small" :disabled="page <= 1" @click="page--; reload()">上一页</a-button>
+      <a-button size="small" :disabled="page <= 1" @click="goPage(page - 1)">上一页</a-button>
       <span class="mw-subtle text-[12px]">第 {{ page }} 页 · 共 {{ total }} 条</span>
-      <a-button size="small" :disabled="page * 20 >= total" @click="page++; reload()">下一页</a-button>
+      <a-button size="small" :disabled="page * 20 >= total" @click="goPage(page + 1)">下一页</a-button>
     </div>
   </a-drawer>
 </template>
@@ -97,6 +97,11 @@ async function reload(): Promise<void> {
   } finally {
     loading.value = false
   }
+}
+
+function goPage(p: number): void {
+  page.value = p
+  void reload()
 }
 
 onMounted(reload)

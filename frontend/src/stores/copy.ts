@@ -1,7 +1,16 @@
 import { defineStore } from 'pinia'
 import { computed, reactive, ref, watch } from 'vue'
 import { ApiError } from '@/api/client'
-import { copyApi, type CreativeSettings, type CopyDetail, type CopyOptions, type Draft, type Generation, type PrecheckResult, type Section } from '@/api/copy'
+import {
+  copyApi,
+  type CreativeSettings,
+  type CopyDetail,
+  type CopyOptions,
+  type Draft,
+  type Generation,
+  type PrecheckResult,
+  type Section,
+} from '@/api/copy'
 
 /**
  * 文案工坊主状态（W6）。
@@ -191,7 +200,9 @@ export const useCopyStore = defineStore('copy', () => {
   const generating = ref(false)
   const activeGeneration = ref<Generation | null>(null)
   /** 本批次已就绪的稿（来自 generation 接口的 drafts），用于「第 N 份已到」的即时反馈 */
-  const generatedDrafts = ref<Array<{ id: string; draftNo: number; name: string; title: string | null; wordCount: number }>>([])
+  const generatedDrafts = ref<
+    Array<{ id: string; draftNo: number; name: string; title: string | null; wordCount: number }>
+  >([])
   /** 本轮生成开始的时间戳与预计总时长，用于进度条与剩余时间估算 */
   const genStartedAt = ref<number | null>(null)
   const genEstimateMs = ref<number>(0)
@@ -233,25 +244,47 @@ export const useCopyStore = defineStore('copy', () => {
     }
   }
 
-  const creativeSettings = reactive<CreativeSettings>({ templateId: '', styleId: '', durationTier: 'medium', durationSeconds: 60, count: 1, instructions: '' })
+  const creativeSettings = reactive<CreativeSettings>({
+    templateId: '',
+    styleId: '',
+    durationTier: 'medium',
+    durationSeconds: 60,
+    count: 1,
+    instructions: '',
+  })
   const settingsSaving = ref(false)
   const settingsError = ref('')
   const savedSettings = ref('')
   const settingsCopyId = ref('')
   let settingsTimer: ReturnType<typeof setTimeout> | null = null
   let settingsPending: Promise<boolean> | null = null
-  const settingsDirty = computed(() => !!settingsCopyId.value && JSON.stringify(creativeSettings) !== savedSettings.value)
+  const settingsDirty = computed(
+    () => !!settingsCopyId.value && JSON.stringify(creativeSettings) !== savedSettings.value,
+  )
   function hydrateSettings() {
     const s = detail.value?.copy.settings ?? {}
     settingsCopyId.value = ''
-    Object.assign(creativeSettings, { templateId: s.templateId || options.value?.templates[0]?.id || '', styleId: s.styleId || availableStyles.value[0]?.id || '', durationTier: s.durationTier || 'medium', durationSeconds: s.durationSeconds ?? 60, count: s.count ?? 1, instructions: s.instructions ?? '' })
+    Object.assign(creativeSettings, {
+      templateId: s.templateId || options.value?.templates[0]?.id || '',
+      styleId: s.styleId || availableStyles.value[0]?.id || '',
+      durationTier: s.durationTier || 'medium',
+      durationSeconds: s.durationSeconds ?? 60,
+      count: s.count ?? 1,
+      instructions: s.instructions ?? '',
+    })
     savedSettings.value = JSON.stringify(creativeSettings)
     settingsCopyId.value = detail.value?.copy.id ?? ''
     settingsError.value = ''
   }
   async function saveCreativeSettings(): Promise<boolean> {
-    if (settingsTimer) { clearTimeout(settingsTimer); settingsTimer = null }
-    if (settingsPending) { await settingsPending; if (!settingsDirty.value) return !settingsError.value }
+    if (settingsTimer) {
+      clearTimeout(settingsTimer)
+      settingsTimer = null
+    }
+    if (settingsPending) {
+      await settingsPending
+      if (!settingsDirty.value) return !settingsError.value
+    }
     if (!settingsDirty.value || !copy.value || !canEdit.value) return true
     const id = copy.value.id
     const body = JSON.parse(JSON.stringify(creativeSettings)) as CreativeSettings
@@ -260,21 +293,39 @@ export const useCopyStore = defineStore('copy', () => {
     settingsError.value = ''
     settingsPending = (async () => {
       try {
-        const r = await copyApi.saveSettings(id, body)
-        if (detail.value?.copy.id === id) { detail.value.copy.settings = { ...detail.value.copy.settings, ...body }; savedSettings.value = JSON.stringify(body) }
+        await copyApi.saveSettings(id, body)
+        if (detail.value?.copy.id === id) {
+          detail.value.copy.settings = { ...detail.value.copy.settings, ...body }
+          savedSettings.value = JSON.stringify(body)
+        }
         return true
-      } catch (e) { settingsError.value = (e as Error).message; return false }
-      finally { settingsSaving.value = false; settingsPending = null }
+      } catch (e) {
+        settingsError.value = (e as Error).message
+        return false
+      } finally {
+        settingsSaving.value = false
+        settingsPending = null
+      }
     })()
     return settingsPending
   }
-  watch(creativeSettings, () => {
-    if (settingsTimer) clearTimeout(settingsTimer)
-    if (settingsDirty.value && canEdit.value) settingsTimer = setTimeout(() => { void saveCreativeSettings() }, 900)
-  }, { deep: true })
+  watch(
+    creativeSettings,
+    () => {
+      if (settingsTimer) clearTimeout(settingsTimer)
+      if (settingsDirty.value && canEdit.value)
+        settingsTimer = setTimeout(() => {
+          void saveCreativeSettings()
+        }, 900)
+    },
+    { deep: true },
+  )
 
   async function load(copyId: string): Promise<void> {
-    if (settingsDirty.value && !(await saveCreativeSettings())) { error.value = settingsError.value; return }
+    if (settingsDirty.value && !(await saveCreativeSettings())) {
+      error.value = settingsError.value
+      return
+    }
 
     loading.value = true
     error.value = null
@@ -460,7 +511,11 @@ export const useCopyStore = defineStore('copy', () => {
     }
     const task = performSave(confirmReedit)
     activeSave = task
-    try { return await task } finally { if (activeSave === task) activeSave = null }
+    try {
+      return await task
+    } finally {
+      if (activeSave === task) activeSave = null
+    }
   }
   async function performSave(confirmReedit = false): Promise<SaveResult> {
     if (!editor.value || !copy.value) return 'error'
@@ -501,7 +556,10 @@ export const useCopyStore = defineStore('copy', () => {
           error.value = '文案正在审核中，暂不可编辑'
           return 'error'
         }
-        if (ex.status === 409 && (ex as unknown as { details?: { requiresConfirm?: boolean } }).details?.requiresConfirm) {
+        if (
+          ex.status === 409 &&
+          (ex as unknown as { details?: { requiresConfirm?: boolean } }).details?.requiresConfirm
+        ) {
           return 'need_confirm'
         }
         e.saveError = ex.message
@@ -529,7 +587,8 @@ export const useCopyStore = defineStore('copy', () => {
     if (!d) return
     const target = d.drafts.find((x) => x.id === draftId)
     if (target) {
-      const unchanged = target.title === saved.title && JSON.stringify(target.sections) === JSON.stringify(saved.sections)
+      const unchanged =
+        target.title === saved.title && JSON.stringify(target.sections) === JSON.stringify(saved.sections)
       const isFinal = target.isFinal && unchanged
       Object.assign(target, saved, { isFinal })
       target.rev = rev
@@ -580,7 +639,10 @@ export const useCopyStore = defineStore('copy', () => {
   }
 
   async function runPrecheck(): Promise<PrecheckResult | null> {
-    if (!(await saveCreativeSettings())) { error.value = settingsError.value; return null }
+    if (!(await saveCreativeSettings())) {
+      error.value = settingsError.value
+      return null
+    }
     if (!copy.value || !editor.value) return null
     // 预检先落盘，避免校验的是旧内容
     if (isDirty.value) {
@@ -646,7 +708,13 @@ export const useCopyStore = defineStore('copy', () => {
         }
       }
       const accepted = await copyApi.generate(copy.value.id, body)
-      activeGeneration.value = { id: accepted.generationId, status: accepted.status, count: body.count, succeeded: 0, failed: 0 } as Generation
+      activeGeneration.value = {
+        id: accepted.generationId,
+        status: accepted.status,
+        count: body.count,
+        succeeded: 0,
+        failed: 0,
+      } as Generation
       genStartedAt.value = Date.now()
       genEstimateMs.value = estimateDuration(Math.max(1, Number(body.count) || 1))
       startTick()
@@ -683,7 +751,7 @@ export const useCopyStore = defineStore('copy', () => {
             const ratio = real / ideal
             if (ratio > 0.3 && ratio < 3) {
               // 平滑移动，避免单次抖动把预估带偏
-              calibration = calibration * 0.65 + (ratio * 1.15) * 0.35
+              calibration = calibration * 0.65 + ratio * 1.15 * 0.35
             }
           }
           if (copy.value) {
@@ -695,7 +763,9 @@ export const useCopyStore = defineStore('copy', () => {
             if (now && before && now.draftId !== before && g.status !== 'failed') {
               const d = (detail.value?.drafts ?? []).find((x) => x.id === now.draftId)
               switchedNotice.value = { draftName: d?.name ?? '新稿', wordCount: d?.wordCount ?? 0 }
-              window.setTimeout(() => { switchedNotice.value = null }, 8000)
+              window.setTimeout(() => {
+                switchedNotice.value = null
+              }, 8000)
             }
           }
           return
@@ -790,7 +860,11 @@ export const useCopyStore = defineStore('copy', () => {
   }
 
   return {
-    creativeSettings, settingsSaving, settingsError, settingsDirty, saveCreativeSettings,
+    creativeSettings,
+    settingsSaving,
+    settingsError,
+    settingsDirty,
+    saveCreativeSettings,
     options,
     optionsLoading,
     detail,
