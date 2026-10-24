@@ -4,41 +4,22 @@
  */
 import { getDb } from '../../db/index.js'
 import { fromDb } from '../../lib/time.js'
-import type { CopyLite, PublishPlanLite, ReviewLite, TopicLite, VideoJobLite } from './normalize.js'
+import type { CopyLite, CutLite, PublishPlanLite, ReviewLite, TopicLite, VideoJobLite } from './normalize.js'
 
-export interface ListFilter {
-  tab: 'all' | 'mine' | 'todo'
-  line?: string
-  keyword?: string
-  createdBy: string
-}
-
-/** 候选任务 = 未归档 copy（TC1）。筛选中 tab/phase/status 属聚合属性，在内存层过滤 */
-export async function listCandidateCopies(f: ListFilter): Promise<CopyLite[]> {
+/**
+ * 候选任务 = 未归档 copy（TC1）。
+ * tab / line / keyword / phase / status 都是聚合属性或计数口径相关，一律在内存过滤：
+ * 若把 tab=mine 下推 SQL，则 counts.all 会退化成「我的」数量（§6.1 tab 计数须为全量口径）。
+ */
+export async function listCandidateCopies(): Promise<CopyLite[]> {
   const db = getDb()
-  const where: string[] = ['c.`archived_at` IS NULL']
-  const params: unknown[] = []
-  if (f.tab === 'mine') {
-    where.push('c.`created_by` = ?')
-    params.push(f.createdBy)
-  }
-  if (f.line) {
-    where.push('c.`line` = ?')
-    params.push(f.line)
-  }
-  if (f.keyword) {
-    where.push('(c.`title` LIKE ? OR t.`title` LIKE ? OR p.`name` LIKE ?)')
-    const kw = `%${f.keyword}%`
-    params.push(kw, kw, kw)
-  }
   const rows = await db.all<Record<string, any>>(
     'SELECT c.`id`, c.`title`, c.`topic_id`, c.`status`, c.`approved_version_id`, c.`current_draft_id`, ' +
       'c.`review_gate`, c.`line`, c.`created_by`, c.`updated_at`, p.`name` AS `persona_name`, p.`owner_subject` ' +
       'FROM `copy` c ' +
       'LEFT JOIN `persona` p ON p.`id` = c.`persona_id` ' +
-      `WHERE ${where.join(' AND ')} ` +
+      'WHERE c.`archived_at` IS NULL ' +
       'ORDER BY c.`updated_at` DESC',
-    params,
   )
   return rows.map((r) => ({
     id: r.id,
@@ -140,19 +121,28 @@ export interface VersionRow {
   createdAt: string | null
 }
 
-/** 详情：文案版本（供 latest / approved 版本号与时间线） */
-export async function versionsDetailOfCopy(copyId: string): Promise<{ latest: number | null; approved: number | null; rows: VersionRow[] }> {
+/** 详情：文案版本（供 latest / submitted / approved 版本号与时间线） */
+export async function versionsDetailOfCopy(copyId: string): Promise<{
+  latest: number | null
+  submitted: number | null
+  approved: number | null
+  rows: VersionRow[]
+}> {
   const db = getDb()
   const rows = await db.all<Record<string, any>>(
     'SELECT `id`, `version_no`, `created_at` FROM `copy_version` WHERE `copy_id` = ? ORDER BY `version_no` ASC',
     [copyId],
   )
-  if (!rows.length) return { latest: null, approved: null, rows: [] }
-  const copy = await getDb().get<Record<string, any>>('SELECT `approved_version_id` FROM `copy` WHERE `id` = ?', [copyId])
+  if (!rows.length) return { latest: null, submitted: null, approved: null, rows: [] }
+  const copy = await getDb().get<Record<string, any>>(
+    'SELECT `submitted_version_id`, `approved_version_id` FROM `copy` WHERE `id` = ?',
+    [copyId],
+  )
+  const submittedId = copy?.submitted_version_id ?? null
   const approvedId = copy?.approved_version_id ?? null
   const mapped = rows.map((r) => ({ id: r.id as string, versionNo: Number(r.version_no), createdAt: fromDb(r.created_at) }))
-  const approvedRow = approvedId ? mapped.find((v) => v.id === approvedId) : undefined
-  return { latest: mapped[mapped.length - 1].versionNo, approved: approvedRow?.versionNo ?? null, rows: mapped }
+  const versionOf = (id: string | null) => (id ? (mapped.find((v) => v.id === id)?.versionNo ?? null) : null)
+  return { latest: mapped[mapped.length - 1].versionNo, submitted: versionOf(submittedId), approved: versionOf(approvedId), rows: mapped }
 }
 
 /** 每 copy 最新审核单（按 created_at 取最后一条） */
@@ -201,8 +191,36 @@ export async function latestVideoJobs(): Promise<Map<string, VideoJobLite>> {
   )
 }
 
-/** 每 copy 最新发布单（JOIN copy 限定未归档；同秒并列时内存取首条） */
-export async function latestPublishPlans(): Promise<Map<string, PublishPlanLite>> {
+/** 每 copy 最新成片行（copy 最新 video_job 下 version_no 最大的 video_cut；草稿行 v0 也算最新——无成片行时即草稿） */
+export async function latestCuts(): Promise<Map<string, CutLite>> {
+  const db = getDb()
+  const rows = await db.all<Record<string, any>>(
+    'SELECT vc.`id`, vc.`video_job_id`, vc.`version_no`, vc.`status`, vc.`render_stage`, vc.`progress`, ' +
+    'vc.`review_status`, vc.`error_code`, vc.`updated_at`, vj.`copy_id` ' +
+    'FROM `video_cut` vc ' +
+    'INNER JOIN `video_job` vj ON vj.`id` = vc.`video_job_id` ' +
+    'JOIN `copy` c ON c.`id` = vj.`copy_id` AND c.`archived_at` IS NULL ' +
+    'JOIN (SELECT `copy_id`, MAX(`version_no`) AS `mj` FROM `video_job` WHERE `archived_at` IS NULL GROUP BY `copy_id`) lj ' +
+    'ON lj.`copy_id` = vj.`copy_id` AND lj.`mj` = vj.`version_no` ' +
+    'JOIN (SELECT `video_job_id`, MAX(`version_no`) AS `mv` FROM `video_cut` GROUP BY `video_job_id`) lc ' +
+    'ON lc.`video_job_id` = vc.`video_job_id` AND lc.`mv` = vc.`version_no` ' +
+    'WHERE vj.`archived_at` IS NULL',
+  )
+  const toCut = (r: Record<string, any>): CutLite => ({
+    id: r.id,
+    videoJobId: r.video_job_id,
+    versionNo: Number(r.version_no),
+    status: r.status as string,
+    renderStage: r.render_stage as string,
+    progress: Number(r.progress ?? 0),
+    reviewStatus: r.review_status as string,
+    errorCode: r.error_code ?? null,
+    updatedAt: fromDb(r.updated_at),
+  })
+  return new Map(rows.map((r) => [r.copy_id as string, toCut(r)]))
+}
+
+/** 每 copy 最新发布单（JOIN copy 限定未归档；同秒并列时内存取首条） */export async function latestPublishPlans(): Promise<Map<string, PublishPlanLite>> {
   const db = getDb()
   const rows = await db.all<Record<string, any>>(
     'SELECT p.`id`, p.`copy_id`, p.`status`, p.`review_state`, p.`updated_at` ' +
@@ -308,4 +326,57 @@ export async function topicOfCopy(topicId: string | null): Promise<TopicLite | n
   if (!topicId) return null
   const map = await topicsByIds([topicId])
   return map.get(topicId) ?? null
+}
+
+/** 详情：copy 最新成片行（含 cut id 供事件查询） */
+export async function cutOfCopy(copyId: string): Promise<CutLite | null> {
+  const db = getDb()
+  const r = await db.get<Record<string, any>>(
+    'SELECT vc.`id`, vc.`video_job_id`, vc.`version_no`, vc.`status`, vc.`render_stage`, vc.`progress`, ' +
+    'vc.`review_status`, vc.`error_code`, vc.`updated_at` ' +
+    'FROM `video_cut` vc ' +
+    'INNER JOIN `video_job` vj ON vj.`id` = vc.`video_job_id` AND vj.`archived_at` IS NULL ' +
+    'WHERE vj.`copy_id` = ? ' +
+    'ORDER BY vj.`version_no` DESC, vc.`version_no` DESC LIMIT 1',
+    [copyId],
+  )
+  if (!r) return null
+  return {
+    id: r.id,
+    videoJobId: r.video_job_id,
+    versionNo: Number(r.version_no),
+    status: r.status as string,
+    renderStage: r.render_stage as string,
+    progress: Number(r.progress ?? 0),
+    reviewStatus: r.review_status as string,
+    errorCode: r.error_code ?? null,
+    updatedAt: fromDb(r.updated_at),
+  }
+}
+
+/** 详情：成片渲染事件流水（§3.6 时间线；取 copy 最新 job 的全部成片版本事件） */
+export async function cutEventsOfCopy(copyId: string, limit = 60): Promise<{ versionNo: number; toStatus: string; errorCode: string | null; createdAt: string }[]> {
+  const db = getDb()
+  const rows = await db.all<Record<string, any>>(
+    'SELECT vc.`version_no`, e.`to_status`, e.`error_code`, e.`created_at` ' +
+    'FROM `video_cut_event` e ' +
+    'INNER JOIN `video_cut` vc ON vc.`id` = e.`cut_id` ' +
+    'INNER JOIN `video_job` vj ON vj.`id` = vc.`video_job_id` AND vj.`archived_at` IS NULL ' +
+    'WHERE vj.`copy_id` = ? ' +
+    'ORDER BY e.`created_at` DESC LIMIT ?',
+    [copyId, limit],
+  )
+  return rows.map((r) => ({ versionNo: Number(r.version_no), toStatus: r.to_status as string, errorCode: r.error_code ?? null, createdAt: fromDb(r.created_at) as string }))
+}
+
+/** 详情：成片复审单（最新一条，供时间线） */
+export async function cutReviewOfCut(cutId: string): Promise<{ status: string; createdAt: string | null; decisionAt: string | null; decisionReason: string | null } | null> {
+  const db = getDb()
+  const r = await db.get<Record<string, any>>(
+    'SELECT `status`, `created_at`, `decision_at`, `decision_reason` FROM `cut_review_submission` ' +
+    'WHERE `cut_id` = ? ORDER BY `created_at` DESC LIMIT 1',
+    [cutId],
+  )
+  if (!r) return null
+  return { status: r.status as string, createdAt: fromDb(r.created_at), decisionAt: fromDb(r.decision_at), decisionReason: r.decision_reason ?? null }
 }

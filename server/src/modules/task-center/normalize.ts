@@ -52,6 +52,39 @@ export interface PublishPlanLite {
   updatedAt: string | null
 }
 
+/** video_cut 最新版本行（草稿行 version_no=0；成片行 >=1；cut 模块 §3 状态机） */
+export interface CutLite {
+  id: string
+  videoJobId: string
+  versionNo: number
+  status: string
+  renderStage: string
+  progress: number
+  reviewStatus: string
+  errorCode: string | null
+  updatedAt: string | null
+}
+
+export const CUT_STATUS_LABELS: Record<string, string> = {
+  draft: '剪辑配置中',
+  queued: '排队渲染',
+  rendering: '渲染中',
+  cancelling: '取消中',
+  completed: '已渲染',
+  failed: '渲染失败',
+  cancelled: '已取消',
+}
+
+const CUT_STAGE_LABELS: Record<string, string> = {
+  download: '下载基础视频',
+  breathe: '剪气口',
+  subtitle: '烧录字幕',
+  bgm: '混音 BGM',
+  tail: '风险尾页',
+  normalize: '规格归一',
+  uploading: '上传成片',
+}
+
 const GATE_LABELS: Record<string, string> = {
   submitted: '审核中',
   gate1: '审核中 · 第 1 关',
@@ -189,16 +222,61 @@ export function normalizePublishNode(
   }
 }
 
-/** 剪辑节点占位（TC9：模块未立项，剪辑模块上线后替换） */
-export function editPlaceholderNode(): TaskNode {
-  return node({ key: 'edit', title: '剪辑', statusKey: 'pending', statusLabel: '剪辑模块未上线 · 可直接发布基础视频', tone: 'todo', progress: null, happenedAt: null })
+/**
+ * 剪辑节点（TC9 真实化：数据源 = copy 最新 video_job 下 version_no 最大的 video_cut 行）。
+ * 剪辑是可选增强环节：未剪辑（not_cut / not_started）不参与链路推进（stageOf 跳过），
+ * 渲染失败 / 成片被退回计入需处理；任务完成判定不强制剪辑（发布输入可为基础视频，EC11）。
+ */
+export function normalizeEditNode(cut: CutLite | null, videoCompleted: boolean): TaskNode {
+  const base = { key: 'edit' as const, title: '剪辑', progress: null as number | null, happenedAt: cut?.updatedAt ?? null, refId: cut?.videoJobId ?? null }
+  if (!cut) {
+    return videoCompleted
+      ? node({ ...base, statusKey: 'not_cut', statusLabel: '未剪辑 · 可直接发布基础视频', tone: 'todo', actions: ['create_cut'] })
+      : node({ ...base, statusKey: 'not_started', statusLabel: '未开始', tone: 'todo', actions: [] })
+  }
+  if (cut.versionNo === 0) {
+    // 草稿行（status 恒为 draft）：用户已在剪辑页配置过
+    return node({ ...base, statusKey: 'editing', statusLabel: '剪辑配置中', tone: 'doing', actions: ['continue_edit'] })
+  }
+  const title = `成片 v${cut.versionNo}`
+  if (cut.status === 'queued' || cut.status === 'rendering' || cut.status === 'cancelling') {
+    const stage = CUT_STAGE_LABELS[cut.renderStage]
+    return node({
+      ...base, title, statusKey: 'rendering',
+      statusLabel: `${CUT_STATUS_LABELS[cut.status] ?? cut.status}${stage ? ` · ${stage}` : ''}`,
+      tone: 'doing', actions: ['view_cut_progress'], progress: cut.progress,
+    })
+  }
+  if (cut.status === 'failed') {
+    return node({ ...base, title, statusKey: 'cut_failed', statusLabel: cut.errorCode ? `渲染失败（${cut.errorCode}）` : '渲染失败', tone: 'error', actions: ['retry_cut'] })
+  }
+  if (cut.status === 'cancelled') {
+    return node({ ...base, title, statusKey: 'cut_cancelled', statusLabel: '已取消渲染', tone: 'todo', actions: ['continue_edit'] })
+  }
+  if (cut.status === 'completed') {
+    if (cut.reviewStatus === 'approved') {
+      return node({ ...base, title, statusKey: 'cut_approved', statusLabel: `成片已过审 v${cut.versionNo}`, tone: 'done', actions: [] })
+    }
+    if (cut.reviewStatus === 'in_review') {
+      return node({ ...base, title, statusKey: 'cut_in_review', statusLabel: '成片复审中', tone: 'wait', actions: ['view_cut_review'] })
+    }
+    if (cut.reviewStatus === 'rejected') {
+      return node({ ...base, title, statusKey: 'cut_rejected', statusLabel: '成片被退回', tone: 'error', actions: ['continue_edit'] })
+    }
+    return node({ ...base, title, statusKey: 'cut_review_pending', statusLabel: `已渲染 v${cut.versionNo} · 待提交复审`, tone: 'doing', actions: ['continue_edit'] })
+  }
+  return node({ ...base, title, statusKey: cut.status, statusLabel: CUT_STATUS_LABELS[cut.status] ?? cut.status, tone: 'todo', actions: [] })
 }
+
+/** 剪辑节点未参与链路的状态（stageOf 与完成判定跳过；剪辑可选，未剪辑不阻塞任务） */
+export const EDIT_INACTIVE_KEYS = new Set(['not_started', 'not_cut'])
 
 /** 需处理判定（TC5 口径：需人工介入才能继续；审核中不算，needs_review 算） */
 export function needAttentionOf(nodes: TaskNode[]): boolean {
   return nodes.some((n) => {
     if (n.key === 'copy') return n.statusKey === 'rejected'
     if (n.key === 'base_video') return ['failed', 'save_failed', 'submission_unknown'].includes(n.statusKey)
+    if (n.key === 'edit') return ['cut_failed', 'cut_rejected'].includes(n.statusKey)
     if (n.key === 'publish') return ['needs_review', 'manual', 'partial', 'failed'].includes(n.statusKey)
     return false
   })
@@ -216,12 +294,12 @@ export function taskStatusOf(nodes: TaskNode[]): TaskStatus {
   return 'in_progress'
 }
 
-/** 当前活动节点（§3.3：链路顺序第一个非 done；剪辑占位不计；全 done 取发布节点为终点） */
+/** 当前活动节点（§3.3：链路顺序第一个非 done；剪辑未参与链路时跳过；全 done 取发布节点为终点） */
 export function stageOf(nodes: TaskNode[]): TaskNode {
-  const order: NodeKey[] = ['topic', 'copy', 'base_video', 'publish']
+  const order: NodeKey[] = ['topic', 'copy', 'base_video', 'edit', 'publish']
   for (const k of order) {
     const n = nodes.find((x) => x.key === k)
-    if (n && n.tone !== 'done') return n
+    if (n && n.tone !== 'done' && !(n.key === 'edit' && EDIT_INACTIVE_KEYS.has(n.statusKey))) return n
   }
   return nodes.find((n) => n.key === 'publish') ?? nodes[nodes.length - 1]
 }

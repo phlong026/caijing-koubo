@@ -206,6 +206,9 @@ export function nextActionsOf(job: { phase: string; remoteTaskId: string | null;
       return job.timelineSource === 'estimated' ? ['continue_edit', 'realign'] : ['continue_edit']
     case 'failed':
       return ['regenerate']
+    case 'cancelled':
+      // 任务中心 §3.2 归一表：已取消 → 重新生成（VideoCreate 对 cancelled 已开放「重新生成」入口）
+      return ['regenerate']
     default:
       return []
   }

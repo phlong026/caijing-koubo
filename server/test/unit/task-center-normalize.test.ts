@@ -1,18 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import {
-  editPlaceholderNode,
   needAttentionOf,
   normalizeCopyNode,
+  normalizeEditNode,
   normalizePublishNode,
   normalizeTopicNode,
   normalizeVideoNode,
   stageOf,
   taskStatusOf,
   type CopyLite,
+  type CutLite,
   type PublishPlanLite,
   type ReviewLite,
   type VideoJobLite,
 } from '../../src/modules/task-center/normalize.js'
+import { buildTaskSummary, type Aggregates, type SourceKey } from '../../src/modules/task-center/service.js'
 
 const copy = (over: Partial<CopyLite> = {}): CopyLite => ({
   id: 'cp_abcdef1234567890abcd',
@@ -50,6 +52,19 @@ const plan = (over: Partial<PublishPlanLite> = {}): PublishPlanLite => ({
   status: 'scheduled',
   reviewState: 'none',
   updatedAt: '2026-10-24T02:00:00.000Z',
+  ...over,
+})
+
+const cut = (over: Partial<CutLite> = {}): CutLite => ({
+  id: 'vcut_1',
+  videoJobId: 'vj_1',
+  versionNo: 1,
+  status: 'completed',
+  renderStage: 'uploading',
+  progress: 100,
+  reviewStatus: 'none',
+  errorCode: null,
+  updatedAt: '2026-10-24T03:00:00.000Z',
   ...over,
 })
 
@@ -146,6 +161,8 @@ describe('任务中心状态归一（任务书 §3.2 全分支）', () => {
 
     const cancelled = normalizeVideoNode(job({ phase: 'cancelled' }), false)
     expect(cancelled.statusLabel).toBe('已取消')
+    // §3.2：已取消 → regenerate（VideoCreate 对 cancelled 已开放重新生成入口）
+    expect(cancelled.action).toBe('regenerate')
 
     const notStarted = normalizeVideoNode(null, false)
     expect(notStarted.actions).toEqual([])
@@ -191,7 +208,73 @@ describe('任务中心状态归一（任务书 §3.2 全分支）', () => {
     expect(cancelled.actions).toEqual([])
   })
 
-  it('任务级状态：需处理 > 已取消 > 已完成 > 进行中；剪辑占位不参与活动节点', () => {
+  it('剪辑节点（TC9 真实化）：无 cut 按视频是否完成二分；草稿行 = 剪辑配置中', () => {
+    const notStarted = normalizeEditNode(null, false)
+    expect(notStarted.statusKey).toBe('not_started')
+    expect(notStarted.actions).toEqual([])
+
+    const notCut = normalizeEditNode(null, true)
+    expect(notCut.statusKey).toBe('not_cut')
+    expect(notCut.action).toBe('create_cut')
+
+    const draft = normalizeEditNode(cut({ versionNo: 0, status: 'draft', renderStage: 'idle', progress: 0 }), false)
+    expect(draft.statusKey).toBe('editing')
+    expect(draft.tone).toBe('doing')
+    expect(draft.action).toBe('continue_edit')
+  })
+
+  it('剪辑节点：渲染主链 queued/rendering/cancelling 显示阶段与进度', () => {
+    const queued = normalizeEditNode(cut({ status: 'queued', renderStage: 'idle', progress: 0 }), false)
+    expect(queued.statusKey).toBe('rendering')
+    expect(queued.statusLabel).toBe('排队渲染')
+    expect(queued.action).toBe('view_cut_progress')
+
+    const rendering = normalizeEditNode(cut({ status: 'rendering', renderStage: 'subtitle', progress: 46 }), false)
+    expect(rendering.statusLabel).toBe('渲染中 · 烧录字幕')
+    expect(rendering.progress).toBe(46)
+    expect(rendering.refId).toBe('vj_1')
+
+    const cancelling = normalizeEditNode(cut({ status: 'cancelling', renderStage: 'bgm', progress: 60 }), false)
+    expect(cancelling.statusKey).toBe('rendering')
+  })
+
+  it('剪辑节点：failed/cancelled 容错分支', () => {
+    const failed = normalizeEditNode(cut({ status: 'failed', errorCode: 'FFMPEG_EXIT_1', progress: 30 }), false)
+    expect(failed.statusKey).toBe('cut_failed')
+    expect(failed.tone).toBe('error')
+    expect(failed.statusLabel).toContain('FFMPEG_EXIT_1')
+    expect(failed.action).toBe('retry_cut')
+
+    const cancelled = normalizeEditNode(cut({ status: 'cancelled', progress: 0 }), false)
+    expect(cancelled.statusKey).toBe('cut_cancelled')
+    expect(cancelled.tone).toBe('todo')
+    expect(cancelled.action).toBe('continue_edit')
+  })
+
+  it('剪辑节点：completed × 复审四态（none/in_review/rejected/approved）', () => {
+    const pending = normalizeEditNode(cut({ reviewStatus: 'none' }), false)
+    expect(pending.statusKey).toBe('cut_review_pending')
+    expect(pending.statusLabel).toBe('已渲染 v1 · 待提交复审')
+    expect(pending.action).toBe('continue_edit')
+
+    const inReview = normalizeEditNode(cut({ reviewStatus: 'in_review' }), false)
+    expect(inReview.statusKey).toBe('cut_in_review')
+    expect(inReview.tone).toBe('wait')
+    expect(inReview.action).toBe('view_cut_review')
+
+    const rejected = normalizeEditNode(cut({ reviewStatus: 'rejected' }), false)
+    expect(rejected.statusKey).toBe('cut_rejected')
+    expect(rejected.tone).toBe('error')
+    expect(rejected.action).toBe('continue_edit')
+
+    const approved = normalizeEditNode(cut({ reviewStatus: 'approved' }), false)
+    expect(approved.statusKey).toBe('cut_approved')
+    expect(approved.tone).toBe('done')
+    expect(approved.actions).toEqual([])
+    expect(approved.title).toBe('成片 v1')
+  })
+
+  it('任务级状态：需处理 > 已取消 > 已完成 > 进行中；剪辑未参与链路不计入活动节点', () => {
     const videoFailed = [normalizeCopyNode(copy({ status: 'approved' }), review({ status: 'approved' }), { latest: 1, approved: 1 }, true), normalizeVideoNode(job({ phase: 'failed' }), false), normalizePublishNode(null, [], false)]
     expect(taskStatusOf(videoFailed)).toBe('attention')
 
@@ -205,9 +288,29 @@ describe('任务中心状态归一（任务书 §3.2 全分支）', () => {
     ]
     expect(taskStatusOf(allDone)).toBe('completed')
 
-    const nodes = [...allDone, editPlaceholderNode()]
-    expect(stageOf(nodes).key).toBe('publish')
-    expect(needAttentionOf(nodes)).toBe(false)
+    // 未剪辑（可选环节）不参与链路推进：全 done 时活动节点落发布，也不产生需处理
+    const withNotCut = [...allDone, normalizeEditNode(null, true)]
+    expect(stageOf(withNotCut).key).toBe('publish')
+    expect(needAttentionOf(withNotCut)).toBe(false)
+
+    // 剪辑渲染失败 → 需处理；活动节点为剪辑
+    const cutFailedNodes = [
+      normalizeCopyNode(copy({ status: 'approved', approvedVersionId: 'v1' }), review({ status: 'approved' }), { latest: 1, approved: 1 }, true),
+      normalizeVideoNode(job({ phase: 'completed' }), false),
+      normalizeEditNode(cut({ status: 'failed', errorCode: 'FFMPEG_EXIT_1' }), false),
+      normalizePublishNode(null, [], true),
+    ]
+    expect(needAttentionOf(cutFailedNodes)).toBe(true)
+    expect(taskStatusOf(cutFailedNodes)).toBe('attention')
+    expect(stageOf(cutFailedNodes).key).toBe('edit')
+
+    // 成片被退回同样计入需处理
+    const cutRejected = [normalizeEditNode(cut({ reviewStatus: 'rejected' }), false)]
+    expect(needAttentionOf(cutRejected)).toBe(true)
+
+    // 复审中不算需处理（审核台有专门队列，TC5 口径）
+    const cutInReview = [normalizeEditNode(cut({ reviewStatus: 'in_review' }), false)]
+    expect(needAttentionOf(cutInReview)).toBe(false)
 
     const pendingWrite = [normalizeCopyNode(copy(), null, { latest: null, approved: null }, false), normalizeVideoNode(null, false), normalizePublishNode(null, [], false)]
     expect(taskStatusOf(pendingWrite)).toBe('in_progress')
@@ -218,5 +321,52 @@ describe('任务中心状态归一（任务书 §3.2 全分支）', () => {
     const nodes = [normalizeCopyNode(copy({ status: 'approved', approvedVersionId: 'v1' }), review({ status: 'approved' }), { latest: 1, approved: 1 }, true), normalizeVideoNode(job({ phase: 'completed' }), false), normalizePublishNode(plan({ status: 'scheduled', reviewState: 'needs_review' }), [], false)]
     expect(needAttentionOf(nodes)).toBe(true)
     expect(taskStatusOf(nodes)).toBe('attention')
+  })
+})
+
+describe('聚合降级（AC-R1：单来源异常只降级对应节点）', () => {
+  const aggWith = (failed: SourceKey[], over: Partial<Aggregates> = {}): Aggregates => ({
+    topics: new Map(),
+    reviews: new Map(),
+    versions: new Map([[copy().id, { latest: 1, approved: 1 }]]),
+    jobs: new Map(),
+    cuts: new Map(),
+    plans: new Map(),
+    logStatuses: new Map(),
+    failed: new Set(failed),
+    ...over,
+  })
+  const nodeOf = (t: ReturnType<typeof buildTaskSummary>, key: string) => t.nodes.find((n) => n.key === key)!
+
+  it('jobs 失败 → 基础视频「状态获取失败」，稿件节点仍按真实状态归一', () => {
+    const t = buildTaskSummary(copy({ status: 'approved', approvedVersionId: 'v1' }), aggWith(['jobs']))
+    const video = nodeOf(t, 'base_video')
+    expect(video.statusKey).toBe('error')
+    expect(video.statusLabel).toBe('状态获取失败')
+    expect(video.actions).toEqual([])
+    expect(nodeOf(t, 'copy').statusKey).toBe('approved')
+  })
+
+  it('cuts 失败 → 剪辑「状态获取失败」，其余节点正常', () => {
+    const t = buildTaskSummary(copy({ status: 'approved', approvedVersionId: 'v1' }), aggWith(['cuts']))
+    const edit = nodeOf(t, 'edit')
+    expect(edit.statusKey).toBe('error')
+    expect(edit.statusLabel).toBe('状态获取失败')
+    expect(nodeOf(t, 'base_video').statusKey).not.toBe('error')
+    expect(nodeOf(t, 'publish').statusKey).not.toBe('error')
+  })
+
+  it('plans 失败 → 发布「状态获取失败」，其余节点正常', () => {
+    const t = buildTaskSummary(copy({ status: 'approved', approvedVersionId: 'v1' }), aggWith(['plans']))
+    expect(nodeOf(t, 'publish').statusLabel).toBe('状态获取失败')
+    expect(nodeOf(t, 'copy').statusKey).toBe('approved')
+    expect(nodeOf(t, 'base_video').statusLabel).not.toBe('状态获取失败')
+  })
+
+  it('reviews 失败 → 稿件「状态获取失败」，不影响视频与发布节点', () => {
+    const t = buildTaskSummary(copy({ status: 'approved', approvedVersionId: 'v1' }), aggWith(['reviews']))
+    expect(nodeOf(t, 'copy').statusLabel).toBe('状态获取失败')
+    expect(nodeOf(t, 'base_video').statusKey).not.toBe('error')
+    expect(nodeOf(t, 'publish').statusKey).not.toBe('error')
   })
 })

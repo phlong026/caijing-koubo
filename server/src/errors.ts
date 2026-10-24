@@ -97,6 +97,8 @@ export type ErrorCode =
   | 'BGM_NOT_FOUND' // BGM 不存在（FR-B1）
   | 'BGM_IN_USE' // BGM 被成片版本引用，不可删除（FR-B3）
   | 'FINAL_NOT_READY' // 成片不满足发布取用条件（FR-X1：未渲染/未过审/已实质修改）
+  // ── 任务中心（任务书 §6.2）──
+  | 'TASK_NOT_FOUND' // copy 不存在或已归档（只读聚合视图，不建任务主表）
 
 export class ApiError extends Error {
   readonly code: ErrorCode
@@ -279,6 +281,10 @@ export const err = {
   bgmNotFound: (msg = 'BGM 不存在或已下架', details?: unknown) => new ApiError('BGM_NOT_FOUND', msg, 404, details),
   bgmInUse: (msg = 'BGM 已被成片版本引用，不可删除', details?: unknown) => new ApiError('BGM_IN_USE', msg, 409, details),
   finalNotReady: (msg = '成片不满足发布条件', details?: unknown) => new ApiError('FINAL_NOT_READY', msg, 409, details),
+
+  /* ── 任务中心（§6.2）─────────────────────────────────────────── */
+  /** 任务锚点是 copy：不存在或已归档都视为任务不可见 */
+  taskNotFound: (msg = '任务不存在或已归档', details?: unknown) => new ApiError('TASK_NOT_FOUND', msg, 404, details),
 }
 
 export function isApiError(e: unknown): e is ApiError {

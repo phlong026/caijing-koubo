@@ -15,7 +15,7 @@
     </PageHead>
 
     <div class="flex items-center gap-4 mb-4">
-      <a-tabs v-model:active-key="tab" type="line" class="mw-tabs flex-1" @change="fetchTasks">
+      <a-tabs v-model:active-key="tab" type="line" class="mw-tabs flex-1" @change="reload">
         <a-tab-pane key="all"
           ><template #title
             >全部任务 <span class="mw-subtle">{{ counts.all }}</span></template
@@ -34,25 +34,13 @@
       </a-tabs>
     </div>
     <div class="flex items-center gap-2.5 mb-4 -mt-2">
-      <a-select
-        v-model="filterPhase"
-        :style="{ width: '130px' }"
-        placeholder="全部阶段"
-        allow-clear
-        @change="fetchTasks"
-      >
+      <a-select v-model="filterPhase" :style="{ width: '130px' }" placeholder="全部阶段" allow-clear @change="reload">
         <a-option v-for="o in STAGE_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</a-option>
       </a-select>
-      <a-select
-        v-model="filterStatus"
-        :style="{ width: '130px' }"
-        placeholder="全部状态"
-        allow-clear
-        @change="fetchTasks"
-      >
+      <a-select v-model="filterStatus" :style="{ width: '130px' }" placeholder="全部状态" allow-clear @change="reload">
         <a-option v-for="o in STATUS_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</a-option>
       </a-select>
-      <a-select v-model="filterLine" :style="{ width: '150px' }" placeholder="全部线" allow-clear @change="fetchTasks">
+      <a-select v-model="filterLine" :style="{ width: '150px' }" placeholder="全部线" allow-clear @change="reload">
         <a-option v-for="(label, key) in LINE_LABELS" :key="key" :value="key">{{ label }}</a-option>
       </a-select>
       <a-input-search
@@ -60,8 +48,8 @@
         :style="{ width: '260px' }"
         placeholder="搜索任务标题、任务号、负责人..."
         allow-clear
-        @search="fetchTasks"
-        @clear="fetchTasks"
+        @search="reload"
+        @clear="reload"
       />
     </div>
 
@@ -178,17 +166,30 @@
             </template>
           </div>
 
-          <div class="mt-3 text-[14px] font-semibold mb-2">最近动态</div>
-          <div v-if="!current.timeline.length" class="mw-subtle">暂无动态</div>
-          <div v-for="(e, i) in current.timeline.slice(0, 8)" :key="i" class="flex items-start gap-2 py-1">
-            <span class="mw-dot mt-1.5 shrink-0" :style="{ background: toneColor(e.tone) }"></span>
-            <div class="min-w-0">
-              <div class="text-[12.5px] truncate">
-                {{ e.title }}<template v-if="e.desc"> · {{ e.desc }}</template>
-              </div>
-              <div class="text-[11px] text-[var(--mw-text3)]">{{ fmtTime(e.time) }}</div>
-            </div>
+          <div class="mt-3 flex items-center justify-between mb-2">
+            <span class="text-[14px] font-semibold">最近动态</span>
+            <span v-if="current.timelineTruncated" class="mw-subtle">仅显示最近 100 条</span>
           </div>
+          <div v-if="!current.timeline.length" class="mw-subtle">暂无动态</div>
+          <template v-else>
+            <div class="max-h-[340px] overflow-y-auto">
+              <div v-for="(e, i) in shownTimeline" :key="`${e.time}-${i}`" class="flex items-start gap-2 py-1">
+                <span class="mw-dot mt-1.5 shrink-0" :style="{ background: toneColor(e.tone) }"></span>
+                <div class="min-w-0">
+                  <div class="text-[12.5px] truncate">
+                    {{ e.title }}<template v-if="e.desc"> · {{ e.desc }}</template>
+                  </div>
+                  <div class="text-[11px] text-[var(--mw-text3)]">{{ fmtTime(e.time) }}</div>
+                </div>
+              </div>
+            </div>
+            <span
+              v-if="current.timeline.length > TIMELINE_COLLAPSED"
+              class="mw-link inline-block mt-1"
+              @click="timelineExpanded = !timelineExpanded"
+              >{{ timelineExpanded ? '收起' : `展开全部 ${current.timeline.length} 条` }}</span
+            >
+          </template>
 
           <a-button
             v-if="detailAction"
@@ -220,7 +221,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import PageHead from '@/components/PageHead.vue'
 import LineTag from '@/components/LineTag.vue'
@@ -238,14 +239,19 @@ import {
 } from '@/api/taskCenter'
 
 const router = useRouter()
+const route = useRoute()
 const todayLabel = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'long', timeZone: 'Asia/Shanghai' }).format(new Date())
 
-const tab = ref('all')
-const filterPhase = ref(undefined as string | undefined)
-const filterStatus = ref(undefined as string | undefined)
-const filterLine = ref(undefined as string | undefined)
-const keyword = ref('')
-const page = ref(1)
+/** 筛选与页码写入 router query：跳去目标页再回来时状态不丢（§7） */
+const qs = (k: string): string | undefined =>
+  typeof route.query[k] === 'string' ? (route.query[k] as string) : undefined
+
+const tab = ref(qs('tab') ?? 'all')
+const filterPhase = ref(qs('phase'))
+const filterStatus = ref(qs('status'))
+const filterLine = ref(qs('line'))
+const keyword = ref(qs('keyword') ?? '')
+const page = ref(Math.max(1, Number(qs('page') ?? 1) || 1))
 const pageSize = 20
 const tasks = ref<TaskSummary[]>([])
 const counts = ref({ all: 0, mine: 0, todo: 0 })
@@ -256,7 +262,16 @@ const current = ref<TaskDetail | null>(null)
 const detailLoading = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
-const visibleNodes = computed(() => (current.value ? current.value.task.nodes.filter((n) => n.key !== 'edit') : []))
+/** 时间线折叠阈值（后端按 §3.6 倒序返回，最多 100 条；此处正序展示） */
+const TIMELINE_COLLAPSED = 6
+const timelineExpanded = ref(false)
+
+/** 五节点全展示：剪辑为真实节点（TC9 真实化，按 video_cut 最新版本行归一） */
+const visibleNodes = computed(() => current.value?.task.nodes ?? [])
+const timelineAsc = computed(() => (current.value ? [...current.value.timeline].reverse() : []))
+const shownTimeline = computed(() =>
+  timelineExpanded.value ? timelineAsc.value : timelineAsc.value.slice(-TIMELINE_COLLAPSED),
+)
 
 function toneColor(tone: NodeTone, active = false): string {
   if (tone === 'done') return '#1d4ed8'
@@ -273,6 +288,27 @@ function stageAction(t: TaskSummary): TaskNode | null {
 
 const detailAction = computed(() => (current.value ? stageAction(current.value.task) : null))
 
+const QUERY_KEYS = ['tab', 'phase', 'status', 'line', 'keyword', 'page'] as const
+
+function syncQuery() {
+  const next: Record<string, string> = { tab: tab.value }
+  if (filterPhase.value) next.phase = filterPhase.value
+  if (filterStatus.value) next.status = filterStatus.value
+  if (filterLine.value) next.line = filterLine.value
+  if (keyword.value) next.keyword = keyword.value
+  if (page.value > 1) next.page = String(page.value)
+  const cur: Record<string, string> = {}
+  for (const k of QUERY_KEYS) if (qs(k)) cur[k] = qs(k)!
+  const keys = new Set([...Object.keys(cur), ...Object.keys(next)])
+  for (const k of keys) if (cur[k] !== next[k]) return void router.replace({ query: { ...route.query, ...next } })
+}
+
+/** 筛选变化一律回到第 1 页，避免落在空页 */
+function reload() {
+  page.value = 1
+  fetchTasks()
+}
+
 async function fetchTasks() {
   listLoading.value = true
   try {
@@ -288,6 +324,7 @@ async function fetchTasks() {
     tasks.value = res.items
     total.value = res.total
     counts.value = res.counts
+    syncQuery()
   } catch (e) {
     Message.error(e instanceof Error ? e.message : '任务列表加载失败')
   } finally {
@@ -298,6 +335,7 @@ async function fetchTasks() {
 async function selectTask(copyId: string) {
   currentId.value = copyId
   detailLoading.value = true
+  timelineExpanded.value = false
   try {
     current.value = await getTaskDetail(copyId)
   } catch (e) {
@@ -313,17 +351,21 @@ function refreshAll() {
   if (currentId.value) selectTask(currentId.value)
 }
 
-/** §3.4 动作 → 路由映射（任务树只含最新版本视频，统一 copyId 定位） */
-function routeOfAction(action: string, copyId: string): string {
+/** §3.4 动作 → 路由映射（任务树只含最新版本视频，统一 copyId 定位；剪辑动作按节点 refId=videoJobId 定位剪辑页） */
+function routeOfAction(action: string, copyId: string, refId?: string | null): string {
   switch (action) {
     case 'write_copy':
     case 'continue_write':
     case 'revise_resubmit':
       return `/copy?id=${copyId}`
     case 'view_review':
+    case 'view_cut_review':
       return '/review'
     case 'continue_edit':
-      return '/video/edit'
+    case 'create_cut':
+    case 'view_cut_progress':
+    case 'retry_cut':
+      return refId ? `/video/edit?videoJobId=${refId}` : `/video/create?copyId=${copyId}`
     case 'create_plan':
     case 'wait_review':
     case 'view_logs':
@@ -338,7 +380,7 @@ function routeOfAction(action: string, copyId: string): string {
 
 function goAction(t: TaskSummary, node: TaskNode) {
   if (!node.action) return
-  router.push(routeOfAction(node.action, t.copyId))
+  router.push(routeOfAction(node.action, t.copyId, node.refId))
 }
 
 function fmtTime(iso: string): string {

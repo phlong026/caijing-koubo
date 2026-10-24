@@ -385,9 +385,9 @@
             {{ ctx.jobs.length ? '重新生成' : '生成基础视频' }}
           </a-button>
           <a-button
-            v-if="selectedJob?.phase === 'completed'"
+            v-if="active?.nextActions.includes('continue_edit')"
             type="primary"
-            @click="$router.push({ path: '/video/edit', query: { videoJobId: selectedJob.id } })"
+            @click="$router.push({ path: '/video/edit', query: { videoJobId: active.id } })"
           >
             <template #icon><icon-play-arrow /></template>进入视频剪辑
           </a-button>

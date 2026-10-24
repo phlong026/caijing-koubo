@@ -23,6 +23,8 @@ export interface TaskNode {
   progress: number | null
   /** 节点最近事件时间（ISO） */
   happenedAt: string | null
+  /** 动作跳转定位 id（剪辑节点 = videoJobId，剪辑页按此定位；其余节点用 copyId） */
+  refId?: string | null
 }
 
 export interface TaskSummary {
@@ -50,7 +52,10 @@ export interface TimelineItem {
 
 export interface TaskDetail {
   task: TaskSummary
+  /** 时间线（倒序，上限 100 条；§3.6） */
   timeline: TimelineItem[]
+  /** 超过 100 条被截断时置 true，前端提示「仅显示最近 100 条」 */
+  timelineTruncated: boolean
   chips: { key: NodeKey; title: string; sub: string; current: boolean }[]
 }
 
@@ -66,6 +71,10 @@ export const ACTION_LABELS: Record<string, string> = {
   query_original: '查询原任务',
   bind_remote: '补录任务号',
   continue_edit: '继续剪辑',
+  create_cut: '去剪辑',
+  view_cut_progress: '查看剪辑进度',
+  retry_cut: '重试渲染',
+  view_cut_review: '查看成片复审',
   realign: '重新对齐',
   regenerate: '重新生成',
   create_plan: '安排发布',

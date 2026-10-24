@@ -17,6 +17,8 @@ export interface TaskNode {
   actionLabel: string | null
   progress: number | null
   happenedAt: string | null
+  /** 动作跳转定位 id（剪辑节点 = videoJobId；其余节点用 copyId） */
+  refId?: string | null
 }
 
 export interface TaskSummary {
@@ -51,7 +53,10 @@ export interface TaskTimelineItem {
 
 export interface TaskDetail {
   task: TaskSummary
+  /** 时间线（倒序，上限 100 条） */
   timeline: TaskTimelineItem[]
+  /** 超过 100 条被截断 */
+  timelineTruncated: boolean
   chips: { key: NodeKey; title: string; sub: string; current: boolean }[]
 }
 
@@ -72,6 +77,7 @@ export const STAGE_OPTIONS: { value: string; label: string }[] = [
   { value: 'topic', label: '选题' },
   { value: 'copy', label: '稿件' },
   { value: 'base_video', label: '基础视频' },
+  { value: 'edit', label: '剪辑' },
   { value: 'publish', label: '发布' },
 ]
 
