@@ -86,6 +86,9 @@ export const QUEUE_NAMES = {
   publishExecute: 'publish-execute',
   publishSweep: 'publish-sweep',
   publishLogin: 'publish-login',
+  // ── 视频剪辑模块（任务书 §4.2 / CE0）──
+  videoCut: 'video-cut',
+  videoCutSweep: 'video-cut-sweep',
 } as const
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES]

@@ -39,6 +39,8 @@
     "test:integration:real": "node --import tsx scripts/test-integration.ts --real",
     "smoke:video": "tsx scripts/smoke-video.ts",
     "smoke:publish": "tsx scripts/smoke-publish.ts",
+    "smoke:cut": "tsx scripts/smoke-cut.ts",
+    "check:media-env": "tsx scripts/check-media-env.ts",
     "test:video:align": "tsx scripts/test-video-align.ts"
   },
   "dependencies": {

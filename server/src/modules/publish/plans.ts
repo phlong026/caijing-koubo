@@ -161,7 +161,8 @@ export interface PlanItemInput {
 
 export interface CreatePlanInput {
   copyId: string
-  videoJobId: string
+  /** 剪辑模块 PB4 升级（FR-X2）：可选。缺省 = copy 下最新过审成片，回落最新基础视频；显式给出 = 该 job 过审成片优先、回落该 base */
+  videoJobId?: string | null
   items: PlanItemInput[]
   scheduledAt?: string | null
   aigcFlag?: boolean
@@ -183,10 +184,15 @@ export async function createPlan(input: CreatePlanInput, operator: string): Prom
     }
   }
 
-  // ③ 基础视频就绪（FR-X1 契约：completed 才可发布；VIDEO_NOT_READY 透传）
+  // ③ 发布输入解析（FR-X2 / 剪辑任务书 EC11）：优先过审成片，回落基础视频；base_video_version_no 记实际输入版本号
+  const { resolvePublishInput } = await import('../cut/service.js')
   const { getBaseVideo } = await import('../video/base.js')
-  const base = await getBaseVideo(input.videoJobId)
-  if (base.copyId !== input.copyId) throw err.badRequest('基础视频与文案不匹配')
+  const resolved = await resolvePublishInput(input.copyId, input.videoJobId ?? null)
+  if (resolved.source === 'base') {
+    const base = await getBaseVideo(resolved.videoJobId)
+    if (base.copyId !== input.copyId) throw err.badRequest('基础视频与文案不匹配')
+  }
+  const inputVersionNo = resolved.versionNo
 
   // ④ 逐项校验：矩阵 / 账号状态 / 每日上限
   const db = getDb()
@@ -239,8 +245,8 @@ export async function createPlan(input: CreatePlanInput, operator: string): Prom
       planId,
       input.copyId,
       approved.versionId,
-      input.videoJobId,
-      base.versionNo,
+      resolved.videoJobId,
+      inputVersionNo,
       String(input.items[0]?.title ?? approved.title).slice(0, 255),
       input.items[0]?.description ?? null,
       JSON.stringify(input.items[0]?.tags ?? []),
@@ -286,7 +292,7 @@ export async function createPlan(input: CreatePlanInput, operator: string): Prom
     targetId: planId,
     detail: {
       copyId: input.copyId,
-      videoJobId: input.videoJobId,
+      videoJobId: resolved.videoJobId,
       items: input.items.length,
       reviewState,
       scheduled: !!scheduledAt,

@@ -1,296 +1,587 @@
 <template>
   <div class="p-7 pb-10 max-w-[1500px] mx-auto">
-    <!-- 头部 -->
-    <div class="flex items-start justify-between mb-4">
-      <div>
-        <h1 class="mw-page-title">视频剪辑</h1>
-        <div class="mw-page-sub">基金定投入门 · 小林科普 · 员工 KOS</div>
-      </div>
-      <div class="flex items-center gap-3 pt-1.5">
-        <span class="mw-subtle flex items-center gap-1">成片复审规则待确认 <icon-info-circle :size="13" /></span>
-        <a-button @click="saveVersion">保存版本</a-button>
-        <a-button type="primary" @click="$message.success('成片 v3 已提交复审（演示）')">提交成片复审</a-button>
-      </div>
-    </div>
-
-    <!-- 警示条 -->
-    <div class="mw-alert-banner mb-5 !bg-[#fdf0e0] !border-[#f2cfa0] !text-[#9a5b12]">
-      <icon-exclamation-circle :size="15" />
-      <span class="font-medium">内容已修改，需重新审核后发布。</span>
-      <div class="flex-1"></div>
-      <span>源文案 v3 · 人工复核通过（示例）&nbsp;&nbsp;/&nbsp;&nbsp;<b>成片 v2 · 待复审</b></span>
-    </div>
-
-    <div class="grid grid-cols-[28fr_30fr_42fr] gap-5 items-start">
-      <!-- ============ 字幕片段 ============ -->
-      <div class="mw-card p-5">
-        <div class="flex items-center justify-between mb-3">
-          <div class="text-[15px] font-semibold">字幕片段</div>
-          <span class="mw-subtle">文字可编辑 · 时间只读</span>
-        </div>
-        <div
-          class="grid grid-cols-[92px_1fr] text-[12px] text-[var(--mw-text3)] pb-2 border-b border-[var(--mw-border)]"
-        >
-          <span>时间</span><span>字幕内容</span>
-        </div>
-        <div
-          v-for="(seg, i) in segments"
-          :key="i"
-          class="grid grid-cols-[92px_1fr] gap-x-3 py-2.5 border-b border-[#f2f4f7] cursor-pointer rounded-[8px] px-1 -mx-1"
-          :class="current === i ? 'bg-[color:var(--mw-primary-faint)]' : ''"
-          @click="current = i"
-        >
-          <span class="text-[13px] text-[var(--mw-text2)] leading-8">{{ seg.start }} – {{ seg.end }}</span>
-          <div>
-            <a-textarea
-              v-model="seg.text"
-              :auto-size="{ minRows: 1 }"
-              class="!border-none !bg-transparent !px-0 !text-[13.5px] !leading-5"
-              @input="modified = true"
-            />
-            <div v-if="current === i" class="mw-subtle flex items-center gap-1 mt-1">
-              <icon-info-circle :size="12" />编辑字幕后需重新合成，内容变更需复审。
-            </div>
-            <div v-if="seg.risk" class="mt-1">
-              <span class="mw-tag mw-tag-blue"><icon-safe :size="12" />风险提示</span>
-            </div>
+    <a-spin :loading="store.loading" style="width: 100%">
+      <!-- 头部 -->
+      <div class="flex items-start justify-between mb-4">
+        <div>
+          <h1 class="mw-page-title">视频剪辑</h1>
+          <div class="mw-page-sub">
+            {{ pageSub }}
           </div>
         </div>
-      </div>
-
-      <!-- ============ 视频预览 ============ -->
-      <div class="mw-card p-5">
-        <div class="flex items-center justify-between mb-3">
-          <div class="text-[15px] font-semibold">视频预览</div>
-          <span class="mw-tag mw-tag-gray">预览示例</span>
-        </div>
-        <div
-          class="relative rounded-[12px] overflow-hidden"
-          style="
-            aspect-ratio: 9/16;
-            max-height: 430px;
-            margin: 0 auto;
-            width: auto;
-            height: 430px;
-            background: linear-gradient(160deg, #3c4a5d 0%, #5a6b80 55%, #8a97a8 100%);
-          "
-        >
-          <div
-            class="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/35 text-white text-[12px]"
+        <div class="flex items-center gap-3 pt-1.5">
+          <a-select
+            v-if="store.versions.length"
+            :model-value="currentCutId"
+            :style="{ width: '190px' }"
+            placeholder="历史版本"
+            @change="onVersionSwitch"
           >
-            <span class="w-4 h-4 rounded-full bg-[#1d4ed8] inline-flex items-center justify-center text-[9px]">林</span
-            >小林科普
-          </div>
-          <div class="absolute bottom-14 inset-x-0 text-center px-4">
-            <div
-              class="inline-block px-2.5 py-1 rounded-[6px] text-white text-[14px] font-medium"
-              style="background: rgba(0, 0, 0, 0.45); text-shadow: 0 0 4px rgba(0, 0, 0, 0.5)"
-            >
-              {{ segments[current].text }}
-            </div>
-            <div class="mt-1.5 inline-block px-2 py-0.5 rounded-[4px] bg-black/55 text-white/90 text-[10px]">
-              基金有风险，投资需谨慎
-            </div>
-          </div>
-        </div>
-        <!-- 播放器 -->
-        <div class="flex items-center gap-2.5 mt-3">
-          <a-button type="text" size="mini" @click="$message.info('预览播放（演示）')"
-            ><template #icon><icon-play-arrow-fill /></template
-          ></a-button>
-          <span class="text-[12px] text-[var(--mw-text2)]">00:12 / 01:00</span>
-          <a-slider v-model="progress" :max="60" :style="{ flex: 1 }" :tooltip-visible="false" />
-          <icon-fullscreen :size="15" class="text-[var(--mw-text3)]" />
-        </div>
-        <!-- 预览定位 -->
-        <div class="mt-2">
-          <div class="mw-subtle mb-1">预览定位</div>
-          <div class="relative h-6 rounded-[6px] border border-[var(--mw-border)] bg-[#fafbfc]">
-            <div
-              class="absolute inset-y-0"
-              :style="{ left: '0%', width: (progress / 60) * 100 + '%', background: 'rgba(29,78,216,.12)' }"
-            ></div>
-            <div
-              class="absolute top-0 bottom-0 w-[2px] bg-[#1d4ed8]"
-              :style="{ left: (progress / 60) * 100 + '%' }"
-            ></div>
-            <div class="absolute inset-0 flex items-center justify-between px-2 text-[10px] text-[var(--mw-text3)]">
-              <span>00:00</span><span>00:15</span><span>00:30</span><span>00:45</span><span>01:00</span>
-            </div>
-          </div>
-        </div>
-        <div class="flex items-center gap-2 mt-4">
-          <span class="mw-tag mw-tag-gray">基础视频 01:00</span>
-          <icon-right :size="13" class="text-[var(--mw-text3)]" />
-          <span class="mw-tag mw-tag-yellow">风险尾页 时长待配置</span>
+            <a-option v-for="v in store.versions" :key="v.id" :value="v.id">
+              成片 v{{ v.versionNo }} · {{ cutStatusText(v) }}
+            </a-option>
+          </a-select>
+          <a-button :loading="saving" @click="saveDraft">保存草稿</a-button>
+          <a-button type="primary" :loading="creating" :disabled="!store.draft" @click="createVersion">
+            渲染成片版本
+          </a-button>
         </div>
       </div>
 
-      <!-- ============ 样式配置 ============ -->
-      <div class="mw-card p-5">
-        <a-tabs v-model:active-key="tab" type="line">
-          <a-tab-pane key="sub" title="字幕" />
-          <a-tab-pane key="bgm" title="BGM" />
-          <a-tab-pane key="post" title="后期" />
-          <a-tab-pane key="risk" title="风险尾页" />
-        </a-tabs>
+      <!-- 提示横幅（§7 复审联动） -->
+      <div v-if="store.isMockEngine" class="mw-alert-banner mb-3">
+        <icon-info-circle :size="15" />
+        <span>当前环境无字幕渲染能力（ffmpeg 缺 libass / 未配置字体），成片不含字幕烧录与尾页文字，仅用于流程联调。</span>
+      </div>
+      <div v-if="reviewBanner" class="mw-alert-banner mb-3 !bg-[#fdf0e0] !border-[#f2cfa0] !text-[#9a5b12]">
+        <icon-exclamation-circle :size="15" />
+        <span class="font-medium">{{ reviewBanner.text }}</span>
+        <div class="flex-1"></div>
+        <span>{{ reviewBanner.detail }}</span>
+      </div>
 
-        <!-- 字幕 -->
-        <div v-if="tab === 'sub'" class="mt-2">
-          <div class="text-[14px] font-semibold mb-1">字幕样式</div>
-          <div class="mw-form-row">
-            <div class="mw-form-label">字体</div>
-            <a-select v-model="subFont" :style="{ width: '200px' }" />
+      <div class="grid grid-cols-[28fr_30fr_42fr] gap-5 items-start">
+        <!-- ============ 字幕片段 ============ -->
+        <div class="mw-card p-5">
+          <div class="flex items-center justify-between mb-3">
+            <div class="text-[15px] font-semibold">字幕片段</div>
+            <span class="mw-subtle">文字可编辑 · 时间只读</span>
           </div>
-          <div class="mw-form-row">
-            <div class="mw-form-label">字号</div>
-            <a-select v-model="subSize" :style="{ width: '120px' }" />
+          <div class="grid grid-cols-[92px_1fr] text-[12px] text-[var(--mw-text3)] pb-2 border-b border-[var(--mw-border)]">
+            <span>时间</span><span>字幕内容</span>
           </div>
-          <div class="mw-form-row">
-            <div class="mw-form-label">位置</div>
-            <a-select v-model="subPos" :style="{ width: '120px' }" />
-          </div>
-          <div class="mw-form-row">
-            <div class="mw-form-label">文字颜色</div>
-            <span
-              class="w-7 h-7 rounded-[6px] border border-[var(--mw-border)] inline-block"
-              style="background: #fff"
-            ></span>
-            <span class="text-[13px] text-[var(--mw-text2)]">#FFFFFF</span>
-          </div>
-          <div class="mw-form-row">
-            <div class="mw-form-label">描边</div>
-            <span
-              class="w-7 h-7 rounded-[6px] border border-[var(--mw-border)] inline-block"
-              style="background: #0f2d5c"
-            ></span>
-            <span class="text-[13px] text-[var(--mw-text2)]">深蓝</span>
-          </div>
-          <div class="text-[14px] font-semibold mt-5 mb-1">背景音乐</div>
-          <div class="mw-form-row">
-            <div class="mw-form-label">启用</div>
-            <a-switch v-model="bgmOn" />
-          </div>
-          <div class="mw-form-row">
-            <div class="mw-form-label">音乐选择</div>
-            <a-select v-model="bgm" :style="{ width: '200px' }" :disabled="!bgmOn" />
-            <a-button size="small" :disabled="!bgmOn" @click="$message.info('试听播放中（演示）')"
-              ><template #icon><icon-play-arrow /></template>试听</a-button
-            >
-          </div>
-          <div class="mw-form-row">
-            <div class="mw-form-label">音量</div>
-            <a-slider
-              v-model="volume"
-              :max="100"
-              :style="{ width: '200px' }"
-              :format-tooltip="(v: number) => v + '%'"
-            />
-            <span class="text-[13px] text-[var(--mw-text2)]">{{ volume }}%</span>
-          </div>
-        </div>
-
-        <!-- 后期 -->
-        <div v-if="tab === 'post'" class="mt-2">
-          <div class="text-[14px] font-semibold mb-2">后期处理</div>
           <div
-            class="p-3.5 rounded-[10px] border border-[var(--mw-border)] flex items-center mb-3 cursor-pointer hover:border-[color:var(--mw-primary-soft)]"
+            v-for="(seg, i) in editableSegments"
+            :key="seg.index"
+            class="grid grid-cols-[92px_1fr] gap-x-3 py-2.5 border-b border-[#f2f4f7] cursor-pointer rounded-[8px] px-1 -mx-1"
+            :class="current === i ? 'bg-[color:var(--mw-primary-faint)]' : ''"
+            @click="current = i"
           >
+            <span class="text-[13px] text-[var(--mw-text2)] leading-8">
+              {{ fmtMs(seg.startMs) }} – {{ fmtMs(seg.endMs) }}
+            </span>
             <div>
-              <div class="text-[13.5px] font-medium flex items-center gap-1">
-                自动剪气口 <icon-info-circle :size="13" class="text-[var(--mw-text3)]" />
+              <a-textarea
+                v-if="seg.kind === 'normal'"
+                v-model="seg.text"
+                :auto-size="{ minRows: 1 }"
+                class="!border-none !bg-transparent !px-0 !text-[13.5px] !leading-5"
+                @change="onSegmentEdit(seg)"
+              />
+              <div v-else class="text-[13.5px] leading-5 py-1">{{ seg.text }}</div>
+              <div v-if="current === i && seg.kind === 'normal'" class="mw-subtle flex items-center gap-1 mt-1">
+                <icon-info-circle :size="12" />编辑字幕后需重新合成，内容变更需复审。
               </div>
-              <div class="mw-subtle mt-0.5">检测语音停顿并收紧节奏（生成后可预览）</div>
-            </div>
-            <div class="flex-1"></div>
-            <span class="mw-subtle mr-2">未启用</span><icon-right :size="14" class="text-[var(--mw-text3)]" />
-          </div>
-          <div
-            class="p-3.5 rounded-[10px] border border-[var(--mw-border)] flex items-center cursor-pointer hover:border-[color:var(--mw-primary-soft)]"
-          >
-            <div>
-              <div class="text-[13.5px] font-medium flex items-center gap-1">
-                画中画 <icon-info-circle :size="13" class="text-[var(--mw-text3)]" />
+              <div v-if="seg.kind === 'risk'" class="mt-1">
+                <span class="mw-tag mw-tag-blue"><icon-safe :size="12" />风险提示 · 锁定</span>
               </div>
-              <div class="mw-subtle mt-0.5">叠加展示画面（素材库画中画模板）</div>
+              <div v-else-if="seg.edited" class="mt-1">
+                <span class="mw-tag mw-tag-yellow">已修改</span>
+              </div>
             </div>
-            <div class="flex-1"></div>
-            <span class="mw-subtle mr-2">未启用</span><icon-right :size="14" class="text-[var(--mw-text3)]" />
           </div>
         </div>
 
-        <!-- 风险尾页 -->
-        <div v-if="tab === 'risk'" class="mt-2">
-          <div class="flex items-center gap-2 mb-2">
-            <div class="text-[14px] font-semibold">风险尾页</div>
-            <span class="mw-tag mw-tag-yellow">待配置</span>
+        <!-- ============ 视频预览 ============ -->
+        <div class="mw-card p-5">
+          <div class="flex items-center justify-between mb-3">
+            <div class="text-[15px] font-semibold">视频预览</div>
+            <span class="mw-tag mw-tag-gray">{{ previewSourceLabel }}</span>
           </div>
-          <div
-            class="p-3.5 rounded-[10px] border border-[color:var(--mw-primary-mid)] bg-[color:var(--mw-primary-faint)]"
-          >
-            <div class="flex gap-3">
-              <ThumbBox seed="risk" :width="72" :height="54" />
-              <div class="flex-1">
-                <span class="mw-tag mw-tag-deep">风险提示</span>
-                <div class="text-[12.5px] text-[var(--mw-text2)] mt-1.5 leading-5">
-                  本内容仅供投资者教育参考，不构成投资建议。基金投资有风险，过往业绩不代表未来表现。请认真阅读基金合同，了解产品的风险收益特征，并结合自身风险承受能力审慎决策。
+          <div class="relative rounded-[12px] overflow-hidden bg-black" style="aspect-ratio: 9 / 16; max-height: 430px; margin: 0 auto">
+            <video
+              v-if="previewUrl"
+              ref="videoEl"
+              :src="previewUrl"
+              class="w-full h-full object-contain"
+              @timeupdate="onTimeUpdate"
+              @loadedmetadata="onLoaded"
+            ></video>
+            <div v-else class="absolute inset-0 flex items-center justify-center text-white/50 text-[13px]">
+              加载基础视频中…
+            </div>
+            <!-- CSS 字幕叠加（渲染前低仿预览） -->
+            <div v-if="previewMode === 'base' && currentSegment" class="absolute inset-x-0 pointer-events-none" :style="subtitleOverlayStyle">
+              <div
+                class="mx-auto w-fit max-w-[85%] px-2.5 py-1 rounded-[6px] text-center text-white text-[14px] font-medium leading-5"
+                :style="{
+                  background: draft?.subtitleStyle.backgroundEnabled ? hexToRgba(draft!.subtitleStyle.backgroundColor, draft!.subtitleStyle.backgroundOpacity) : 'transparent',
+                  textShadow: `0 0 ${draft!.subtitleStyle.outlineWidth}px ${draft!.subtitleStyle.outlineColor}, 0 0 ${draft!.subtitleStyle.outlineWidth}px ${draft!.subtitleStyle.outlineColor}`,
+                }"
+              >
+                {{ currentSegment.text }}
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-2.5 mt-3">
+            <a-button type="text" size="mini" @click="togglePlay">
+              <template #icon><icon-play-arrow-fill v-if="!playing" /><icon-pause v-else /></template>
+            </a-button>
+            <span class="text-[12px] text-[var(--mw-text2)]">{{ fmtMs(currentTimeMs) }} / {{ fmtMs(durationMs) }}</span>
+            <a-slider v-model="seekSec" :max="Math.max(1, Math.floor(durationMs / 1000))" :style="{ flex: 1 }" :tooltip-visible="false" @change="onSeek" />
+          </div>
+          <div class="flex items-center gap-2 mt-4 flex-wrap">
+            <span class="mw-tag mw-tag-gray">基础视频 {{ fmtMs(durationMs) }}</span>
+            <icon-right v-if="draft?.riskTailEnabled" :size="13" class="text-[var(--mw-text3)]" />
+            <span v-if="draft?.riskTailEnabled" class="mw-tag mw-tag-yellow">风险尾页 {{ draft.riskTailSeconds }}s</span>
+            <span v-if="draft?.breatheEnabled" class="mw-tag mw-tag-blue">剪气口</span>
+            <span v-if="draft?.bgmEnabled" class="mw-tag mw-tag-green">BGM</span>
+          </div>
+        </div>
+
+        <!-- ============ 配置面板 ============ -->
+        <div class="mw-card p-5">
+          <a-tabs v-model:active-key="tab" type="line">
+            <a-tab-pane key="sub" title="字幕" />
+            <a-tab-pane key="bgm" title="BGM" />
+            <a-tab-pane key="post" title="后期" />
+            <a-tab-pane key="risk" title="风险尾页" />
+          </a-tabs>
+
+          <!-- 字幕样式 -->
+          <div v-if="tab === 'sub' && draft" class="mt-2">
+            <div class="text-[14px] font-semibold mb-1">字幕样式</div>
+            <div class="mw-form-row">
+              <div class="mw-form-label">启用字幕</div>
+              <a-switch v-model="draft.subtitleEnabled" />
+            </div>
+            <div class="mw-form-row">
+              <div class="mw-form-label">字号</div>
+              <a-slider v-model="draft!.subtitleStyle.fontSize" :min="24" :max="96" :step="2" :style="{ width: '200px' }" />
+              <span class="text-[13px] text-[var(--mw-text2)]">{{ draft!.subtitleStyle.fontSize }}</span>
+            </div>
+            <div class="mw-form-row">
+              <div class="mw-form-label">位置</div>
+              <a-radio-group v-model="draft!.subtitleStyle.position" type="button" size="small">
+                <a-radio value="top">顶部</a-radio>
+                <a-radio value="center">居中</a-radio>
+                <a-radio value="bottom">底部</a-radio>
+              </a-radio-group>
+            </div>
+            <div class="mw-form-row">
+              <div class="mw-form-label">对齐</div>
+              <a-radio-group v-model="draft!.subtitleStyle.alignment" type="button" size="small">
+                <a-radio value="left">左</a-radio>
+                <a-radio value="center">中</a-radio>
+                <a-radio value="right">右</a-radio>
+              </a-radio-group>
+            </div>
+            <div class="mw-form-row">
+              <div class="mw-form-label">文字颜色</div>
+              <input v-model="draft!.subtitleStyle.fontColor" type="color" class="w-7 h-7 rounded-[6px] border border-[var(--mw-border)] bg-transparent" />
+              <span class="text-[13px] text-[var(--mw-text2)]">{{ draft.subtitleStyle.fontColor }}</span>
+            </div>
+            <div class="mw-form-row">
+              <div class="mw-form-label">描边</div>
+              <input v-model="draft!.subtitleStyle.outlineColor" type="color" class="w-7 h-7 rounded-[6px] border border-[var(--mw-border)] bg-transparent" />
+              <a-slider v-model="draft!.subtitleStyle.outlineWidth" :min="0" :max="8" :step="1" :style="{ width: '160px' }" />
+              <span class="text-[13px] text-[var(--mw-text2)]">{{ draft!.subtitleStyle.outlineWidth }}px</span>
+            </div>
+            <div class="mw-form-row">
+              <div class="mw-form-label">背景框</div>
+              <a-switch v-model="draft!.subtitleStyle.backgroundEnabled" />
+              <template v-if="draft.subtitleStyle.backgroundEnabled">
+                <input v-model="draft!.subtitleStyle.backgroundColor" type="color" class="w-7 h-7 rounded-[6px] border border-[var(--mw-border)] bg-transparent" />
+                <a-slider v-model="bgmOpacityProxy" :min="0" :max="100" :style="{ width: '140px' }" />
+                <span class="text-[13px] text-[var(--mw-text2)]">{{ draft!.subtitleStyle.backgroundOpacity }}</span>
+              </template>
+            </div>
+            <div class="mw-subtle mt-2">一期内置开源字体（思源黑体）；多字体与上传列素材库范围。</div>
+          </div>
+
+          <!-- BGM -->
+          <div v-if="tab === 'bgm' && draft" class="mt-2">
+            <div class="mw-form-row">
+              <div class="mw-form-label">启用</div>
+              <a-switch v-model="draft.bgmEnabled" />
+            </div>
+            <div class="mw-form-row">
+              <div class="mw-form-label">音乐选择</div>
+              <a-select v-model="bgmIdProxy" :style="{ width: '200px' }" :disabled="!draft!.bgmEnabled" placeholder="选择 BGM" allow-clear>
+                <a-option v-for="b in bgmList" :key="b.id" :value="b.id">{{ b.name }}</a-option>
+              </a-select>
+              <a-button size="small" :disabled="!previewBgmUrl" @click="previewBgm">
+                <template #icon><icon-play-arrow /></template>试听
+              </a-button>
+            </div>
+            <div class="mw-form-row">
+              <div class="mw-form-label">音量</div>
+              <a-slider v-model="bgmVolumePercent" :min="0" :max="100" :style="{ width: '200px' }" :format-tooltip="(v: number) => v + '%'" />
+              <span class="text-[13px] text-[var(--mw-text2)]">{{ bgmVolumePercent }}%</span>
+            </div>
+            <div class="mw-form-row">
+              <div class="mw-form-label">淡入 / 淡出</div>
+              <a-input-number v-model="draft.bgmFadeIn" :min="0" :max="10000" :step="500" :style="{ width: '110px' }" :disabled="!draft.bgmEnabled">
+                <template #suffix>ms</template>
+              </a-input-number>
+              <a-input-number v-model="draft.bgmFadeOut" :min="0" :max="10000" :step="500" :style="{ width: '110px' }" :disabled="!draft.bgmEnabled">
+                <template #suffix>ms</template>
+              </a-input-number>
+            </div>
+            <div class="mw-subtle flex items-center gap-1 mt-2">
+              <icon-upload :size="12" />BGM 由管理员上传维护（<b>{{ bgmList.length }}</b> 首可选用）。
+            </div>
+          </div>
+
+          <!-- 后期 -->
+          <div v-if="tab === 'post' && draft" class="mt-2">
+            <div class="text-[14px] font-semibold mb-2">后期处理</div>
+            <div class="p-3.5 rounded-[10px] border border-[var(--mw-border)] mb-3">
+              <div class="flex items-center">
+                <div>
+                  <div class="text-[13.5px] font-medium flex items-center gap-1">
+                    自动剪气口 <icon-info-circle :size="13" class="text-[var(--mw-text3)]" />
+                  </div>
+                  <div class="mw-subtle mt-0.5">检测语音停顿并收紧节奏，字幕时间轴同步重映射</div>
+                </div>
+                <div class="flex-1"></div>
+                <a-switch v-model="draft.breatheEnabled" />
+              </div>
+              <div v-if="draft.breatheEnabled" class="mt-3 grid grid-cols-3 gap-3">
+                <div>
+                  <div class="mw-subtle mb-1">静音阈值(dB)</div>
+                  <a-input-number v-model="breatheProxy.noiseDb" size="small" :min="-60" :max="-20" />
+                </div>
+                <div>
+                  <div class="mw-subtle mb-1">最短静音(ms)</div>
+                  <a-input-number v-model="breatheProxy.minSilenceMs" size="small" :min="200" :max="2000" :step="100" />
+                </div>
+                <div>
+                  <div class="mw-subtle mb-1">保留间隙(ms)</div>
+                  <a-input-number v-model="breatheProxy.keepGapMs" size="small" :min="0" :max="500" :step="20" />
                 </div>
               </div>
             </div>
+            <div class="p-3.5 rounded-[10px] border border-[var(--mw-border)] flex items-center opacity-60">
+              <div>
+                <div class="text-[13.5px] font-medium flex items-center gap-1">
+                  画中画 <icon-info-circle :size="13" class="text-[var(--mw-text3)]" />
+                </div>
+                <div class="mw-subtle mt-0.5">叠加展示画面（二期开放）</div>
+              </div>
+              <div class="flex-1"></div>
+              <span class="mw-subtle mr-2">二期</span>
+            </div>
           </div>
-          <div class="mw-form-row mt-2">
-            <div class="mw-form-label">来源</div>
-            <a-select v-model="riskSrc" :style="{ width: '220px' }" />
-          </div>
-          <div class="mw-form-row">
-            <div class="mw-form-label">插入</div>
-            <a-checkbox v-model="riskAppend">插入视频末尾</a-checkbox>
-            <span class="mw-subtle">播放时长 待配置</span>
-          </div>
-          <div class="mw-subtle flex items-center gap-1 mt-1">
-            <icon-info-circle :size="12" />适用范围、文案及最长时长待确认。
+
+          <!-- 风险尾页 -->
+          <div v-if="tab === 'risk' && draft" class="mt-2">
+            <div class="flex items-center gap-2 mb-2">
+              <div class="text-[14px] font-semibold">风险尾页</div>
+              <span class="mw-tag mw-tag-deep">合规话术锁定</span>
+            </div>
+            <div class="mw-form-row">
+              <div class="mw-form-label">启用</div>
+              <a-switch v-model="draft.riskTailEnabled" />
+            </div>
+            <div class="p-3.5 rounded-[10px] border border-[color:var(--mw-primary-mid)] bg-[color:var(--mw-primary-faint)]">
+              <div class="flex gap-3">
+                <div class="w-[72px] h-[54px] rounded-[8px] bg-black text-white/90 text-[9px] flex items-center justify-center text-center px-1 flex-shrink-0">
+                  风险提示<br />（黑底白字）
+                </div>
+                <div class="flex-1">
+                  <span class="mw-tag mw-tag-deep">风险提示</span>
+                  <div class="text-[12.5px] text-[var(--mw-text2)] mt-1.5 leading-5">
+                    {{ draft.riskTailText || '（该文案无风险提示内容，无法开启尾页）' }}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="mw-form-row mt-2">
+              <div class="mw-form-label">时长</div>
+              <a-slider v-model="draft.riskTailSeconds" :min="1" :max="15" :step="1" :style="{ width: '200px' }" :disabled="!draft.riskTailEnabled" />
+              <span class="text-[13px] text-[var(--mw-text2)]">{{ draft.riskTailSeconds }}s</span>
+            </div>
+            <div class="mw-subtle flex items-center gap-1 mt-1">
+              <icon-info-circle :size="12" />文案取自文案工坊过审风险提示段，不可编辑；适用范围以 Q4 拍板为准。
+            </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- 底部状态 -->
-    <div class="mw-card mt-5 p-4 flex items-center gap-3">
-      <span class="mw-tag mw-tag-green"><icon-check-circle :size="12" />已保存 10:28</span>
-      <span class="mw-subtle">1080P · 9:16 · 01:00</span>
-      <span class="text-[var(--mw-border)]">|</span>
-      <span class="mw-subtle">{{
-        modified ? '字幕已修改：保存版本后将重新合成，并需重新送审。' : '修改文案含义或风险提示，须重新送审。'
-      }}</span>
-      <div class="flex-1"></div>
-      <span class="mw-subtle">设计预览 · 规则待确认</span>
-    </div>
+      <!-- 渲染进度 -->
+      <div v-if="store.activeCut && ['queued', 'rendering', 'cancelling'].includes(store.activeCut.cut.status)" class="mw-card mt-5 p-4">
+        <div class="flex items-center gap-3">
+          <span class="mw-tag mw-tag-blue">成片 v{{ store.activeCut.cut.versionNo }} · {{ cutStatusText(store.activeCut.cut) }}</span>
+          <a-progress :percent="store.activeCut.cut.progress / 100" :style="{ flex: 1 }" size="small" />
+          <a-button size="mini" status="warning" @click="cancelCut">取消渲染</a-button>
+        </div>
+        <div class="mw-subtle mt-1.5">阶段：{{ store.activeCut.cut.renderStage }}</div>
+      </div>
+
+      <!-- 底部状态 -->
+      <div class="mw-card mt-5 p-4 flex items-center gap-3">
+        <span class="mw-tag mw-tag-gray">{{ specText }}</span>
+        <span class="text-[var(--mw-border)]">|</span>
+        <span class="mw-subtle">{{ bottomHint }}</span>
+        <div class="flex-1"></div>
+        <a-button v-if="activeCompleted" size="mini" :disabled="activeReviewing" type="primary" @click="submitReview">
+          {{ store.activeCut?.cut.reviewStatus === 'approved' ? '已通过复审' : '提交成片复审' }}
+        </a-button>
+        <a-button v-if="activeFailed" size="mini" status="danger" @click="retryRender">重试渲染</a-button>
+      </div>
+    </a-spin>
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watchEffect } from 'vue'
 import { Message } from '@arco-design/web-vue'
-import ThumbBox from '@/components/ThumbBox.vue'
-import { subtitleSegments } from '@/mocks/data'
+import { useRoute } from 'vue-router'
+import { cutApi, fmtMs, CUT_STATUS_LABELS, CUT_REVIEW_LABELS, type CutSegment, type BgmItem } from '@/api/cut'
+import { useCutStore } from '@/stores/cut'
 
-const segments = reactive(subtitleSegments.map((s) => ({ ...s })))
-const current = ref(1)
-const modified = ref(false)
+/**
+ * 视频剪辑页（任务书 §7 / CE7）：整页重写，替换静态演示原型。
+ * 左列字幕分段（normal 可编辑 / risk 锁定），中列低仿预览（base + CSS 字幕叠加），
+ * 右列配置四面板，底部渲染进度与复审动作。
+ */
+
+const route = useRoute()
+const store = useCutStore()
+defineOptions({ name: 'VideoEdit' })
 const tab = ref('sub')
-const progress = ref(12)
+const current = ref(0)
+const saving = ref(false)
+const creating = ref(false)
+const playing = ref(false)
+const currentTimeMs = ref(0)
+const durationMs = ref(0)
+const seekSec = ref(0)
+const bgmList = ref<BgmItem[]>([])
+const videoEl = ref<HTMLVideoElement | null>(null)
 
-const subFont = ref('品牌思源黑体')
-const subSize = ref('36')
-const subPos = ref('下方')
-const bgmOn = ref(true)
-const bgm = ref('轻柔钢琴（示例）')
-const volume = ref(20)
-const riskSrc = ref('产品风险提示（示例）')
-const riskAppend = ref(false)
-
-function saveVersion() {
-  modified.value = false
-  Message.success('已保存版本：成片 v3（草稿）· 需提交成片复审（演示）')
+const videoJobId = computed(() => String(route.query.videoJobId ?? ''))
+const currentCutId = computed(() => store.activeCut?.cut.id ?? undefined)
+function onVersionSwitch(v: string | number | boolean | Record<string, unknown> | Array<string | number | boolean | Record<string, unknown>> | undefined): void {
+  if (typeof v === 'string') void switchVersion(v)
 }
+const draft = computed(() => store.draft)
+
+const editableSegments = computed<CutSegment[]>(() => draft.value?.segments ?? [])
+const currentSegment = computed(() => editableSegments.value[current.value] ?? null)
+
+const previewMode = computed(() => (store.activeCut?.cut.status === 'completed' && store.activeCut.url ? 'final' : 'base'))
+const previewUrl = computed(() => (previewMode.value === 'final' ? store.activeCut?.url : store.base?.url) ?? '')
+const previewSourceLabel = computed(() => (previewMode.value === 'final' ? `成片 v${store.activeCut?.cut.versionNo}` : '基础视频（预览）'))
+const activeCompleted = computed(() => store.activeCut?.cut.status === 'completed')
+const activeFailed = computed(() => store.activeCut?.cut.status === 'failed')
+const activeReviewing = computed(() => store.activeCut?.cut.reviewStatus === 'in_review' || store.activeCut?.cut.reviewStatus === 'approved')
+
+const pageSub = computed(() => {
+  if (!store.base) return ''
+  return `基础视频 v${store.base.versionNo} · ${fmtMs(store.base.durationMs)} · 时间轴 ${store.base.timelineSource === 'aligned' ? '已对齐' : '估算'}`
+})
+
+const specText = computed(() => {
+  const d = draft.value
+  if (!d) return '—'
+  const total = (store.base?.durationMs ?? 0) + (d.riskTailEnabled ? d.riskTailSeconds * 1000 : 0)
+  return `1080P · 9:16 · 约 ${fmtMs(total)}`
+})
+
+const bottomHint = computed(() => {
+  const edited = editableSegments.value.some((s) => s.edited)
+  if (edited) return '字幕已修改：渲染新版本后需重新提交成片复审。'
+  if (store.approvedDrifted) return '内容已修改，需重新渲染并复审后发布。'
+  return '风险提示话术不可修改；修改其他字幕不改变文案过审版本。'
+})
+
+const reviewBanner = computed(() => {
+  const v = store.versions.find((x) => x.approvedContentHash)
+  if (store.approvedDrifted) {
+    return { text: '内容已修改，需重新审核后发布。', detail: `成片 v${v?.versionNo} · 曾复审通过（现为待复审）` }
+  }
+  if (store.activeCut?.cut.reviewStatus === 'in_review') {
+    return { text: '成片已提交复审，等待人工复核。', detail: `成片 v${store.activeCut.cut.versionNo} · ${CUT_REVIEW_LABELS.in_review}` }
+  }
+  if (store.activeCut?.cut.reviewStatus === 'rejected') {
+    return { text: `复审退回：${store.activeCut.submission?.decisionReason ?? '原因未填写'}`, detail: `成片 v${store.activeCut.cut.versionNo}` }
+  }
+  return null
+})
+
+const breatheProxy = reactive({ noiseDb: -30, minSilenceMs: 500, keepGapMs: 120 })
+watchEffect(() => {
+  const p = draft.value?.breatheParams
+  if (p) {
+    breatheProxy.noiseDb = p.noiseDb
+    breatheProxy.minSilenceMs = p.minSilenceMs
+    breatheProxy.keepGapMs = p.keepGapMs
+  }
+})
+
+const bgmVolumePercent = computed({
+  get: () => Math.round((draft.value?.bgmVolume ?? 0.2) * 100),
+  set: (v: number) => {
+    if (draft.value) draft.value.bgmVolume = Math.round(v) / 100
+  },
+})
+const bgmIdProxy = computed({
+  get: () => draft.value?.bgmId ?? undefined,
+  set: (v: string | number | boolean | Record<string, unknown> | undefined) => {
+    if (draft.value) draft.value.bgmId = v ? String(v) : null
+  },
+})
+const bgmOpacityProxy = computed({
+  get: () => Math.round((draft.value?.subtitleStyle.backgroundOpacity ?? 0.5) * 100),
+  set: (v: number) => {
+    if (draft.value) draft.value.subtitleStyle.backgroundOpacity = Math.round(v) / 100
+  },
+})
+
+const subtitleOverlayStyle = computed(() => {
+  const pos = draft.value?.subtitleStyle.position ?? 'bottom'
+  return pos === 'top' ? { top: '8%' } : pos === 'center' ? { top: '50%', transform: 'translateY(-50%)' } : { bottom: '12%' }
+})
+
+function hexToRgba(hex: string, opacity: number): string {
+  const r = parseInt(hex.slice(1, 3), 16) || 0
+  const g = parseInt(hex.slice(3, 5), 16) || 0
+  const b = parseInt(hex.slice(5, 7), 16) || 0
+  return `rgba(${r},${g},${b},${opacity})`
+}
+
+function onSegmentEdit(seg: CutSegment): void {
+  if (draft.value) {
+    seg.edited = true
+    draft.value.segments = [...draft.value.segments]
+  }
+}
+
+async function loadAll(): Promise<void> {
+  if (!videoJobId.value) {
+    Message.error('缺少 videoJobId 参数')
+    return
+  }
+  await store.loadConfig(videoJobId.value)
+  const bgm = await cutApi.listBgm().catch(() => ({ items: [] as BgmItem[] }))
+  bgmList.value = bgm.items
+}
+
+async function saveDraft(): Promise<void> {
+  if (!draft.value) return
+  saving.value = true
+  try {
+    const payload = {
+      subtitleEnabled: draft.value.subtitleEnabled,
+      subtitleStyle: draft.value.subtitleStyle,
+      segments: draft.value.segments.map((s) => ({ index: s.index, text: s.text })),
+      riskTailEnabled: draft.value.riskTailEnabled,
+      riskTailSeconds: draft.value.riskTailSeconds,
+      bgmEnabled: draft.value.bgmEnabled,
+      bgmId: draft.value.bgmId,
+      bgmVolume: draft.value.bgmVolume,
+      bgmFadeIn: draft.value.bgmFadeIn,
+      bgmFadeOut: draft.value.bgmFadeOut,
+      breatheEnabled: draft.value.breatheEnabled,
+      breatheParams: draft.value.breatheEnabled ? { ...breatheProxy } : undefined,
+    }
+    await cutApi.saveConfig(videoJobId.value, payload)
+    Message.success('草稿已保存')
+    await store.loadConfig(videoJobId.value, true)
+  } catch (e) {
+    Message.error((e as Error).message)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function createVersion(): Promise<void> {
+  creating.value = true
+  try {
+    await saveDraft()
+    const r = await cutApi.createVersion(videoJobId.value, `cut-${Date.now()}`)
+    Message.success(r.idempotent ? '已有渲染中的版本，已为你定位' : `成片 v${r.cut.versionNo} 已加入渲染队列`)
+    await store.loadConfig(videoJobId.value, true)
+    await store.trackCut(r.cut.id)
+  } catch (e) {
+    Message.error((e as Error).message)
+  } finally {
+    creating.value = false
+  }
+}
+
+async function cancelCut(): Promise<void> {
+  if (!store.activeCut) return
+  try {
+    await cutApi.cancel(store.activeCut.cut.id)
+    Message.info('已请求取消')
+    await store.loadConfig(videoJobId.value, true)
+  } catch (e) {
+    Message.error((e as Error).message)
+  }
+}
+
+async function retryRender(): Promise<void> {
+  if (!store.activeCut) return
+  try {
+    const v = await cutApi.retryRender(store.activeCut.cut.id)
+    Message.success(`已创建重试版本 v${v.versionNo}`)
+    await store.loadConfig(videoJobId.value, true)
+    await store.trackCut(v.id)
+  } catch (e) {
+    Message.error((e as Error).message)
+  }
+}
+
+async function submitReview(): Promise<void> {
+  if (!store.activeCut || store.activeCut.cut.reviewStatus !== 'none') return
+  try {
+    const r = await cutApi.submitReview(store.activeCut.cut.id)
+    const pts = r.submission.riskPoints?.length ?? 0
+    Message.success(pts ? `已提交复审（${pts} 项风险点供人工重点核）` : '已提交复审，三关自动检查通过')
+    await store.loadConfig(videoJobId.value, true)
+    await store.trackCut(store.activeCut.cut.id, true)
+  } catch (e) {
+    Message.error((e as Error).message)
+  }
+}
+
+async function switchVersion(cutId: string): Promise<void> {
+  await store.trackCut(cutId)
+}
+
+/* ── 预览播放 ── */
+function onTimeUpdate(): void {
+  currentTimeMs.value = (videoEl.value?.currentTime ?? 0) * 1000
+  seekSec.value = Math.floor(videoEl.value?.currentTime ?? 0)
+}
+function onLoaded(): void {
+  durationMs.value = (videoEl.value?.duration ?? 0) * 1000
+}
+function togglePlay(): void {
+  const el = videoEl.value
+  if (!el) return
+  if (el.paused) {
+    void el.play()
+    playing.value = true
+  } else {
+    el.pause()
+    playing.value = false
+  }
+}
+function onSeek(v: number | string | number[] | string[] | undefined): void {
+  if (typeof v === 'number' && videoEl.value) videoEl.value.currentTime = v
+}
+const previewBgmUrl = computed(() => bgmList.value.find((b) => b.id === draft.value?.bgmId)?.storageKey ?? null)
+let bgmAudio: HTMLAudioElement | null = null
+function previewBgm(): void {
+  const key = previewBgmUrl.value
+  if (!key) return
+  bgmAudio?.pause()
+  bgmAudio = new Audio(`/api/media/${key}`)
+  void bgmAudio.play().catch(() => Message.warning('试听播放失败'))
+}
+
+function cutStatusText(v: { status: keyof typeof CUT_STATUS_LABELS; reviewStatus: string }): string {
+  const s = CUT_STATUS_LABELS[v.status] ?? v.status
+  return v.reviewStatus !== 'none' ? `${s} · ${CUT_REVIEW_LABELS[v.reviewStatus as keyof typeof CUT_REVIEW_LABELS]}` : s
+}
+
+onMounted(loadAll)
+onUnmounted(() => {
+  store.stopPolling()
+  bgmAudio?.pause()
+})
 </script>

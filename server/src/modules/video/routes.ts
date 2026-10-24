@@ -349,7 +349,7 @@ async function registerVideoRoutes(app: FastifyInstance): Promise<void> {
   app.get('/media/*', async (req, reply) => {
     const raw = (req.params as Record<string, string>)['*'] ?? ''
     const key = raw.replace(/^\/+/, '')
-    if (!/^(video-jobs|material)\//.test(key)) throw err.forbidden('仅允许访问视频任务与素材对象')
+    if (!/^(.*\/)?(video-jobs|material|bgm)\//.test(key)) throw err.forbidden('仅允许访问视频任务、素材与 BGM 对象')
     const q = (req.query ?? {}) as { token?: string; exp?: string }
     if (!verifyMediaToken(key, String(q.token ?? ''), Number(q.exp ?? Number.NaN))) {
       throw err.unauthorized('媒体链接无效或已过期，请刷新页面重新获取')

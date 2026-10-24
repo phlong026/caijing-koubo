@@ -141,6 +141,8 @@ export async function bootIsolated(opts: IsolatedEnvOptions = {}): Promise<Isola
   registerCopyWorker()
   await registerPersonaModule()
   await registerVideoModule()
+  const { registerCutModule } = await import('../../src/modules/cut/index.js')
+  await registerCutModule()
   await fetchAndStore()
   await createTopic({ source: 'manual', title: '尚未分配人物的集成测试选题' })
   const address = await app.listen({ host: '127.0.0.1', port: opts.port ?? 0 })

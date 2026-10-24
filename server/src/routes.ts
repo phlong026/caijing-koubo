@@ -9,6 +9,7 @@ import { registerBenchmarkRoutes } from './modules/benchmark/routes.js'
 import { registerCostRoutes } from './modules/metrics/routes.js'
 import { registerVideoRoutes } from './modules/video/routes.js'
 import { registerPublishRoutes } from './modules/publish/index.js'
+import { registerCutRoutes } from './modules/cut/index.js'
 import { registerTaskCenterRoutes } from './modules/task-center/routes.js'
 import { listOperations } from './modules/audit/repo.js'
 import { ok } from './app.js'
@@ -27,6 +28,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   registerCostRoutes(app)
   registerVideoRoutes(app)
   registerPublishRoutes(app)
+  registerCutRoutes(app)
   registerTaskCenterRoutes(app)
 
   /** D14 操作日志查询（合规审计，仅管理员，见 auth/guard.ROLE_RULES） */

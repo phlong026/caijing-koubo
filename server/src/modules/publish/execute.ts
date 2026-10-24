@@ -81,23 +81,38 @@ async function withAccountLock<T>(accountId: string, fn: () => Promise<T>): Prom
 
 /* ── 基础视频落地（FR-X1 → 本地文件）── */
 
-/** 从 video 模块取 resultKey 并落到临时文件（OSS 直读 / 本地 dataDir/oss 拷贝；mock 产物同路径） */
-async function fetchBaseVideoFile(videoJobId: string): Promise<{ filePath: string; cleanup: () => Promise<void> }> {
+/**
+ * 发布输入落地（FR-X2 / 剪辑任务书 EC11）：优先取该 job 在计划输入版本号上的过审成片
+ * （video_cut.result_key），回落基础视频（video_job.result_key）。
+ * 防错发：计划记成片、上传发 base 的静默错位在此处对齐。
+ */
+async function fetchBaseVideoFile(videoJobId: string, inputVersionNo?: number | null): Promise<{ filePath: string; cleanup: () => Promise<void> }> {
   const { getVideoJob } = await import('../video/repo.js')
   const job = await getVideoJob(videoJobId)
-  if (!job?.resultKey) throw err.videoNotReady('基础视频产物不存在或已被清理')
-  const ext = path.extname(job.resultKey) || '.mp4'
+  let resultKey: string | null = null
+  if (inputVersionNo && inputVersionNo > 0) {
+    const { getCutByJobVersion } = await import('../cut/repo.js')
+    const cut = await getCutByJobVersion(videoJobId, inputVersionNo).catch(() => null)
+    if (cut?.status === 'completed' && cut.resultKey && cut.reviewStatus === 'approved' && cut.contentHash && cut.contentHash === cut.approvedContentHash) {
+      resultKey = cut.resultKey
+    }
+  }
+  if (!resultKey) {
+    if (!job?.resultKey) throw err.videoNotReady('发布输入视频产物不存在或已被清理')
+    resultKey = job.resultKey
+  }
+  const ext = path.extname(resultKey) || '.mp4'
   const filePath = path.join(paths.tempDir, `publish_${videoJobId}_${Date.now()}${ext}`)
   await fsp.mkdir(path.dirname(filePath), { recursive: true })
   const { isOssEnabled } = await import('../../integrations/aliyun-oss/client.js')
   if (isOssEnabled()) {
-    await downloadObjectToFile(job.resultKey, filePath)
+    await downloadObjectToFile(resultKey, filePath)
   } else {
-    const local = path.join(paths.dataDir, 'oss', job.resultKey)
+    const local = path.join(paths.dataDir, 'oss', resultKey)
     await fsp.copyFile(local, filePath)
   }
   const stat = await fsp.stat(filePath)
-  if (!stat.size) throw err.mediaEmpty('基础视频文件为空')
+  if (!stat.size) throw err.mediaEmpty('发布输入视频文件为空')
   return { filePath, cleanup: () => fsp.unlink(filePath).catch(() => undefined) }
 }
 
@@ -191,13 +206,13 @@ async function runPublish(
         }
       }
     }
-    // ③ 基础视频落地
+    // ③ 发布输入落地（FR-X2：优先计划输入版本上的过审成片，回落基础视频）
     const videoJobId = plan?.videoJobId
     if (!videoJobId) {
-      await failLog(logId, 'VIDEO_NOT_READY', '发布计划缺少基础视频')
+      await failLog(logId, 'VIDEO_NOT_READY', '发布计划缺少视频输入')
       return
     }
-    const { filePath, cleanup } = await fetchBaseVideoFile(videoJobId)
+    const { filePath, cleanup } = await fetchBaseVideoFile(videoJobId, plan?.baseVideoVersionNo ?? null)
     try {
       // ④ 引擎发布（确认窗口内自轮询；onPhase CAS uploading→confirming）
       const engine = resolvePublishEngine()

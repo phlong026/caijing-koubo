@@ -174,6 +174,9 @@ async function main(): Promise<void> {
   await registerVideoModule().catch((e) => logger.error({ err: (e as Error).message }, 'video.module.register_failed'))
   // 发布管理模块：publish-login worker + login/main 双 sweep（PU1；PU4 扩展 execute）
   await registerPublishModule().catch((e) => logger.error({ err: (e as Error).message }, 'publish.module.register_failed'))
+  // 视频剪辑模块：video-cut worker + video-cut-sweep + 启动 reconcile（FR-J3）+ 媒体环境探测（AC-0.2）
+  const { registerCutModule } = await import('./modules/cut/index.js')
+  await registerCutModule().catch((e) => logger.error({ err: (e as Error).message }, 'cut.module.register_failed'))
   // 审核桩在进程内推进，重启后续推未走完三关的桩审核单（P2-19）
   await resumeStubSubmissions().catch((e) => logger.error({ err: (e as Error).message }, 'review.stub.resume_scan_failed'))
 

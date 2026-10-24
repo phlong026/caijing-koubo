@@ -1188,6 +1188,114 @@ export const TABLES: TableDef[] = [
     comment: '分平台发布记录（A5 三态；单平台失败自动重试一次）',
   },
   {
+    name: 'video_cut',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('video_job_id', 40),
+      int('version_no'), // 0 = 配置草稿（每 base 至多一个，由唯一约束保证）；正式版本从 1 单调递增
+      vc('status', 16, { def: 'draft' }), // draft|queued|rendering|cancelling|completed|failed|cancelled（§3.1）
+      vc('render_stage', 16, { def: 'idle' }), // idle|download|breathe|subtitle|bgm|tail|normalize|uploading
+      int('progress', 0),
+      int('base_version_no', 0), // 渲染时的 base 版本快照
+      tint('subtitle_enabled', 1),
+      { name: 'subtitle_style', type: 'json' },
+      { name: 'segments', type: 'json' }, // [{index,text,startMs,endMs,kind,edited}]
+      tint('risk_tail_enabled', 1),
+      { name: 'risk_tail_text', type: 'text', nullable: true },
+      int('risk_tail_seconds', 5),
+      tint('bgm_enabled', 0),
+      vc('bgm_id', 40, { nullable: true }),
+      { name: 'bgm_volume', type: 'decimal', len: 3, scale: 2, def: 0.2 },
+      int('bgm_fade_in', 2000),
+      int('bgm_fade_out', 2000),
+      tint('breathe_enabled', 0),
+      { name: 'breathe_params', type: 'json', nullable: true }, // {noiseDb,minSilenceMs,keepGapMs}
+      tint('pip_enabled', 0), // A9 画中画一期不做，字段预留
+      vc('result_key', 512, { nullable: true }),
+      vc('cover_key', 512, { nullable: true }),
+      int('duration_ms', 0),
+      int('width', 0),
+      int('height', 0),
+      big('size_bytes', 0),
+      { name: 'timeline', type: 'json', nullable: true }, // 渲染后（剪气口重映射）句级时间轴
+      vc('cut_text_hash', 64, { nullable: true }), // 字幕文本 hash（diff 展示与变化检测）
+      vc('content_hash', 64, { nullable: true }), // §3.3 实质修改判定
+      vc('review_status', 16, { def: 'none' }), // none|in_review|approved|rejected
+      vc('approved_content_hash', 64, { nullable: true }), // 过审时冻结的 hash
+      tint('is_mock', 0),
+      vc('error_code', 64, { nullable: true }),
+      vc('error_message', 500, { nullable: true }),
+      vc('created_by', 64, { nullable: true }),
+      dt('created_at'),
+      dt('updated_at'),
+    ],
+    uniques: [['video_job_id', 'version_no']],
+    indexes: [
+      { name: 'idx_vcut_status', cols: ['status'] },
+      { name: 'idx_vcut_review', cols: ['review_status'] },
+    ],
+    comment: '成片版本（剪辑模块：一行一个版本；draft 固定 version_no=0）',
+  },
+  {
+    name: 'video_cut_event',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('cut_id', 40),
+      vc('from_status', 16, { nullable: true }),
+      vc('to_status', 16),
+      vc('render_stage', 16, { nullable: true }),
+      vc('error_code', 64, { nullable: true }),
+      { name: 'detail', type: 'json', nullable: true },
+      vc('operator', 64, { nullable: true }),
+      dt('created_at'),
+    ],
+    indexes: [{ name: 'idx_vcevt_cut', cols: ['cut_id', 'created_at'] }],
+    comment: '成片渲染阶段流水',
+  },
+  {
+    name: 'cut_review_submission',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('cut_id', 40),
+      int('cut_version_no', 0),
+      vc('content_hash', 64, { nullable: true }),
+      vc('status', 16, { def: 'submitted' }), // submitted|gate1|gate2|gate3|pending_manual|approved|rejected（同步桩，无 is_stub）
+      { name: 'gates', type: 'json', nullable: true },
+      { name: 'risk_points', type: 'json', nullable: true },
+      vc('decision_by', 64, { nullable: true }),
+      dt('decision_at'),
+      vc('decision_reason', 500, { nullable: true }),
+      vc('created_by', 64, { nullable: true }),
+      dt('created_at'),
+      dt('updated_at'),
+    ],
+    indexes: [
+      { name: 'idx_crev_status', cols: ['status'] },
+      { name: 'idx_crev_cut', cols: ['cut_id'] },
+    ],
+    comment: '成片复审单（EC9：对照文案审核链，同步三关桩）',
+  },
+  {
+    name: 'bgm_item',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('name', 120),
+      vc('storage_key', 512),
+      int('duration_ms', 0),
+      big('size_bytes', 0),
+      tint('enabled', 1),
+      vc('created_by', 64, { nullable: true }),
+      dt('created_at'),
+      dt('deleted_at'),
+    ],
+    indexes: [{ name: 'idx_bgm_enabled', cols: ['enabled'] }],
+    comment: '轻量 BGM 库（EC6 过渡实现，素材库立项后迁移）',
+  },
+  {
     name: 'schema_migrations',
     pk: 'version',
     cols: [vc('version', 64), dt('applied_at')],

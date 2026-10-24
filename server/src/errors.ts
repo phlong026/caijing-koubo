@@ -84,6 +84,19 @@ export type ErrorCode =
   | 'REVIEW_REQUIRED' // 实质修改未经审核确认（FR-R2）
   | 'LOGIN_SESSION_EXPIRED' // 登录会话已过期 / 失败
   | 'LOGIN_QR_FAILED' // 二维码获取失败
+  // ── 视频剪辑（任务书 §6.3）──
+  | 'CUT_RISK_LOCKED' // 风险提示段字幕不可编辑（FR-C3）
+  | 'CUT_TEXT_TOO_LONG' // 单段字幕文本超长（FR-C3）
+  | 'CUT_STYLE_INVALID' // 字幕样式超出白名单范围（FR-S2）
+  | 'CUT_RENDER_BUSY' // 同 base 已有渲染中版本（FR-C4）
+  | 'CUT_RENDER_TIMEOUT' // rendering 卡死 sweep 兜底（FR-J3）
+  | 'CUT_NOT_DRAFT' // 草稿不存在 / 状态不允许该操作
+  | 'CUT_NOT_COMPLETED' // 成片未渲染完成，不允许提交复审（FR-V1）
+  | 'CUT_RISK_TEXT_EMPTY' // 开启风险尾页但文案为空（FR-K1）
+  | 'CUT_ENGINE_UNAVAILABLE' // 环境缺 libass/drawtext 且未开 MOCK_FALLBACK（EC2）
+  | 'BGM_NOT_FOUND' // BGM 不存在（FR-B1）
+  | 'BGM_IN_USE' // BGM 被成片版本引用，不可删除（FR-B3）
+  | 'FINAL_NOT_READY' // 成片不满足发布取用条件（FR-X1：未渲染/未过审/已实质修改）
 
 export class ApiError extends Error {
   readonly code: ErrorCode
@@ -248,6 +261,24 @@ export const err = {
     new ApiError('LOGIN_SESSION_EXPIRED', msg, 409, details),
   loginQrFailed: (msg = '获取登录二维码失败，请重试', details?: unknown) =>
     new ApiError('LOGIN_QR_FAILED', msg, 502, details),
+  // ── 视频剪辑 ──
+  cutRiskLocked: (msg = '风险提示段为合规话术，不可编辑', details?: unknown) =>
+    new ApiError('CUT_RISK_LOCKED', msg, 400, details),
+  cutTextTooLong: (msg = '单段字幕文本超长', details?: unknown) => new ApiError('CUT_TEXT_TOO_LONG', msg, 400, details),
+  cutStyleInvalid: (msg = '字幕样式超出允许范围', details?: unknown) => new ApiError('CUT_STYLE_INVALID', msg, 400, details),
+  cutRenderBusy: (msg = '该视频已有渲染中的成片版本，请等待完成后再试', details?: unknown) =>
+    new ApiError('CUT_RENDER_BUSY', msg, 409, details),
+  cutNotDraft: (msg = '配置草稿不存在或状态不允许该操作', details?: unknown) =>
+    new ApiError('CUT_NOT_DRAFT', msg, 409, details),
+  cutNotCompleted: (msg = '成片尚未渲染完成，不能提交复审', details?: unknown) =>
+    new ApiError('CUT_NOT_COMPLETED', msg, 409, details),
+  cutRiskTextEmpty: (msg = '该文案没有风险提示内容，无法生成风险尾页', details?: unknown) =>
+    new ApiError('CUT_RISK_TEXT_EMPTY', msg, 400, details),
+  cutEngineUnavailable: (msg = '渲染环境缺少字幕能力（ffmpeg 需带 libass/freetype），且未开启 MOCK_FALLBACK', details?: unknown) =>
+    new ApiError('CUT_ENGINE_UNAVAILABLE', msg, 503, details),
+  bgmNotFound: (msg = 'BGM 不存在或已下架', details?: unknown) => new ApiError('BGM_NOT_FOUND', msg, 404, details),
+  bgmInUse: (msg = 'BGM 已被成片版本引用，不可删除', details?: unknown) => new ApiError('BGM_IN_USE', msg, 409, details),
+  finalNotReady: (msg = '成片不满足发布条件', details?: unknown) => new ApiError('FINAL_NOT_READY', msg, 409, details),
 }
 
 export function isApiError(e: unknown): e is ApiError {

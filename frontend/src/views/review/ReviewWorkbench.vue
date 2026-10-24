@@ -2,13 +2,105 @@
   <div class="p-7 pb-10 max-w-[1440px] mx-auto">
     <PageHead title="审核工作台">
       <template #sub
-        >文案人工复核：查看提交版本与关卡结果，通过或退回（退回须写原因）。提交人不能裁决自己的文案。</template
+        >文案人工复核与成片复审：查看提交内容与关卡结果，通过或退回（退回须写原因）。提交人不能裁决自己的提交。</template
       >
       <template #actions>
-        <span v-if="!stubEnabled" class="mw-alert-banner">自动审核关卡尚未接入：已提交的文案由人工复核直接裁决</span>
+        <span v-if="!stubEnabled && kind === 'copy'" class="mw-alert-banner">自动审核关卡尚未接入：已提交的文案由人工复核直接裁决</span>
       </template>
     </PageHead>
 
+    <!-- 对象类型：文案 / 成片（FR-V4 / CE8） -->
+    <a-radio-group v-model="kind" type="button" class="mb-3">
+      <a-radio value="copy">文案审核</a-radio>
+      <a-radio value="cut">成片复审</a-radio>
+    </a-radio-group>
+
+    <!-- ============ 成片复审（剪辑模块 FR-V4） ============ -->
+    <div v-if="kind === 'cut'" class="review-layout">
+      <section class="flex flex-col gap-3" aria-label="成片复审队列">
+        <a-select v-model="cutLine" :style="{ width: '140px' }" allow-clear placeholder="全部生产线" @change="loadCuts">
+          <a-option value="manager" label="经理 IP" />
+          <a-option value="kos" label="员工 KOS" />
+          <a-option value="persona" label="素人矩阵" />
+        </a-select>
+        <p v-if="cutError" class="mw-subtle" role="alert">{{ cutError }}</p>
+        <button
+          v-for="it in cutItems"
+          :key="it.cut.id"
+          type="button"
+          class="mw-card review-item"
+          :class="{ active: currentCut?.cut.id === it.cut.id }"
+          @click="selectCut(it)"
+        >
+          <div class="flex items-center gap-2">
+            <span class="text-[14px] font-medium truncate flex-1">{{ it.copyTitle || '（无标题）' }}</span>
+            <LineTag v-if="it.cutBaseLine" :line="it.cutBaseLine" />
+          </div>
+          <div class="mw-subtle mt-1.5">成片 v{{ it.cut.versionNo }} · {{ fmt(it.cut.createdAt) }}</div>
+          <div class="mt-2 flex items-center gap-1.5 flex-wrap">
+            <span class="mw-tag mw-tag-yellow">待人工复核</span>
+            <span v-if="it.submission?.riskPoints?.length" class="mw-tag mw-tag-red">{{ it.submission.riskPoints.length }} 项风险点</span>
+          </div>
+        </button>
+        <div v-if="!cutItems.length && !cutLoading" class="mw-card p-8 text-center mw-subtle">当前没有待复核的成片</div>
+      </section>
+
+      <section class="mw-card p-5 review-detail" aria-label="成片复审详情">
+        <div v-if="!currentCut" class="mw-subtle text-center py-16">从左侧选择一个成片开始复核</div>
+        <div v-else class="w-full">
+          <div class="flex items-center gap-2 flex-wrap">
+            <h2 class="text-[18px] font-bold m-0">{{ currentCut.copyTitle || '（无标题）' }}</h2>
+            <LineTag v-if="currentCut.cutBaseLine" :line="currentCut.cutBaseLine" />
+            <span class="mw-tag mw-tag-gray">成片 v{{ currentCut.cut.versionNo }}</span>
+          </div>
+          <video v-if="currentCut.url" :src="currentCut.url" controls class="cut-player mt-3"></video>
+
+          <div v-if="currentCut.submission?.gates?.length" class="gates">
+            <div v-for="(g, i) in currentCut.submission.gates" :key="i" class="gate">
+              <span class="mw-tag" :class="g.result === 'pass' ? 'mw-tag-green' : 'mw-tag-red'">
+                {{ cutGateLabel(g.gate) }} · {{ g.result === 'pass' ? '通过' : '未通过' }}
+              </span>
+              <span v-if="g.reason" class="mw-subtle">{{ g.reason }}</span>
+            </div>
+          </div>
+
+          <div v-if="currentCut.submission?.riskPoints?.length" class="hits">
+            <strong>风险点（请重点核验）</strong>
+            <ul>
+              <li v-for="(p, i) in currentCut.submission.riskPoints" :key="i">{{ p }}</li>
+            </ul>
+          </div>
+
+          <div v-if="cutDiff.length" class="hits">
+            <strong>字幕编辑对照（与基础视频时间轴原文）</strong>
+            <ul>
+              <li v-for="d in cutDiff" :key="d.index">
+                段 {{ d.index }}：{{ d.original }} <span class="mw-subtle">→</span>
+                <b>{{ d.edited }}</b>
+              </li>
+            </ul>
+          </div>
+
+          <div class="decision">
+            <a-textarea
+              v-model="cutReason"
+              :max-length="500"
+              show-word-limit
+              :auto-size="{ minRows: 2, maxRows: 5 }"
+              placeholder="退回原因（退回时必填）"
+            />
+            <div class="flex items-center gap-2">
+              <div class="flex-1" />
+              <a-button status="danger" :loading="cutDeciding" @click="decideCut('rejected')">退回</a-button>
+              <a-button type="primary" :loading="cutDeciding" @click="decideCut('approved')">通过</a-button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ 文案审核（既有） ============ -->
+    <template v-else>
     <div class="flex items-center gap-4 mb-4 flex-wrap">
       <a-tabs v-model:active-key="scope" type="line" class="mw-tabs flex-1">
         <a-tab-pane key="pending"
@@ -135,6 +227,7 @@
         </a-spin>
       </section>
     </div>
+    </template>
   </div>
 </template>
 
@@ -151,7 +244,96 @@ import {
   type ReviewQueueItem,
   type Section,
 } from '@/api/copy'
+import { cutApi, type CutReviewQueueItem } from '@/api/cut'
 import { useAuthStore } from '@/stores/auth'
+
+/* ── 成片复审（FR-V4 / CE8）── */
+const kind = ref<'copy' | 'cut'>('copy')
+const cutItems = ref<Array<CutReviewQueueItem & { cutBaseLine?: string | null }>>([])
+const cutLine = ref<string | undefined>()
+const cutLoading = ref(false)
+const cutError = ref('')
+const currentCut = ref<(CutReviewQueueItem & { cutBaseLine?: string | null }) | null>(null)
+const cutDiff = ref<Array<{ index: number; original: string; edited: string; kind: string }>>([])
+const cutReason = ref('')
+const cutDeciding = ref(false)
+
+function cutGateLabel(gate: string): string {
+  const labels: Record<string, string> = {
+    gate1: '第 1 关 · 字幕与尾页禁用词',
+    gate2: '第 2 关 · 事实与风险点',
+    gate3: '第 3 关 · 风险尾页校验',
+  }
+  return labels[gate] ?? gate
+}
+
+async function loadCuts(): Promise<void> {
+  cutLoading.value = true
+  cutError.value = ''
+  try {
+    const r = await cutApi.reviewQueue({ status: 'pending_manual', line: cutLine.value })
+    cutItems.value = await Promise.all(
+      r.items.map(async (it) => {
+        const job = await fetch(`/api/video/jobs/${it.cut.videoJobId}`, { headers: authedCutHeaders() })
+          .then((res) => res.json())
+          .catch(() => null)
+        return { ...it, cutBaseLine: job?.data?.line ?? null }
+      }),
+    )
+    const keep = currentCut.value && cutItems.value.find((i) => i.cut.id === currentCut.value!.cut.id)
+    if (keep) currentCut.value = keep
+    else if (cutItems.value.length) void selectCut(cutItems.value[0]!)
+    else currentCut.value = null
+  } catch (e) {
+    cutError.value = (e as Error).message
+  } finally {
+    cutLoading.value = false
+  }
+}
+
+function authedCutHeaders(): Record<string, string> {
+  try {
+    const token = localStorage.getItem('mw_token')
+    return token ? { Authorization: `Bearer ${token}` } : {}
+  } catch {
+    return {}
+  }
+}
+
+async function selectCut(item: CutReviewQueueItem & { cutBaseLine?: string | null }): Promise<void> {
+  currentCut.value = item
+  cutReason.value = ''
+  cutDiff.value = []
+  try {
+    const r = await cutApi.getReview(item.cut.id)
+    cutDiff.value = r.diff
+  } catch {
+    // diff 拉取失败不阻塞复核
+  }
+}
+
+async function decideCut(result: 'approved' | 'rejected'): Promise<void> {
+  if (!currentCut.value) return
+  if (result === 'rejected' && !cutReason.value.trim()) {
+    Message.warning('退回必须填写原因')
+    return
+  }
+  cutDeciding.value = true
+  try {
+    await cutApi.decide(currentCut.value.cut.id, (result as 'approved' | 'rejected'), cutReason.value.trim() || undefined)
+    Message.success(result === 'approved' ? '成片复审通过，可用于发布' : '已退回，运营可修改后重新渲染')
+    currentCut.value = null
+    await loadCuts()
+  } catch (e) {
+    Message.error((e as Error).message)
+  } finally {
+    cutDeciding.value = false
+  }
+}
+
+watch(kind, (k) => {
+  if (k === 'cut' && !cutItems.value.length) void loadCuts()
+})
 
 const GATE_LABELS: Record<string, string> = {
   submitted: '已提交',

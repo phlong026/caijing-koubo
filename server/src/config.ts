@@ -360,6 +360,39 @@ export const config = {
   },
 
   /**
+   * 视频剪辑模块（任务书 §4.2 / CE0）。
+   * 渲染引擎见 modules/cut/engine.ts：ffmpeg 完整链路需环境带 libass/freetype
+   * （check-media-env 探测）；缺失且 MOCK_FALLBACK=true 时自动降级 mock（字幕直过、尾页纯色）。
+   */
+  cut: {
+    /** 渲染 worker 并发（Q7：与视频创作 genConcurrency 分队列互不影响） */
+    workerConcurrency: num('CUT_WORKER_CONCURRENCY', 2),
+    /** 单步 ffmpeg 超时（毫秒，沿 compose.runFfmpeg 基线） */
+    stepTimeoutMs: num('CUT_STEP_TIMEOUT_MS', 600000),
+    /** 整任务卡死兜底（毫秒，FR-J3）：rendering 超此时长无进展 → failed(CUT_RENDER_TIMEOUT) */
+    renderTimeoutMs: num('CUT_RENDER_TIMEOUT_MS', 1800000),
+    /** cancelling 无进展兜底（毫秒，§3.1）：超时 sweep 直接收尾 cancelled */
+    cancellingTimeoutMs: num('CUT_CANCELLING_TIMEOUT_MS', 600000),
+    /** video-cut-sweep 扫描周期（毫秒） */
+    sweepIntervalMs: num('CUT_SWEEP_INTERVAL_MS', 60000),
+    /** 剪气口默认参数（Q3：默认关） */
+    defaultNoiseDb: num('CUT_NOISE_DB', -30),
+    minSilenceMs: num('CUT_MIN_SILENCE_MS', 500),
+    keepGapMs: num('CUT_KEEP_GAP_MS', 120),
+    /** BGM 默认音量 / 淡入淡出（毫秒） */
+    bgmVolume: num('CUT_BGM_VOLUME', 0.2),
+    bgmFadeMs: num('CUT_BGM_FADE_MS', 2000),
+    /** 风险尾页默认时长（秒，Q4）与上限 */
+    riskTailSeconds: num('CUT_RISK_TAIL_SECONDS', 5),
+    riskTailMaxSeconds: num('CUT_RISK_TAIL_MAX_SECONDS', 15),
+    /** 内置字体目录（fontsdir）与单段字幕文本上限 */
+    fontsDir: str('CUT_FONTS_DIR', 'assets/fonts'),
+    maxSegmentsTextLen: num('CUT_SEGMENT_TEXT_MAX', 200),
+    /** BGM 上传大小上限（MB） */
+    bgmMaxMb: num('CUT_BGM_MAX_MB', 20),
+  },
+
+  /**
    * 登录与权限（P0-1）。
    * 操作人一律取自登录令牌，不再信任请求头 X-Operator。
    * 生产环境必须配置 AUTH_JWT_SECRET（≥32 字符），否则拒绝启动。

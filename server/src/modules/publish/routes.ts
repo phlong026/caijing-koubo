@@ -173,7 +173,8 @@ export async function registerPublishRoutes(app: FastifyInstance): Promise<void>
       scheduledAt?: string | null
       aigcFlag?: boolean
     }
-    if (!body.copyId || !body.videoJobId) throw err.badRequest('缺少 copyId 或 videoJobId')
+    if (!body.copyId) throw err.badRequest('缺少 copyId')
+    // FR-X2（剪辑任务书 EC11）：videoJobId 转可选——缺省由 cut.resolvePublishInput 解析（过审成片优先，回落基础视频）
     if (!Array.isArray(body.items) || !body.items.length) throw err.badRequest('至少选择一个发布平台与账号')
     const items = body.items.map((i) => ({
       platform: String(i.platform ?? '') as Platform,

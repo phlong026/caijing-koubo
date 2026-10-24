@@ -64,6 +64,15 @@ export const ROLE_RULES: Record<string, Role[]> = {
   'POST /api/publish-logs/:id/retry': OPERATORS,
   'POST /api/publish-logs/:id/recheck': OPERATORS,
   'POST /api/publish-logs/:id/manual-result': OPERATORS,
+  // 视频剪辑（任务书 §4.2 / CE0）：配置与渲染写限运营/管理员；成片复审裁决限审核/管理员（Q8）
+  'PUT /api/video/jobs/:id/cut-config': OPERATORS,
+  'POST /api/video/jobs/:id/cut-versions': OPERATORS,
+  'POST /api/video/cuts/:id/cancel': OPERATORS,
+  'POST /api/video/cuts/:id/retry-render': OPERATORS,
+  'POST /api/video/cuts/:id/review': OPERATORS,
+  'POST /api/video/cuts/:id/review/decision': REVIEWERS,
+  'POST /api/cut/bgm': ADMINS,
+  'DELETE /api/cut/bgm/:id': ADMINS,
 }
 
 /**

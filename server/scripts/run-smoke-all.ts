@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url'
 const serverRoot = resolve(fileURLToPath(import.meta.url), '../..')
 const port = Number(process.env.SMOKE_PORT ?? 8797)
 const base = `http://127.0.0.1:${port}/api`
-const suites = (process.env.SMOKE_SUITES ?? 'smoke,smoke-copy,smoke-topics,smoke-personas,smoke-video,smoke-publish')
+const suites = (process.env.SMOKE_SUITES ?? 'smoke,smoke-copy,smoke-topics,smoke-personas,smoke-video,smoke-publish,smoke-cut')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)
