@@ -17,10 +17,19 @@ import type { EngineCheckResult, EngineLoginPoll, EngineLoginStart, EnginePublis
 import { acquireContext, closeContext, playwrightInstalled } from './browser.js'
 import { checkLoginStatus, detectLoggedIn, extractNickname, extractQrPng, gotoWithRetry, newOrExistingPage } from './login.js'
 import { PLATFORM_URLS, type PublishPlatform } from './selectors.js'
-import { publishToDouyin } from './douyin.js'
+import { publishToDouyin, type PlatformPublishParams } from './douyin.js'
+import { publishToShipinhao } from './shipinhao.js'
+import { publishToXiaohongshu } from './xiaohongshu.js'
 
-/** 已完成 Playwright 平移的平台（PU3 扩展时在此追加并补 publishTo* 实现） */
-export const MIGRATED_PLATFORMS: PublishPlatform[] = ['douyin']
+/** 已完成 Playwright 平移的平台（PU2 douyin + PU3 shipinhao/xiaohongshu；kuaishou 待扩展） */
+export const MIGRATED_PLATFORMS: PublishPlatform[] = ['douyin', 'shipinhao', 'xiaohongshu']
+
+type PublishFlow = (ctx: import('./browser.js').BrowserContext, params: PlatformPublishParams) => Promise<import('./douyin.js').PlatformPublishResult>
+const PUBLISH_FLOWS: Partial<Record<PublishPlatform, PublishFlow>> = {
+  douyin: publishToDouyin,
+  shipinhao: publishToShipinhao,
+  xiaohongshu: publishToXiaohongshu,
+}
 
 export function isMigrated(platform: string): platform is PublishPlatform {
   return MIGRATED_PLATFORMS.includes(platform as PublishPlatform)
@@ -99,7 +108,9 @@ export function createRealEngine(): PublishEngine {
     async publish(account: PlatformAccount, input: EnginePublishInput): Promise<EnginePublishResult> {
       const platform = platformOf(account)
       const { context } = await acquireContext(platform, account.id)
-      const r = await publishToDouyin(context, {
+      const publishFlow = PUBLISH_FLOWS[platform]
+      if (!publishFlow) throw err.publishPlatformNotMigrated(platform)
+      const r = await publishFlow(context, {
         videoPath: input.videoPath,
         coverPath: input.coverPath,
         title: input.title,
