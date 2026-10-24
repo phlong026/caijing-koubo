@@ -6,6 +6,7 @@ import { config } from '../../config.js'
 import { checkFfmpeg } from '../../media/pipeline.js'
 import { err } from '../../errors.js'
 import { logger } from '../../log.js'
+import { resolveDefaultFontFile } from '../material/fonts.js'
 
 /**
  * 剪辑渲染引擎（任务书 EC2）：
@@ -44,15 +45,12 @@ async function listFilters(): Promise<Set<string>> {
   return names
 }
 
+/**
+ * default 字体文件（FR-F4）：素材库启用集中文件名排序首个；
+ * 无启用字体时保持历史行为（fontsDir 目录首个文件）——手工放置场景不回归。
+ */
 export async function resolveFontFile(): Promise<string | null> {
-  const dir = path.resolve(config.cut.fontsDir)
-  try {
-    const files = await fsp.readdir(dir)
-    const fonts = files.filter((f) => /\.(otf|ttf|ttc)$/i.test(f)).sort()
-    return fonts.length ? path.join(dir, fonts[0]!) : null
-  } catch {
-    return null
-  }
+  return resolveDefaultFontFile()
 }
 
 export async function detectMediaEnv(force = false): Promise<MediaEnv> {
