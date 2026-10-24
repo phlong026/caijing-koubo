@@ -22,7 +22,9 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
 const BASE = process.env.E2E_BASE || 'http://127.0.0.1:5173'
 const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'people-e2e-'))
 const FX = path.join(OUT, 'fx')
-const SHOTS = path.join(OUT, 'shots')
+const SHOTS = process.env.E2E_ARTIFACTS
+  ? path.resolve(process.env.E2E_ARTIFACTS, 'people-library')
+  : path.join(OUT, 'shots')
 fs.mkdirSync(FX, { recursive: true })
 fs.mkdirSync(SHOTS, { recursive: true })
 

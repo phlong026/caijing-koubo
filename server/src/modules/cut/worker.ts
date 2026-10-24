@@ -135,6 +135,10 @@ export async function runCutSweep(): Promise<void> {
 }
 
 export async function scheduleCutSweep(): Promise<void> {
+  // 同视频创作：sweep 队列须有消费者，否则 cancelling 永不收尾、渲染超时与 queued 滞留无人兜底
+  registerWorker(QUEUE_NAMES.videoCutSweep, async () => {
+    await runCutSweep().catch((e) => logger.error({ err: (e as Error).message }, 'cut.sweep_failed'))
+  })
   await scheduleRepeatable(QUEUE_NAMES.videoCutSweep, 'video-cut-sweep', config.cut.sweepIntervalMs, 'sweep')
   await runCutSweep().catch((e) => logger.warn({ err: (e as Error).message }, 'cut.sweep.boot_failed'))
 }

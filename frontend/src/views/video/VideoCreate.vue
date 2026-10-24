@@ -730,6 +730,17 @@ async function selectJob(j: JobSummary): Promise<void> {
   }
 }
 
+// 停留在页面上等到生成完成：自动切到该版本并播放（FR-A8），不必再去版本列表里点一次
+watch(
+  () => active.value?.phase,
+  (phase, prev) => {
+    const job = active.value
+    if (phase === 'completed' && prev && prev !== 'completed' && job && selectedJobId.value === job.id) {
+      void selectJob(job)
+    }
+  },
+)
+
 async function act(action: string): Promise<void> {
   if (!active.value) return
   acting.value = true
