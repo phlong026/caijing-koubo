@@ -31,7 +31,9 @@
       <!-- 提示横幅（§7 复审联动） -->
       <div v-if="store.isMockEngine" class="mw-alert-banner mb-3">
         <icon-info-circle :size="15" />
-        <span>当前环境无字幕渲染能力（ffmpeg 缺 libass / 未配置字体），成片不含字幕烧录与尾页文字，仅用于流程联调。</span>
+        <span
+          >当前环境无字幕渲染能力（ffmpeg 缺 libass / 未配置字体），成片不含字幕烧录与尾页文字，仅用于流程联调。</span
+        >
       </div>
       <div v-if="reviewBanner" class="mw-alert-banner mb-3 !bg-[#fdf0e0] !border-[#f2cfa0] !text-[#9a5b12]">
         <icon-exclamation-circle :size="15" />
@@ -47,7 +49,9 @@
             <div class="text-[15px] font-semibold">字幕片段</div>
             <span class="mw-subtle">文字可编辑 · 时间只读</span>
           </div>
-          <div class="grid grid-cols-[92px_1fr] text-[12px] text-[var(--mw-text3)] pb-2 border-b border-[var(--mw-border)]">
+          <div
+            class="grid grid-cols-[92px_1fr] text-[12px] text-[var(--mw-text3)] pb-2 border-b border-[var(--mw-border)]"
+          >
             <span>时间</span><span>字幕内容</span>
           </div>
           <div
@@ -88,7 +92,10 @@
             <div class="text-[15px] font-semibold">视频预览</div>
             <span class="mw-tag mw-tag-gray">{{ previewSourceLabel }}</span>
           </div>
-          <div class="relative rounded-[12px] overflow-hidden bg-black" style="aspect-ratio: 9 / 16; max-height: 430px; margin: 0 auto">
+          <div
+            class="relative rounded-[12px] overflow-hidden bg-black"
+            style="aspect-ratio: 9 / 16; max-height: 430px; margin: 0 auto"
+          >
             <video
               v-if="previewUrl"
               ref="videoEl"
@@ -101,11 +108,17 @@
               加载基础视频中…
             </div>
             <!-- CSS 字幕叠加（渲染前低仿预览） -->
-            <div v-if="previewMode === 'base' && currentSegment" class="absolute inset-x-0 pointer-events-none" :style="subtitleOverlayStyle">
+            <div
+              v-if="previewMode === 'base' && currentSegment"
+              class="absolute inset-x-0 pointer-events-none"
+              :style="subtitleOverlayStyle"
+            >
               <div
                 class="mx-auto w-fit max-w-[85%] px-2.5 py-1 rounded-[6px] text-center text-white text-[14px] font-medium leading-5"
                 :style="{
-                  background: draft?.subtitleStyle.backgroundEnabled ? hexToRgba(draft!.subtitleStyle.backgroundColor, draft!.subtitleStyle.backgroundOpacity) : 'transparent',
+                  background: draft?.subtitleStyle.backgroundEnabled
+                    ? hexToRgba(draft!.subtitleStyle.backgroundColor, draft!.subtitleStyle.backgroundOpacity)
+                    : 'transparent',
                   textShadow: `0 0 ${draft!.subtitleStyle.outlineWidth}px ${draft!.subtitleStyle.outlineColor}, 0 0 ${draft!.subtitleStyle.outlineWidth}px ${draft!.subtitleStyle.outlineColor}`,
                 }"
               >
@@ -118,12 +131,20 @@
               <template #icon><icon-play-arrow-fill v-if="!playing" /><icon-pause v-else /></template>
             </a-button>
             <span class="text-[12px] text-[var(--mw-text2)]">{{ fmtMs(currentTimeMs) }} / {{ fmtMs(durationMs) }}</span>
-            <a-slider v-model="seekSec" :max="Math.max(1, Math.floor(durationMs / 1000))" :style="{ flex: 1 }" :tooltip-visible="false" @change="onSeek" />
+            <a-slider
+              v-model="seekSec"
+              :max="Math.max(1, Math.floor(durationMs / 1000))"
+              :style="{ flex: 1 }"
+              :tooltip-visible="false"
+              @change="onSeek"
+            />
           </div>
           <div class="flex items-center gap-2 mt-4 flex-wrap">
             <span class="mw-tag mw-tag-gray">基础视频 {{ fmtMs(durationMs) }}</span>
             <icon-right v-if="draft?.riskTailEnabled" :size="13" class="text-[var(--mw-text3)]" />
-            <span v-if="draft?.riskTailEnabled" class="mw-tag mw-tag-yellow">风险尾页 {{ draft.riskTailSeconds }}s</span>
+            <span v-if="draft?.riskTailEnabled" class="mw-tag mw-tag-yellow"
+              >风险尾页 {{ draft.riskTailSeconds }}s</span
+            >
             <span v-if="draft?.breatheEnabled" class="mw-tag mw-tag-blue">剪气口</span>
             <span v-if="draft?.bgmEnabled" class="mw-tag mw-tag-green">BGM</span>
           </div>
@@ -147,7 +168,13 @@
             </div>
             <div class="mw-form-row">
               <div class="mw-form-label">字号</div>
-              <a-slider v-model="draft!.subtitleStyle.fontSize" :min="24" :max="96" :step="2" :style="{ width: '200px' }" />
+              <a-slider
+                v-model="draft!.subtitleStyle.fontSize"
+                :min="24"
+                :max="96"
+                :step="2"
+                :style="{ width: '200px' }"
+              />
               <span class="text-[13px] text-[var(--mw-text2)]">{{ draft!.subtitleStyle.fontSize }}</span>
             </div>
             <div class="mw-form-row">
@@ -168,20 +195,38 @@
             </div>
             <div class="mw-form-row">
               <div class="mw-form-label">文字颜色</div>
-              <input v-model="draft!.subtitleStyle.fontColor" type="color" class="w-7 h-7 rounded-[6px] border border-[var(--mw-border)] bg-transparent" />
+              <input
+                v-model="draft!.subtitleStyle.fontColor"
+                type="color"
+                class="w-7 h-7 rounded-[6px] border border-[var(--mw-border)] bg-transparent"
+              />
               <span class="text-[13px] text-[var(--mw-text2)]">{{ draft.subtitleStyle.fontColor }}</span>
             </div>
             <div class="mw-form-row">
               <div class="mw-form-label">描边</div>
-              <input v-model="draft!.subtitleStyle.outlineColor" type="color" class="w-7 h-7 rounded-[6px] border border-[var(--mw-border)] bg-transparent" />
-              <a-slider v-model="draft!.subtitleStyle.outlineWidth" :min="0" :max="8" :step="1" :style="{ width: '160px' }" />
+              <input
+                v-model="draft!.subtitleStyle.outlineColor"
+                type="color"
+                class="w-7 h-7 rounded-[6px] border border-[var(--mw-border)] bg-transparent"
+              />
+              <a-slider
+                v-model="draft!.subtitleStyle.outlineWidth"
+                :min="0"
+                :max="8"
+                :step="1"
+                :style="{ width: '160px' }"
+              />
               <span class="text-[13px] text-[var(--mw-text2)]">{{ draft!.subtitleStyle.outlineWidth }}px</span>
             </div>
             <div class="mw-form-row">
               <div class="mw-form-label">背景框</div>
               <a-switch v-model="draft!.subtitleStyle.backgroundEnabled" />
               <template v-if="draft.subtitleStyle.backgroundEnabled">
-                <input v-model="draft!.subtitleStyle.backgroundColor" type="color" class="w-7 h-7 rounded-[6px] border border-[var(--mw-border)] bg-transparent" />
+                <input
+                  v-model="draft!.subtitleStyle.backgroundColor"
+                  type="color"
+                  class="w-7 h-7 rounded-[6px] border border-[var(--mw-border)] bg-transparent"
+                />
                 <a-slider v-model="bgmOpacityProxy" :min="0" :max="100" :style="{ width: '140px' }" />
                 <span class="text-[13px] text-[var(--mw-text2)]">{{ draft!.subtitleStyle.backgroundOpacity }}</span>
               </template>
@@ -197,7 +242,13 @@
             </div>
             <div class="mw-form-row">
               <div class="mw-form-label">音乐选择</div>
-              <a-select v-model="bgmIdProxy" :style="{ width: '200px' }" :disabled="!draft!.bgmEnabled" placeholder="选择 BGM" allow-clear>
+              <a-select
+                v-model="bgmIdProxy"
+                :style="{ width: '200px' }"
+                :disabled="!draft!.bgmEnabled"
+                placeholder="选择 BGM"
+                allow-clear
+              >
                 <a-option v-for="b in bgmList" :key="b.id" :value="b.id">{{ b.name }}</a-option>
               </a-select>
               <a-button size="small" :disabled="!previewBgmUrl" @click="previewBgm">
@@ -206,15 +257,35 @@
             </div>
             <div class="mw-form-row">
               <div class="mw-form-label">音量</div>
-              <a-slider v-model="bgmVolumePercent" :min="0" :max="100" :style="{ width: '200px' }" :format-tooltip="(v: number) => v + '%'" />
+              <a-slider
+                v-model="bgmVolumePercent"
+                :min="0"
+                :max="100"
+                :style="{ width: '200px' }"
+                :format-tooltip="(v: number) => v + '%'"
+              />
               <span class="text-[13px] text-[var(--mw-text2)]">{{ bgmVolumePercent }}%</span>
             </div>
             <div class="mw-form-row">
               <div class="mw-form-label">淡入 / 淡出</div>
-              <a-input-number v-model="draft.bgmFadeIn" :min="0" :max="10000" :step="500" :style="{ width: '110px' }" :disabled="!draft.bgmEnabled">
+              <a-input-number
+                v-model="draft.bgmFadeIn"
+                :min="0"
+                :max="10000"
+                :step="500"
+                :style="{ width: '110px' }"
+                :disabled="!draft.bgmEnabled"
+              >
                 <template #suffix>ms</template>
               </a-input-number>
-              <a-input-number v-model="draft.bgmFadeOut" :min="0" :max="10000" :step="500" :style="{ width: '110px' }" :disabled="!draft.bgmEnabled">
+              <a-input-number
+                v-model="draft.bgmFadeOut"
+                :min="0"
+                :max="10000"
+                :step="500"
+                :style="{ width: '110px' }"
+                :disabled="!draft.bgmEnabled"
+              >
                 <template #suffix>ms</template>
               </a-input-number>
             </div>
@@ -274,9 +345,13 @@
               <div class="mw-form-label">启用</div>
               <a-switch v-model="draft.riskTailEnabled" />
             </div>
-            <div class="p-3.5 rounded-[10px] border border-[color:var(--mw-primary-mid)] bg-[color:var(--mw-primary-faint)]">
+            <div
+              class="p-3.5 rounded-[10px] border border-[color:var(--mw-primary-mid)] bg-[color:var(--mw-primary-faint)]"
+            >
               <div class="flex gap-3">
-                <div class="w-[72px] h-[54px] rounded-[8px] bg-black text-white/90 text-[9px] flex items-center justify-center text-center px-1 flex-shrink-0">
+                <div
+                  class="w-[72px] h-[54px] rounded-[8px] bg-black text-white/90 text-[9px] flex items-center justify-center text-center px-1 flex-shrink-0"
+                >
                   风险提示<br />（黑底白字）
                 </div>
                 <div class="flex-1">
@@ -289,7 +364,14 @@
             </div>
             <div class="mw-form-row mt-2">
               <div class="mw-form-label">时长</div>
-              <a-slider v-model="draft.riskTailSeconds" :min="1" :max="15" :step="1" :style="{ width: '200px' }" :disabled="!draft.riskTailEnabled" />
+              <a-slider
+                v-model="draft.riskTailSeconds"
+                :min="1"
+                :max="15"
+                :step="1"
+                :style="{ width: '200px' }"
+                :disabled="!draft.riskTailEnabled"
+              />
               <span class="text-[13px] text-[var(--mw-text2)]">{{ draft.riskTailSeconds }}s</span>
             </div>
             <div class="mw-subtle flex items-center gap-1 mt-1">
@@ -300,9 +382,14 @@
       </div>
 
       <!-- 渲染进度 -->
-      <div v-if="store.activeCut && ['queued', 'rendering', 'cancelling'].includes(store.activeCut.cut.status)" class="mw-card mt-5 p-4">
+      <div
+        v-if="store.activeCut && ['queued', 'rendering', 'cancelling'].includes(store.activeCut.cut.status)"
+        class="mw-card mt-5 p-4"
+      >
         <div class="flex items-center gap-3">
-          <span class="mw-tag mw-tag-blue">成片 v{{ store.activeCut.cut.versionNo }} · {{ cutStatusText(store.activeCut.cut) }}</span>
+          <span class="mw-tag mw-tag-blue"
+            >成片 v{{ store.activeCut.cut.versionNo }} · {{ cutStatusText(store.activeCut.cut) }}</span
+          >
           <a-progress :percent="store.activeCut.cut.progress / 100" :style="{ flex: 1 }" size="small" />
           <a-button size="mini" status="warning" @click="cancelCut">取消渲染</a-button>
         </div>
@@ -353,7 +440,15 @@ const videoEl = ref<HTMLVideoElement | null>(null)
 
 const videoJobId = computed(() => String(route.query.videoJobId ?? ''))
 const currentCutId = computed(() => store.activeCut?.cut.id ?? undefined)
-function onVersionSwitch(v: string | number | boolean | Record<string, unknown> | Array<string | number | boolean | Record<string, unknown>> | undefined): void {
+function onVersionSwitch(
+  v:
+    | string
+    | number
+    | boolean
+    | Record<string, unknown>
+    | Array<string | number | boolean | Record<string, unknown>>
+    | undefined,
+): void {
   if (typeof v === 'string') void switchVersion(v)
 }
 const draft = computed(() => store.draft)
@@ -361,12 +456,18 @@ const draft = computed(() => store.draft)
 const editableSegments = computed<CutSegment[]>(() => draft.value?.segments ?? [])
 const currentSegment = computed(() => editableSegments.value[current.value] ?? null)
 
-const previewMode = computed(() => (store.activeCut?.cut.status === 'completed' && store.activeCut.url ? 'final' : 'base'))
+const previewMode = computed(() =>
+  store.activeCut?.cut.status === 'completed' && store.activeCut.url ? 'final' : 'base',
+)
 const previewUrl = computed(() => (previewMode.value === 'final' ? store.activeCut?.url : store.base?.url) ?? '')
-const previewSourceLabel = computed(() => (previewMode.value === 'final' ? `成片 v${store.activeCut?.cut.versionNo}` : '基础视频（预览）'))
+const previewSourceLabel = computed(() =>
+  previewMode.value === 'final' ? `成片 v${store.activeCut?.cut.versionNo}` : '基础视频（预览）',
+)
 const activeCompleted = computed(() => store.activeCut?.cut.status === 'completed')
 const activeFailed = computed(() => store.activeCut?.cut.status === 'failed')
-const activeReviewing = computed(() => store.activeCut?.cut.reviewStatus === 'in_review' || store.activeCut?.cut.reviewStatus === 'approved')
+const activeReviewing = computed(
+  () => store.activeCut?.cut.reviewStatus === 'in_review' || store.activeCut?.cut.reviewStatus === 'approved',
+)
 
 const pageSub = computed(() => {
   if (!store.base) return ''
@@ -393,10 +494,16 @@ const reviewBanner = computed(() => {
     return { text: '内容已修改，需重新审核后发布。', detail: `成片 v${v?.versionNo} · 曾复审通过（现为待复审）` }
   }
   if (store.activeCut?.cut.reviewStatus === 'in_review') {
-    return { text: '成片已提交复审，等待人工复核。', detail: `成片 v${store.activeCut.cut.versionNo} · ${CUT_REVIEW_LABELS.in_review}` }
+    return {
+      text: '成片已提交复审，等待人工复核。',
+      detail: `成片 v${store.activeCut.cut.versionNo} · ${CUT_REVIEW_LABELS.in_review}`,
+    }
   }
   if (store.activeCut?.cut.reviewStatus === 'rejected') {
-    return { text: `复审退回：${store.activeCut.submission?.decisionReason ?? '原因未填写'}`, detail: `成片 v${store.activeCut.cut.versionNo}` }
+    return {
+      text: `复审退回：${store.activeCut.submission?.decisionReason ?? '原因未填写'}`,
+      detail: `成片 v${store.activeCut.cut.versionNo}`,
+    }
   }
   return null
 })
@@ -432,7 +539,11 @@ const bgmOpacityProxy = computed({
 
 const subtitleOverlayStyle = computed(() => {
   const pos = draft.value?.subtitleStyle.position ?? 'bottom'
-  return pos === 'top' ? { top: '8%' } : pos === 'center' ? { top: '50%', transform: 'translateY(-50%)' } : { bottom: '12%' }
+  return pos === 'top'
+    ? { top: '8%' }
+    : pos === 'center'
+      ? { top: '50%', transform: 'translateY(-50%)' }
+      : { bottom: '12%' }
 })
 
 function hexToRgba(hex: string, opacity: number): string {

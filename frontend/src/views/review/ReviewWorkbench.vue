@@ -5,7 +5,9 @@
         >文案人工复核与成片复审：查看提交内容与关卡结果，通过或退回（退回须写原因）。提交人不能裁决自己的提交。</template
       >
       <template #actions>
-        <span v-if="!stubEnabled && kind === 'copy'" class="mw-alert-banner">自动审核关卡尚未接入：已提交的文案由人工复核直接裁决</span>
+        <span v-if="!stubEnabled && kind === 'copy'" class="mw-alert-banner"
+          >自动审核关卡尚未接入：已提交的文案由人工复核直接裁决</span
+        >
       </template>
     </PageHead>
 
@@ -39,7 +41,9 @@
           <div class="mw-subtle mt-1.5">成片 v{{ it.cut.versionNo }} · {{ fmt(it.cut.createdAt) }}</div>
           <div class="mt-2 flex items-center gap-1.5 flex-wrap">
             <span class="mw-tag mw-tag-yellow">待人工复核</span>
-            <span v-if="it.submission?.riskPoints?.length" class="mw-tag mw-tag-red">{{ it.submission.riskPoints.length }} 项风险点</span>
+            <span v-if="it.submission?.riskPoints?.length" class="mw-tag mw-tag-red"
+              >{{ it.submission.riskPoints.length }} 项风险点</span
+            >
           </div>
         </button>
         <div v-if="!cutItems.length && !cutLoading" class="mw-card p-8 text-center mw-subtle">当前没有待复核的成片</div>
@@ -101,132 +105,135 @@
 
     <!-- ============ 文案审核（既有） ============ -->
     <template v-else>
-    <div class="flex items-center gap-4 mb-4 flex-wrap">
-      <a-tabs v-model:active-key="scope" type="line" class="mw-tabs flex-1">
-        <a-tab-pane key="pending"
-          ><template #title
-            >待审核 <span class="mw-subtle">{{ scope === 'pending' ? items.length : '' }}</span></template
-          ></a-tab-pane
+      <div class="flex items-center gap-4 mb-4 flex-wrap">
+        <a-tabs v-model:active-key="scope" type="line" class="mw-tabs flex-1">
+          <a-tab-pane key="pending"
+            ><template #title
+              >待审核 <span class="mw-subtle">{{ scope === 'pending' ? items.length : '' }}</span></template
+            ></a-tab-pane
+          >
+          <a-tab-pane key="decided" title="最近已裁决" />
+        </a-tabs>
+        <a-select
+          v-model="line"
+          :style="{ width: '140px' }"
+          allow-clear
+          placeholder="全部生产线"
+          aria-label="按生产线筛选"
         >
-        <a-tab-pane key="decided" title="最近已裁决" />
-      </a-tabs>
-      <a-select
-        v-model="line"
-        :style="{ width: '140px' }"
-        allow-clear
-        placeholder="全部生产线"
-        aria-label="按生产线筛选"
-      >
-        <a-option value="manager" label="经理 IP" />
-        <a-option value="kos" label="员工 KOS" />
-        <a-option value="persona" label="素人矩阵" />
-      </a-select>
-      <a-button :loading="loading" @click="load"
-        ><template #icon><icon-refresh /></template>刷新</a-button
-      >
-    </div>
-
-    <div class="review-layout">
-      <section class="flex flex-col gap-3" aria-label="审核队列">
-        <p v-if="error" class="mw-subtle" role="alert">{{ error }}</p>
-        <button
-          v-for="r in items"
-          :key="r.submissionId"
-          type="button"
-          class="mw-card review-item"
-          :class="{ active: current?.submissionId === r.submissionId }"
-          :aria-pressed="current?.submissionId === r.submissionId"
-          @click="select(r)"
+          <a-option value="manager" label="经理 IP" />
+          <a-option value="kos" label="员工 KOS" />
+          <a-option value="persona" label="素人矩阵" />
+        </a-select>
+        <a-button :loading="loading" @click="load"
+          ><template #icon><icon-refresh /></template>刷新</a-button
         >
-          <div class="flex items-center gap-2">
-            <span class="text-[14px] font-medium truncate flex-1">{{ r.copyTitle || '（无标题）' }}</span>
-            <LineTag v-if="r.line" :line="r.line" />
-          </div>
-          <div class="mw-subtle mt-1.5">
-            {{ r.personaName || '—' }} · 提交人 {{ r.submittedBy || '—' }} · {{ fmt(r.submittedAt) }}
-          </div>
-          <div class="mt-2 flex items-center gap-1.5 flex-wrap">
-            <span class="mw-tag" :class="statusTone(r.status)">{{ GATE_LABELS[r.status] ?? r.status }}</span>
-            <span v-if="r.versionNo" class="mw-tag mw-tag-gray">v{{ r.versionNo }}</span>
-            <span v-if="r.decidedBy" class="mw-subtle">裁决人 {{ r.decidedBy }}</span>
-          </div>
-        </button>
-        <div v-if="!items.length && !loading" class="mw-card p-8 text-center mw-subtle">
-          {{ scope === 'pending' ? '当前没有待审核的文案' : '暂无已裁决记录' }}
-        </div>
-      </section>
+      </div>
 
-      <section class="mw-card p-5 review-detail" aria-label="审核详情">
-        <div v-if="!current" class="mw-subtle text-center py-16">从左侧选择一条文案开始复核</div>
-        <a-spin v-else :loading="detailLoading" class="w-full">
-          <div class="flex items-center gap-2 flex-wrap">
-            <h2 class="text-[18px] font-bold m-0">{{ version?.title || current.copyTitle || '（无标题）' }}</h2>
-            <LineTag v-if="current.line" :line="current.line" />
-            <span class="mw-tag" :class="statusTone(current.status)">{{
-              GATE_LABELS[current.status] ?? current.status
-            }}</span>
-          </div>
-          <div class="mw-subtle mt-1">
-            人物 {{ current.personaName || '—' }} · 版本 v{{ current.versionNo ?? '—' }} ·
-            {{ version?.wordCount ?? 0 }} 字 · 提交人 {{ current.submittedBy || '—' }} · {{ fmt(current.submittedAt) }}
-          </div>
-
-          <div v-if="gates.length" class="gates">
-            <div v-for="(g, i) in gates" :key="i" class="gate">
-              <span class="mw-tag" :class="g.result === 'pass' ? 'mw-tag-green' : 'mw-tag-red'"
-                >{{ GATE_LABELS[g.gate] ?? g.gate }} · {{ g.result === 'pass' ? '通过' : '未通过' }}</span
-              >
-              <span v-if="g.reason" class="mw-subtle">{{ g.reason }}</span>
-              <span v-if="g.riskPoints?.length" class="risk-points">风险点：{{ g.riskPoints.join('；') }}</span>
-            </div>
-          </div>
-
-          <article class="copy-body">
-            <section v-for="(sec, i) in version?.sections ?? []" :key="i">
-              <h3>{{ sec.label }}</h3>
-              <p>{{ sec.text }}</p>
-            </section>
-            <section v-if="appendedRisk" class="risk-tail">
-              <h3>风险提示（追加话术）</h3>
-              <p>{{ appendedRisk }}</p>
-            </section>
-          </article>
-
-          <div v-if="version?.complianceHits?.length" class="hits">
-            <strong>提交时合规扫描命中</strong>
-            <ul>
-              <li v-for="(h, i) in version.complianceHits" :key="i">
-                {{ h.word }}<span class="mw-subtle">（{{ h.level === 'hard' ? '硬禁用' : '软提示' }}）</span>
-              </li>
-            </ul>
-          </div>
-
-          <div v-if="current.reason" class="decided-reason">退回原因：{{ current.reason }}</div>
-
-          <div v-if="decidable" class="decision">
-            <a-textarea
-              v-model="reason"
-              :max-length="500"
-              show-word-limit
-              :auto-size="{ minRows: 2, maxRows: 5 }"
-              placeholder="退回原因（退回时必填），会展示给文案作者"
-            />
-            <a-input-tag v-model="riskPoints" placeholder="风险点（可选，输入后回车）" allow-clear />
+      <div class="review-layout">
+        <section class="flex flex-col gap-3" aria-label="审核队列">
+          <p v-if="error" class="mw-subtle" role="alert">{{ error }}</p>
+          <button
+            v-for="r in items"
+            :key="r.submissionId"
+            type="button"
+            class="mw-card review-item"
+            :class="{ active: current?.submissionId === r.submissionId }"
+            :aria-pressed="current?.submissionId === r.submissionId"
+            @click="select(r)"
+          >
             <div class="flex items-center gap-2">
-              <span v-if="isOwn" class="mw-subtle">四眼原则：这是你自己提交的文案，需由其他审核员裁决</span>
-              <div class="flex-1" />
-              <a-button status="danger" :loading="deciding" :disabled="isOwn" @click="decide('rejected')"
-                >退回</a-button
-              >
-              <a-button type="primary" :loading="deciding" :disabled="isOwn" @click="decide('approved')">通过</a-button>
+              <span class="text-[14px] font-medium truncate flex-1">{{ r.copyTitle || '（无标题）' }}</span>
+              <LineTag v-if="r.line" :line="r.line" />
             </div>
+            <div class="mw-subtle mt-1.5">
+              {{ r.personaName || '—' }} · 提交人 {{ r.submittedBy || '—' }} · {{ fmt(r.submittedAt) }}
+            </div>
+            <div class="mt-2 flex items-center gap-1.5 flex-wrap">
+              <span class="mw-tag" :class="statusTone(r.status)">{{ GATE_LABELS[r.status] ?? r.status }}</span>
+              <span v-if="r.versionNo" class="mw-tag mw-tag-gray">v{{ r.versionNo }}</span>
+              <span v-if="r.decidedBy" class="mw-subtle">裁决人 {{ r.decidedBy }}</span>
+            </div>
+          </button>
+          <div v-if="!items.length && !loading" class="mw-card p-8 text-center mw-subtle">
+            {{ scope === 'pending' ? '当前没有待审核的文案' : '暂无已裁决记录' }}
           </div>
-          <p v-else-if="scope === 'pending'" class="mw-subtle mt-3">
-            该文案正在自动关卡中（{{ GATE_LABELS[current.status] }}），进入「待人工复核」后可裁决。
-          </p>
-        </a-spin>
-      </section>
-    </div>
+        </section>
+
+        <section class="mw-card p-5 review-detail" aria-label="审核详情">
+          <div v-if="!current" class="mw-subtle text-center py-16">从左侧选择一条文案开始复核</div>
+          <a-spin v-else :loading="detailLoading" class="w-full">
+            <div class="flex items-center gap-2 flex-wrap">
+              <h2 class="text-[18px] font-bold m-0">{{ version?.title || current.copyTitle || '（无标题）' }}</h2>
+              <LineTag v-if="current.line" :line="current.line" />
+              <span class="mw-tag" :class="statusTone(current.status)">{{
+                GATE_LABELS[current.status] ?? current.status
+              }}</span>
+            </div>
+            <div class="mw-subtle mt-1">
+              人物 {{ current.personaName || '—' }} · 版本 v{{ current.versionNo ?? '—' }} ·
+              {{ version?.wordCount ?? 0 }} 字 · 提交人 {{ current.submittedBy || '—' }} ·
+              {{ fmt(current.submittedAt) }}
+            </div>
+
+            <div v-if="gates.length" class="gates">
+              <div v-for="(g, i) in gates" :key="i" class="gate">
+                <span class="mw-tag" :class="g.result === 'pass' ? 'mw-tag-green' : 'mw-tag-red'"
+                  >{{ GATE_LABELS[g.gate] ?? g.gate }} · {{ g.result === 'pass' ? '通过' : '未通过' }}</span
+                >
+                <span v-if="g.reason" class="mw-subtle">{{ g.reason }}</span>
+                <span v-if="g.riskPoints?.length" class="risk-points">风险点：{{ g.riskPoints.join('；') }}</span>
+              </div>
+            </div>
+
+            <article class="copy-body">
+              <section v-for="(sec, i) in version?.sections ?? []" :key="i">
+                <h3>{{ sec.label }}</h3>
+                <p>{{ sec.text }}</p>
+              </section>
+              <section v-if="appendedRisk" class="risk-tail">
+                <h3>风险提示（追加话术）</h3>
+                <p>{{ appendedRisk }}</p>
+              </section>
+            </article>
+
+            <div v-if="version?.complianceHits?.length" class="hits">
+              <strong>提交时合规扫描命中</strong>
+              <ul>
+                <li v-for="(h, i) in version.complianceHits" :key="i">
+                  {{ h.word }}<span class="mw-subtle">（{{ h.level === 'hard' ? '硬禁用' : '软提示' }}）</span>
+                </li>
+              </ul>
+            </div>
+
+            <div v-if="current.reason" class="decided-reason">退回原因：{{ current.reason }}</div>
+
+            <div v-if="decidable" class="decision">
+              <a-textarea
+                v-model="reason"
+                :max-length="500"
+                show-word-limit
+                :auto-size="{ minRows: 2, maxRows: 5 }"
+                placeholder="退回原因（退回时必填），会展示给文案作者"
+              />
+              <a-input-tag v-model="riskPoints" placeholder="风险点（可选，输入后回车）" allow-clear />
+              <div class="flex items-center gap-2">
+                <span v-if="isOwn" class="mw-subtle">四眼原则：这是你自己提交的文案，需由其他审核员裁决</span>
+                <div class="flex-1" />
+                <a-button status="danger" :loading="deciding" :disabled="isOwn" @click="decide('rejected')"
+                  >退回</a-button
+                >
+                <a-button type="primary" :loading="deciding" :disabled="isOwn" @click="decide('approved')"
+                  >通过</a-button
+                >
+              </div>
+            </div>
+            <p v-else-if="scope === 'pending'" class="mw-subtle mt-3">
+              该文案正在自动关卡中（{{ GATE_LABELS[current.status] }}），进入「待人工复核」后可裁决。
+            </p>
+          </a-spin>
+        </section>
+      </div>
     </template>
   </div>
 </template>
@@ -320,7 +327,7 @@ async function decideCut(result: 'approved' | 'rejected'): Promise<void> {
   }
   cutDeciding.value = true
   try {
-    await cutApi.decide(currentCut.value.cut.id, (result as 'approved' | 'rejected'), cutReason.value.trim() || undefined)
+    await cutApi.decide(currentCut.value.cut.id, result as 'approved' | 'rejected', cutReason.value.trim() || undefined)
     Message.success(result === 'approved' ? '成片复审通过，可用于发布' : '已退回，运营可修改后重新渲染')
     currentCut.value = null
     await loadCuts()

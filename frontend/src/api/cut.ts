@@ -157,13 +157,22 @@ export const cutApi = {
   getConfig: (jobId: string) => apiGet<CutConfig>(`/video/jobs/${jobId}/cut-config`),
   saveConfig: (jobId: string, input: CutConfigInput) => apiPut<VideoCut>(`/video/jobs/${jobId}/cut-config`, input),
   createVersion: (jobId: string, idempotencyKey: string) =>
-    apiPost<{ cut: VideoCut; idempotent: boolean }>(`/video/jobs/${jobId}/cut-versions`, {}, { 'Idempotency-Key': idempotencyKey }),
+    apiPost<{ cut: VideoCut; idempotent: boolean }>(
+      `/video/jobs/${jobId}/cut-versions`,
+      {},
+      { 'Idempotency-Key': idempotencyKey },
+    ),
   listVersions: (jobId: string) => apiGet<{ versions: VideoCut[] }>(`/video/jobs/${jobId}/cut-versions`),
   getCut: (cutId: string) => apiGet<CutVersionView>(`/video/cuts/${cutId}`),
   cancel: (cutId: string) => apiPost<VideoCut>(`/video/cuts/${cutId}/cancel`),
   retryRender: (cutId: string) => apiPost<VideoCut>(`/video/cuts/${cutId}/retry-render`),
-  submitReview: (cutId: string) => apiPost<{ submission: CutReviewSubmission; idempotent: boolean }>(`/video/cuts/${cutId}/review`),
-  getReview: (cutId: string) => apiGet<{ submission: CutReviewSubmission | null; diff: Array<{ index: number; original: string; edited: string; kind: string }> }>(`/video/cuts/${cutId}/review`),
+  submitReview: (cutId: string) =>
+    apiPost<{ submission: CutReviewSubmission; idempotent: boolean }>(`/video/cuts/${cutId}/review`),
+  getReview: (cutId: string) =>
+    apiGet<{
+      submission: CutReviewSubmission | null
+      diff: Array<{ index: number; original: string; edited: string; kind: string }>
+    }>(`/video/cuts/${cutId}/review`),
   decide: (cutId: string, result: 'approved' | 'rejected', reason?: string) =>
     apiPost<CutReviewSubmission>(`/video/cuts/${cutId}/review/decision`, { result, reason }),
   reviewQueue: (query?: { status?: string; line?: string }) =>
