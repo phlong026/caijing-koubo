@@ -11,7 +11,10 @@
         <span v-else>选择素材，开始创作口播文案</span>
       </template>
       <template #actions>
-        <a-button v-if="copy" :aria-pressed="workspace.focusWriting" @click="toggleWritingFocus"><template #icon><icon-shrink v-if="workspace.focusWriting" /><icon-expand v-else /></template>{{ workspace.focusWriting ? '退出专注' : '专注写作' }}</a-button>
+        <a-button v-if="copy" :aria-pressed="workspace.focusWriting" @click="toggleWritingFocus"
+          ><template #icon><icon-shrink v-if="workspace.focusWriting" /><icon-expand v-else /></template
+          >{{ workspace.focusWriting ? '退出专注' : '专注写作' }}</a-button
+        >
         <a-button @click="listVisible = true">
           <template #icon><icon-file /></template>
           文案任务
@@ -21,8 +24,12 @@
 
     <!-- 加载 -->
     <div v-if="store.loading" class="copy-layout">
-      <div class="mw-card p-5"><a-skeleton :animation="true"><a-skeleton-line :rows="8" /></a-skeleton></div>
-      <div class="mw-card p-5"><a-skeleton :animation="true"><a-skeleton-line :rows="12" /></a-skeleton></div>
+      <div class="mw-card p-5">
+        <a-skeleton :animation="true"><a-skeleton-line :rows="8" /></a-skeleton>
+      </div>
+      <div class="mw-card p-5">
+        <a-skeleton :animation="true"><a-skeleton-line :rows="12" /></a-skeleton>
+      </div>
     </div>
 
     <!-- 加载失败 / 不存在 -->
@@ -47,35 +54,133 @@
       <section id="copy-step-source" class="flow-step" aria-labelledby="copy-source-heading">
         <span class="flow-node" :class="{ complete: sourceConfirmed }">{{ sourceConfirmed ? '✓' : '1' }}</span>
         <div class="flow-step-body">
-          <div class="flow-step-heading"><h2 id="copy-source-heading" tabindex="-1">准备素材</h2><span class="flow-state" :class="{ complete: sourceConfirmed }">{{ sourceConfirmed ? '已核对' : '待核对' }}</span><a-button type="text" size="small" :aria-expanded="!collapsed.source" aria-controls="copy-source-content" @click="collapsed.source=!collapsed.source">{{ collapsed.source ? '展开' : '收起' }}</a-button></div>
-          <div id="copy-source-content" v-show="!collapsed.source" class="flow-card"><SourcePanel @created="onSourcesCreated" @source-mode="mode=>sourceMode=mode" /><div v-if="sourceMode==='topics'" class="flow-next"><a-button @click="goToStep('settings')">下一步：设置创作要求 <icon-arrow-down /></a-button></div></div>
+          <div class="flow-step-heading">
+            <h2 id="copy-source-heading" tabindex="-1">准备素材</h2>
+            <span class="flow-state" :class="{ complete: sourceConfirmed }">{{
+              sourceConfirmed ? '已核对' : '待核对'
+            }}</span
+            ><a-button
+              type="text"
+              size="small"
+              :aria-expanded="!collapsed.source"
+              aria-controls="copy-source-content"
+              @click="collapsed.source = !collapsed.source"
+              >{{ collapsed.source ? '展开' : '收起' }}</a-button
+            >
+          </div>
+          <div id="copy-source-content" v-show="!collapsed.source" class="flow-card">
+            <SourcePanel @created="onSourcesCreated" @source-mode="(mode) => (sourceMode = mode)" />
+            <div v-if="sourceMode === 'topics'" class="flow-next">
+              <a-button @click="goToStep('settings')">下一步：设置创作要求 <icon-arrow-down /></a-button>
+            </div>
+          </div>
         </div>
       </section>
       <section id="copy-step-settings" class="flow-step" aria-labelledby="copy-settings-heading">
         <span class="flow-node">2</span>
         <div class="flow-step-body">
-          <div class="flow-step-heading"><h2 id="copy-settings-heading" tabindex="-1">设置创作要求</h2><span class="flow-state">{{ store.settingsSaving ? '保存中' : store.settingsError ? '保存失败' : store.settingsDirty ? '有改动' : '已保存' }}</span><a-button type="text" size="small" :aria-expanded="!collapsed.settings" aria-controls="copy-settings-content" @click="collapsed.settings=!collapsed.settings">{{ collapsed.settings ? '展开' : '收起' }}</a-button></div>
-          <div id="copy-settings-content" v-show="!collapsed.settings" class="flow-card"><SettingsPanel @preview="onPreviewPrompt" /><div class="flow-next"><a-button type="text" @click="goToStep('write')">编辑已有文案 <icon-arrow-down /></a-button></div></div>
+          <div class="flow-step-heading">
+            <h2 id="copy-settings-heading" tabindex="-1">设置创作要求</h2>
+            <span class="flow-state">{{
+              store.settingsSaving
+                ? '保存中'
+                : store.settingsError
+                  ? '保存失败'
+                  : store.settingsDirty
+                    ? '有改动'
+                    : '已保存'
+            }}</span
+            ><a-button
+              type="text"
+              size="small"
+              :aria-expanded="!collapsed.settings"
+              aria-controls="copy-settings-content"
+              @click="collapsed.settings = !collapsed.settings"
+              >{{ collapsed.settings ? '展开' : '收起' }}</a-button
+            >
+          </div>
+          <div id="copy-settings-content" v-show="!collapsed.settings" class="flow-card">
+            <SettingsPanel @preview="onPreviewPrompt" />
+            <div class="flow-next">
+              <a-button type="text" @click="goToStep('write')">编辑已有文案 <icon-arrow-down /></a-button>
+            </div>
+          </div>
         </div>
       </section>
       <section id="copy-step-write" class="flow-step" aria-labelledby="copy-write-heading">
         <span class="flow-node" :class="{ complete: currentFinal }">{{ currentFinal ? '✓' : '3' }}</span>
         <div class="flow-step-body">
-          <div class="flow-step-heading"><h2 id="copy-write-heading" tabindex="-1">改写与定稿</h2><span class="flow-state" :class="{complete:currentFinal}">{{ currentFinal ? '已定稿' : '可编辑' }}</span><div class="flow-heading-actions"><a-button size="small" @click="versionVisible=true">本稿历史</a-button><a-button size="small" :disabled="!store.editor || !store.canEdit || savingDraft || store.editor.saving" :loading="savingDraft || store.editor?.saving" @click="onSaveDraft">保存版本</a-button></div></div>
-          <div role="region" aria-label="文案编辑区"><CandidateShelf @open="(id) => draftEditorRef?.selectDraft(id)" /><DraftEditor ref="draftEditorRef" @variant="onVariant" /></div>
-          <div class="flow-next"><a-button @click="goToStep('review')">下一步：检查与审核 <icon-arrow-down /></a-button></div>
+          <div class="flow-step-heading">
+            <h2 id="copy-write-heading" tabindex="-1">改写与定稿</h2>
+            <span class="flow-state" :class="{ complete: currentFinal }">{{ currentFinal ? '已定稿' : '可编辑' }}</span>
+            <div class="flow-heading-actions">
+              <a-button size="small" @click="versionVisible = true">本稿历史</a-button
+              ><a-button
+                size="small"
+                :disabled="!store.editor || !store.canEdit || savingDraft || store.editor.saving"
+                :loading="savingDraft || store.editor?.saving"
+                @click="onSaveDraft"
+                >保存版本</a-button
+              >
+            </div>
+          </div>
+          <div role="region" aria-label="文案编辑区">
+            <CandidateShelf @open="(id) => draftEditorRef?.selectDraft(id)" /><DraftEditor
+              ref="draftEditorRef"
+              @variant="onVariant"
+            />
+          </div>
+          <div class="flow-next">
+            <a-button @click="goToStep('review')">下一步：检查与审核 <icon-arrow-down /></a-button>
+          </div>
         </div>
       </section>
       <section id="copy-step-review" class="flow-step" aria-labelledby="copy-review-heading">
-        <span class="flow-node" :class="{complete:copy.status==='approved'}">{{ copy.status==='approved' ? '✓' : '4' }}</span>
+        <span class="flow-node" :class="{ complete: copy.status === 'approved' }">{{
+          copy.status === 'approved' ? '✓' : '4'
+        }}</span>
         <div class="flow-step-body">
-          <div class="flow-step-heading"><h2 id="copy-review-heading" tabindex="-1">检查与审核</h2><span class="flow-state" :class="{complete:copy.status==='approved'}">{{ reviewStatusLabel }}</span></div>
+          <div class="flow-step-heading">
+            <h2 id="copy-review-heading" tabindex="-1">检查与审核</h2>
+            <span class="flow-state" :class="{ complete: copy.status === 'approved' }">{{ reviewStatusLabel }}</span>
+          </div>
           <ReviewPanel v-if="showReview" />
           <div class="flow-card flow-submit">
-            <div><strong>{{ copy.status==='approved' ? '文案已通过审核' : copy.status==='in_review' ? '文案正在审核中' : '检查文案，提交审核' }}</strong><p>{{ copy.status==='approved' ? '可查看通过稿，准备制作视频。' : copy.status==='in_review' ? '审核完成后可在此查看结果。' : '提交前将检查字数、时长、用词和定稿内容。' }}</p></div>
-            <a-button v-if="copy.status==='draft' || copy.status==='rejected'" type="primary" :disabled="!store.editor || store.generating" @click="submitVisible=true">检查并提交审核</a-button>
-            <a-button v-else-if="copy.status==='in_review' && ['submitted','gate1','gate2','gate3'].includes(store.detail?.review?.status ?? '')" @click="onWithdraw">撤回提交</a-button>
-            <a-button v-else-if="copy.status==='approved'" type="primary" @click="onGoVideo">去视频创作</a-button>
+            <div>
+              <strong>{{
+                copy.status === 'approved'
+                  ? '文案已通过审核'
+                  : copy.status === 'in_review'
+                    ? '文案正在审核中'
+                    : '检查文案，提交审核'
+              }}</strong>
+              <p>
+                {{
+                  copy.status === 'approved'
+                    ? '可查看通过稿，准备制作视频。'
+                    : copy.status === 'in_review'
+                      ? '审核完成后可在此查看结果。'
+                      : '提交前将检查字数、时长、用词和定稿内容。'
+                }}
+              </p>
+            </div>
+            <a-button
+              v-if="copy.status === 'draft' || copy.status === 'rejected'"
+              type="primary"
+              :disabled="!store.editor || store.generating"
+              @click="submitVisible = true"
+              >检查并提交审核</a-button
+            >
+            <a-button
+              v-else-if="
+                copy.status === 'in_review' &&
+                ['submitted', 'gate1', 'gate2', 'gate3'].includes(store.detail?.review?.status ?? '')
+              "
+              @click="onWithdraw"
+              >撤回提交</a-button
+            >
+            <a-button v-else-if="copy.status === 'approved'" type="primary" @click="onGoVideo">去视频创作</a-button>
+            <a-button v-if="canGoPublish" @click="onGoPublish">去发布</a-button>
           </div>
         </div>
       </section>
@@ -99,7 +204,21 @@
           <div class="flex items-center gap-3 mb-3">
             <span class="mw-subtle">字数区间 {{ promptData.wordRange.min }}–{{ promptData.wordRange.max }} 字</span>
           </div>
-          <div class="task-preview-summary"><strong>{{ store.options?.templates.find(t=>t.id===store.creativeSettings.templateId)?.name }} · {{ store.availableStyles.find(s=>s.id===store.creativeSettings.styleId)?.name }}</strong><p>目标：{{ store.options?.durationTiers.find(d=>d.key===store.creativeSettings.durationTier)?.name }}<template v-if="store.creativeSettings.durationTier==='custom'"> {{ store.creativeSettings.durationSeconds }} 秒</template> · {{ store.creativeSettings.count }} 篇</p><p>{{ store.creativeSettings.instructions || '按所选人物、模板和风格创作' }}</p><p class="mw-subtle">使用素材：{{ store.copy?.settings?.sourceReview ? '已保存的校对稿' : '原始素材' }}</p></div>
+          <div class="task-preview-summary">
+            <strong
+              >{{ store.options?.templates.find((t) => t.id === store.creativeSettings.templateId)?.name }} ·
+              {{ store.availableStyles.find((s) => s.id === store.creativeSettings.styleId)?.name }}</strong
+            >
+            <p>
+              目标：{{ store.options?.durationTiers.find((d) => d.key === store.creativeSettings.durationTier)?.name
+              }}<template v-if="store.creativeSettings.durationTier === 'custom'">
+                {{ store.creativeSettings.durationSeconds }} 秒</template
+              >
+              · {{ store.creativeSettings.count }} 篇
+            </p>
+            <p>{{ store.creativeSettings.instructions || '按所选人物、模板和风格创作' }}</p>
+            <p class="mw-subtle">使用素材：{{ store.copy?.settings?.sourceReview ? '已保存的校对稿' : '原始素材' }}</p>
+          </div>
         </div>
       </a-spin>
     </a-modal>
@@ -113,6 +232,7 @@ import { Message, Modal } from '@arco-design/web-vue'
 import PageHead from '@/components/PageHead.vue'
 import { useCopyStore } from '@/stores/copy'
 import { copyApi, type DurationTier, type CreativeSettings, type SourceReview } from '@/api/copy'
+import { listVideoJobs } from '@/api/video'
 import SourcePanel from './components/SourceWorkbench.vue'
 import SourceIntake from './components/SourceIntake.vue'
 import CandidateShelf from './components/CandidateShelf.vue'
@@ -131,24 +251,58 @@ const router = useRouter()
 const store = useCopyStore()
 const draftEditorRef = ref<InstanceType<typeof DraftEditor> | null>(null)
 const workspace = useWorkspaceStore()
-const collapsed = reactive({source:false,settings:false})
-const sourceMode=ref('topics')
+const collapsed = reactive({ source: false, settings: false })
+const sourceMode = ref('topics')
 type FlowStep = 'source' | 'settings' | 'write' | 'review'
-function goToStep(step:FlowStep) {
-  if (step==='source' || step==='settings') collapsed[step]=false
-  void nextTick(()=>{const heading=document.getElementById(`copy-${step}-heading`);heading?.scrollIntoView({block:'start',behavior:'auto'});heading?.focus({preventScroll:true})})
+function goToStep(step: FlowStep) {
+  if (step === 'source' || step === 'settings') collapsed[step] = false
+  void nextTick(() => {
+    const heading = document.getElementById(`copy-${step}-heading`)
+    heading?.scrollIntoView({ block: 'start', behavior: 'auto' })
+    heading?.focus({ preventScroll: true })
+  })
 }
-function toggleWritingFocus() {workspace.focusWriting=!workspace.focusWriting;if(workspace.focusWriting)goToStep('write')}
-const createdTargetId=ref<string|null>(null)
-function onSourcesCreated(ids:string[]) {if(ids.length){createdTargetId.value=ids.length===1?ids[0]:null;void router.push({path:'/copy',query:ids.length===1?{id:ids[0]}:{ids:ids.join(',')}})}}
-function onPrecheckNavigate(step:'source'|'settings'|'write') {submitVisible.value=false;goToStep(step)}
-onBeforeUnmount(()=>{workspace.focusWriting=false})
+function toggleWritingFocus() {
+  workspace.focusWriting = !workspace.focusWriting
+  if (workspace.focusWriting) goToStep('write')
+}
+const createdTargetId = ref<string | null>(null)
+/** 已过审且基础视频就绪时展示「去发布」（发布管理 FR-X2 遗留入口，TC8） */
+const canGoPublish = ref(false)
+function onSourcesCreated(ids: string[]) {
+  if (ids.length) {
+    createdTargetId.value = ids.length === 1 ? ids[0] : null
+    void router.push({ path: '/copy', query: ids.length === 1 ? { id: ids[0] } : { ids: ids.join(',') } })
+  }
+}
+function onPrecheckNavigate(step: 'source' | 'settings' | 'write') {
+  submitVisible.value = false
+  goToStep(step)
+}
+onBeforeUnmount(() => {
+  workspace.focusWriting = false
+})
 
 const copy = computed(() => store.copy)
-const sourceConfirmed = computed(()=>(store.copy?.settings?.sourceReview as SourceReview | undefined)?.confirmed===true)
-const currentFinal = computed(()=>!!store.drafts.find(d=>d.id===store.editor?.draftId && d.isFinal) && !store.isDirty)
-const reviewStatusLabel = computed(()=>({draft:'待提交',in_review:'审核中',approved:'已通过',rejected:'待修改',archived:'已归档'}[copy.value?.status ?? 'draft']))
-watch(()=>store.activeGeneration?.status,(status,previous)=>{if((status==='done'||status==='partial')&&(previous==='pending'||previous==='running'))goToStep('write')})
+const sourceConfirmed = computed(
+  () => (store.copy?.settings?.sourceReview as SourceReview | undefined)?.confirmed === true,
+)
+const currentFinal = computed(
+  () => !!store.drafts.find((d) => d.id === store.editor?.draftId && d.isFinal) && !store.isDirty,
+)
+const reviewStatusLabel = computed(
+  () =>
+    ({ draft: '待提交', in_review: '审核中', approved: '已通过', rejected: '待修改', archived: '已归档' })[
+      copy.value?.status ?? 'draft'
+    ],
+)
+watch(
+  () => store.activeGeneration?.status,
+  (status, previous) => {
+    if ((status === 'done' || status === 'partial') && (previous === 'pending' || previous === 'running'))
+      goToStep('write')
+  },
+)
 /** 人物名取自详情顶层 `persona`（copy 自身没有 persona 字段） */
 const personaName = computed(() => store.detail?.persona?.name ?? '')
 const showReview = computed(
@@ -210,6 +364,15 @@ async function loadByRoute(): Promise<void> {
     return
   }
   await store.load(target)
+  // 已过审的文案异步探测基础视频是否就绪（TC8 去发布入口），不阻塞加载
+  canGoPublish.value = false
+  if (store.copy?.status === 'approved') {
+    void listVideoJobs({ copyId: target })
+      .then((r) => {
+        canGoPublish.value = r.items.some((j) => j.phase === 'completed')
+      })
+      .catch(() => undefined)
+  }
   // 载入后按人物刷新可选风格（Q4 按线过滤）。
   // 注意：`copy.persona` 只在**列表项**里有值，`GET /copy/:id` 返回的 copy 对象不带该字段
   // （人物在详情顶层 persona）。早先只读 copy.persona.id，导致详情页永远拿不到人物，
@@ -218,7 +381,11 @@ async function loadByRoute(): Promise<void> {
   if (pid) {
     await store.loadOptions(pid)
   }
-  if(store.copy?.id===target && createdTargetId.value===target){createdTargetId.value=null;collapsed.source=true;goToStep('settings')}
+  if (store.copy?.id === target && createdTargetId.value === target) {
+    createdTargetId.value = null
+    collapsed.source = true
+    goToStep('settings')
+  }
 }
 
 watch(() => route.query, loadByRoute, { immediate: false })
@@ -246,7 +413,10 @@ function onBeforeUnload(e: BeforeUnloadEvent): void {
 onMounted(() => window.addEventListener('beforeunload', onBeforeUnload))
 
 onBeforeRouteLeave(async () => {
-  if (!(await store.saveCreativeSettings())) { Message.error(store.settingsError || '创作设置尚未保存'); return false }
+  if (!(await store.saveCreativeSettings())) {
+    Message.error(store.settingsError || '创作设置尚未保存')
+    return false
+  }
   if (!store.isDirty) return true
   // 先尝试自动保存一次，成功就放行
   const r = await store.save()
@@ -269,7 +439,10 @@ const savingDraft = ref(false)
 
 async function onSaveDraft(): Promise<void> {
   if (!copy.value || !store.editor) return
-  if (!(await store.saveCreativeSettings())) { Message.error(store.settingsError); return }
+  if (!(await store.saveCreativeSettings())) {
+    Message.error(store.settingsError)
+    return
+  }
   savingDraft.value = true
   try {
     // 先落盘，再生成版本，保证版本内容就是屏幕上看到的内容
@@ -302,7 +475,18 @@ async function onWithdraw(): Promise<void> {
 }
 
 function onGoVideo(): void {
-  Message.info('视频创作模块尚未接入，请在内测环境验证')
+  const id = resolveId()
+  if (!id) {
+    Message.warning('请先选择或保存文案')
+    return
+  }
+  router.push({ path: '/video/create', query: { copyId: id } })
+}
+
+function onGoPublish(): void {
+  const id = resolveId()
+  if (!id) return
+  router.push({ path: '/publish', query: { copyId: id } })
 }
 
 function reload(): void {
@@ -326,7 +510,12 @@ function onSubmitted(_submissionId: string): void {
 
 const promptVisible = ref(false)
 const promptLoading = ref(false)
-const promptData = ref<{ system: string; user: string; promptHash: string; wordRange: { min: number; max: number } } | null>(null)
+const promptData = ref<{
+  system: string
+  user: string
+  promptHash: string
+  wordRange: { min: number; max: number }
+} | null>(null)
 
 async function onPreviewPrompt(settings: CreativeSettings): Promise<void> {
   if (!copy.value) return
@@ -359,50 +548,294 @@ async function onPreviewPrompt(settings: CreativeSettings): Promise<void> {
 </script>
 
 <style scoped>
-.task-preview-summary{padding:18px;background:#f1f7f3;border:1px solid #dce9df;border-radius:10px;font-size:13px;line-height:1.9}.task-preview-summary p{margin:8px 0 0}
-:global(.copy-compare-modal .arco-modal),:global(.source-review-modal .arco-modal){max-width:calc(100vw - 32px)}
-:global(.copy-compare-modal .arco-modal-body),:global(.source-review-modal .arco-modal-body){max-height:calc(100dvh - 180px);overflow:auto}
-:global(.settings-save-state){display:flex;justify-content:space-between;gap:6px;font-size:11px;color:#7c8880;margin-bottom:6px}
-:global(.copy-page.copy-flow-page){height:auto;min-height:100%;overflow:visible;display:block;padding:26px 32px 60px;max-width:1300px;margin:0 auto}
-:global(.copy-flow-page .mw-page-head){margin-bottom:30px;flex-wrap:wrap}
-:global(.copy-flow-page .mw-page-actions){flex-wrap:wrap}
-.creation-flow{max-width:1080px;margin:0 auto}
-.flow-step{position:relative;display:grid;grid-template-columns:36px minmax(0,1fr);column-gap:20px;padding-bottom:32px;scroll-margin-top:24px}
-.flow-step:not(:last-child)::before{content:'';position:absolute;left:17px;top:36px;bottom:0;border-left:1px solid var(--mw-border)}
-.flow-node{position:relative;display:flex;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid #becbd1;border-radius:50%;color:var(--mw-primary);font-size:14px;font-weight:600;background:var(--mw-bg)}
-.flow-node.complete{background:#edf5ef;border-color:#c8ddcd;color:#33704a}
-.flow-step-body{min-width:0}
-.flow-step-heading{display:flex;align-items:center;gap:12px;min-height:36px;margin-bottom:16px;flex-wrap:wrap}
-.flow-step-heading h2{font-size:17px;font-weight:600;color:var(--mw-text);line-height:1.5;scroll-margin-top:24px}
-.flow-step-heading h2:focus{outline:none}
-.flow-step-heading>.arco-btn,.flow-heading-actions{margin-left:auto}
-.flow-heading-actions{display:flex;gap:8px}
-.flow-state{font-size:12px;color:var(--mw-text3)}
-.flow-state.complete{color:#33704a}
-.flow-card{padding:24px;border:1px solid var(--mw-border);border-radius:8px;background:#fff}
-.flow-next{display:flex;justify-content:flex-end;margin-top:18px}
-.flow-submit{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
-.flow-submit strong{font-size:15px;font-weight:500}
-.flow-submit p{font-size:13px;color:var(--mw-text3);margin-top:8px;line-height:1.8}
-:global(.copy-flow-page .copy-settings){height:auto;display:block}
-:global(.copy-flow-page .copy-settings-fields){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 28px;overflow:visible;padding:0}
-:global(.copy-flow-page .copy-settings-fields>.creative-requirements),:global(.copy-flow-page .copy-settings-fields>.gen-panel){grid-column:1 / -1}
-:global(.copy-flow-page .copy-settings .mw-form-row){display:block;margin:0}
-:global(.copy-flow-page .copy-settings .mw-form-label){display:block;width:auto;font-size:13px;padding:0;margin-bottom:9px}
-:global(.copy-flow-page .copy-settings .duration-setting .arco-radio-group-button){display:flex;width:fit-content;max-width:100%;flex-wrap:wrap}
-:global(.copy-flow-page .copy-settings .duration-setting .arco-radio-button){width:auto;padding:0 14px}
-:global(.copy-flow-page .copy-settings .copy-generation-count){display:block}
-:global(.copy-flow-page .copy-settings .copy-generation-count>.mw-subtle){margin-left:10px}
-:global(.copy-flow-page .copy-settings .copy-generate-actions){margin-top:24px;padding-top:18px;border-top:1px solid var(--mw-border-light);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-:global(.copy-flow-page .copy-generate-actions>.settings-save-state){display:none}
-:global(.copy-flow-page .copy-generate-actions>.arco-btn){width:auto;min-width:180px;margin-left:auto}
-:global(.copy-flow-page .copy-editor){min-height:0;border-radius:8px}
-:global(.copy-flow-page .copy-editor-toolbar){position:static}
-:global(.copy-flow-page .copy-editor.is-continuous .section-item){padding:0;border-bottom:0}
-:global(.copy-flow-page .copy-editor.is-continuous .section-item .arco-textarea){padding:3px 0;font-size:16px;line-height:2}
-:global(.copy-flow-page .copy-editor.is-continuous .section-item.has-violation),:global(.copy-flow-page .copy-editor.is-continuous .section-item.has-soft-warning){padding-left:10px}
-@media(max-width:900px){:global(.copy-page.copy-flow-page){padding:20px 20px 40px}.flow-step{column-gap:14px}.flow-card{padding:20px}}
-@media(max-width:600px){:global(.copy-page.copy-flow-page){padding:18px 12px 32px}.flow-step{grid-template-columns:28px minmax(0,1fr);column-gap:10px;padding-bottom:26px}.flow-node{width:28px;height:28px;font-size:12px}.flow-step:not(:last-child)::before{left:13px;top:30px}.flow-step-heading{min-height:28px;gap:8px;margin-bottom:12px}.flow-step-heading h2{font-size:16px}.flow-heading-actions{width:100%;margin:0}.flow-card{padding:16px}.flow-submit>.arco-btn{width:100%}:global(.copy-flow-page .copy-settings-fields){grid-template-columns:minmax(0,1fr);gap:20px}:global(.copy-flow-page .copy-generate-actions>.arco-btn){width:100%;margin:0}:global(.copy-flow-page .copy-editor-toolbar>div:first-child){gap:8px}}
-@media(prefers-reduced-motion:reduce){.creation-flow{scroll-behavior:auto}}
+.task-preview-summary {
+  padding: 18px;
+  background: #f1f7f3;
+  border: 1px solid #dce9df;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.9;
+}
+.task-preview-summary p {
+  margin: 8px 0 0;
+}
+:global(.copy-compare-modal .arco-modal),
+:global(.source-review-modal .arco-modal) {
+  max-width: calc(100vw - 32px);
+}
+:global(.copy-compare-modal .arco-modal-body),
+:global(.source-review-modal .arco-modal-body) {
+  max-height: calc(100dvh - 180px);
+  overflow: auto;
+}
+:global(.settings-save-state) {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11px;
+  color: #7c8880;
+  margin-bottom: 6px;
+}
+:global(.copy-page.copy-flow-page) {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+  display: block;
+  padding: 26px 32px 60px;
+  max-width: 1300px;
+  margin: 0 auto;
+}
+:global(.copy-flow-page .mw-page-head) {
+  margin-bottom: 30px;
+  flex-wrap: wrap;
+}
+:global(.copy-flow-page .mw-page-actions) {
+  flex-wrap: wrap;
+}
+.creation-flow {
+  max-width: 1080px;
+  margin: 0 auto;
+}
+.flow-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  column-gap: 20px;
+  padding-bottom: 32px;
+  scroll-margin-top: 24px;
+}
+.flow-step:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 17px;
+  top: 36px;
+  bottom: 0;
+  border-left: 1px solid var(--mw-border);
+}
+.flow-node {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid #becbd1;
+  border-radius: 50%;
+  color: var(--mw-primary);
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--mw-bg);
+}
+.flow-node.complete {
+  background: #edf5ef;
+  border-color: #c8ddcd;
+  color: #33704a;
+}
+.flow-step-body {
+  min-width: 0;
+}
+.flow-step-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.flow-step-heading h2 {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--mw-text);
+  line-height: 1.5;
+  scroll-margin-top: 24px;
+}
+.flow-step-heading h2:focus {
+  outline: none;
+}
+.flow-step-heading > .arco-btn,
+.flow-heading-actions {
+  margin-left: auto;
+}
+.flow-heading-actions {
+  display: flex;
+  gap: 8px;
+}
+.flow-state {
+  font-size: 12px;
+  color: var(--mw-text3);
+}
+.flow-state.complete {
+  color: #33704a;
+}
+.flow-card {
+  padding: 24px;
+  border: 1px solid var(--mw-border);
+  border-radius: 8px;
+  background: #fff;
+}
+.flow-next {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+.flow-submit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.flow-submit strong {
+  font-size: 15px;
+  font-weight: 500;
+}
+.flow-submit p {
+  font-size: 13px;
+  color: var(--mw-text3);
+  margin-top: 8px;
+  line-height: 1.8;
+}
+:global(.copy-flow-page .copy-settings) {
+  height: auto;
+  display: block;
+}
+:global(.copy-flow-page .copy-settings-fields) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px 28px;
+  overflow: visible;
+  padding: 0;
+}
+:global(.copy-flow-page .copy-settings-fields > .creative-requirements),
+:global(.copy-flow-page .copy-settings-fields > .gen-panel) {
+  grid-column: 1 / -1;
+}
+:global(.copy-flow-page .copy-settings .mw-form-row) {
+  display: block;
+  margin: 0;
+}
+:global(.copy-flow-page .copy-settings .mw-form-label) {
+  display: block;
+  width: auto;
+  font-size: 13px;
+  padding: 0;
+  margin-bottom: 9px;
+}
+:global(.copy-flow-page .copy-settings .duration-setting .arco-radio-group-button) {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+:global(.copy-flow-page .copy-settings .duration-setting .arco-radio-button) {
+  width: auto;
+  padding: 0 14px;
+}
+:global(.copy-flow-page .copy-settings .copy-generation-count) {
+  display: block;
+}
+:global(.copy-flow-page .copy-settings .copy-generation-count > .mw-subtle) {
+  margin-left: 10px;
+}
+:global(.copy-flow-page .copy-settings .copy-generate-actions) {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--mw-border-light);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+:global(.copy-flow-page .copy-generate-actions > .settings-save-state) {
+  display: none;
+}
+:global(.copy-flow-page .copy-generate-actions > .arco-btn) {
+  width: auto;
+  min-width: 180px;
+  margin-left: auto;
+}
+:global(.copy-flow-page .copy-editor) {
+  min-height: 0;
+  border-radius: 8px;
+}
+:global(.copy-flow-page .copy-editor-toolbar) {
+  position: static;
+}
+:global(.copy-flow-page .copy-editor.is-continuous .section-item) {
+  padding: 0;
+  border-bottom: 0;
+}
+:global(.copy-flow-page .copy-editor.is-continuous .section-item .arco-textarea) {
+  padding: 3px 0;
+  font-size: 16px;
+  line-height: 2;
+}
+:global(.copy-flow-page .copy-editor.is-continuous .section-item.has-violation),
+:global(.copy-flow-page .copy-editor.is-continuous .section-item.has-soft-warning) {
+  padding-left: 10px;
+}
+@media (max-width: 900px) {
+  :global(.copy-page.copy-flow-page) {
+    padding: 20px 20px 40px;
+  }
+  .flow-step {
+    column-gap: 14px;
+  }
+  .flow-card {
+    padding: 20px;
+  }
+}
+@media (max-width: 600px) {
+  :global(.copy-page.copy-flow-page) {
+    padding: 18px 12px 32px;
+  }
+  .flow-step {
+    grid-template-columns: 28px minmax(0, 1fr);
+    column-gap: 10px;
+    padding-bottom: 26px;
+  }
+  .flow-node {
+    width: 28px;
+    height: 28px;
+    font-size: 12px;
+  }
+  .flow-step:not(:last-child)::before {
+    left: 13px;
+    top: 30px;
+  }
+  .flow-step-heading {
+    min-height: 28px;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .flow-step-heading h2 {
+    font-size: 16px;
+  }
+  .flow-heading-actions {
+    width: 100%;
+    margin: 0;
+  }
+  .flow-card {
+    padding: 16px;
+  }
+  .flow-submit > .arco-btn {
+    width: 100%;
+  }
+  :global(.copy-flow-page .copy-settings-fields) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  :global(.copy-flow-page .copy-generate-actions > .arco-btn) {
+    width: 100%;
+    margin: 0;
+  }
+  :global(.copy-flow-page .copy-editor-toolbar > div:first-child) {
+    gap: 8px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .creation-flow {
+    scroll-behavior: auto;
+  }
+}
 </style>
-

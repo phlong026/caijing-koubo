@@ -3,7 +3,7 @@ import { config } from '../../config.js'
 import { err } from '../../errors.js'
 import { logger } from '../../log.js'
 import { newId } from '../../lib/util.js'
-import { toDb, utcNow } from '../../lib/time.js'
+import { fromDb as fromDbTime, toDb, utcNow } from '../../lib/time.js'
 import { recordOperation } from '../audit/repo.js'
 import {
   getCopy,
@@ -412,6 +412,139 @@ export async function onReviewResult(input: ReviewResultInput): Promise<{ copyId
     detail: { submissionId: sub.id, rejectedGate, reason },
   })
   return { copyId: sub.copyId, status: 'rejected' }
+}
+
+/* ── 人工复核（P1-7：真实审核模块就绪前的受保护裁决入口）────────────
+ *
+ * 生产环境关闭审核桩后，审核单会一直停在「已提交」：自动关卡（内容安全 API / 审核智能体 /
+ * 风险提示 Skill）尚未接入。这里给审核员 / 管理员（路由层 ROLE_RULES 限定）一个人工裁决入口：
+ *  - 只处理该文案当前的审核单，且状态为「已提交」或「待人工复核」（关卡进行中的不插队）；
+ *  - 「已提交」直接转入「待人工复核」并留痕，再走 onReviewResult 的同一套裁决逻辑；
+ *  - 四眼原则：提交人不能裁决自己的文案。
+ */
+
+const MANUAL_REVIEWABLE = ['submitted', 'pending_manual'] as const
+
+export interface ManualDecisionInput {
+  submissionId: string
+  result: 'approved' | 'rejected'
+  reason?: string | null
+  riskPoints?: string[] | null
+  appendedRiskText?: string | null
+  operator: string
+}
+
+export async function manualDecision(input: ManualDecisionInput): Promise<{ copyId: string; status: string }> {
+  const db = getDb()
+  const sub = await getSubmission(input.submissionId, db)
+  if (!sub) throw err.notFound('审核单不存在')
+  if (!MANUAL_REVIEWABLE.includes(sub.status as (typeof MANUAL_REVIEWABLE)[number])) {
+    throw err.invalidState(`审核单当前状态（${sub.status}）不接受人工裁决`, { status: sub.status })
+  }
+  const version = await getVersion(sub.copyVersionId, db)
+  if (version?.createdBy && version.createdBy === input.operator) {
+    throw err.forbidden('四眼原则：不能裁决自己提交的文案')
+  }
+  if (input.result === 'rejected' && !String(input.reason ?? '').trim()) {
+    throw err.badRequest('退回必须填写原因')
+  }
+  if (sub.status === 'submitted') {
+    const now = toDb(utcNow())
+    const w = await db.run(
+      "UPDATE `review_submission` SET `status` = 'pending_manual', `updated_at` = ? WHERE `id` = ? AND `status` = 'submitted'",
+      [now, sub.id],
+    )
+    if (!w.affectedRows) throw err.invalidState('审核单状态已变化，请刷新后重试')
+    await db.run("UPDATE `copy` SET `review_gate` = 'pending_manual', `updated_at` = ? WHERE `id` = ? AND `review_submission_id` = ?", [
+      now,
+      sub.copyId,
+      sub.id,
+    ])
+    await recordOperation({
+      operator: input.operator,
+      action: 'review.manual_takeover',
+      targetType: 'copy',
+      targetId: sub.copyId,
+      detail: { submissionId: sub.id, note: '自动审核关卡未接入，由人工复核直接裁决' },
+    })
+  }
+  return onReviewResult({
+    submissionId: sub.id,
+    result: input.result,
+    reason: input.reason ?? null,
+    rejectedGate: input.result === 'rejected' ? 'manual' : null,
+    riskPoints: input.riskPoints ?? null,
+    appendedRiskText: input.appendedRiskText ?? null,
+    operator: input.operator,
+  })
+}
+
+export interface ReviewQueueItem {
+  submissionId: string
+  status: string
+  isStub: boolean
+  copyId: string
+  copyTitle: string | null
+  line: string | null
+  personaId: string | null
+  personaName: string | null
+  versionId: string
+  versionNo: number | null
+  submittedBy: string | null
+  submittedAt: string | null
+  decidedBy: string | null
+  reason: string | null
+  rejectedGate: string | null
+  updatedAt: string | null
+}
+
+/** 审核队列：pending = 当前仍在审的审核单；decided = 最近已裁决（通过 / 退回） */
+export async function listReviewQueue(f: { scope?: 'pending' | 'decided'; line?: string } = {}): Promise<ReviewQueueItem[]> {
+  const db = getDb()
+  const where: string[] = []
+  const params: unknown[] = []
+  if (f.scope === 'decided') {
+    where.push("s.`status` IN ('approved', 'rejected')")
+  } else {
+    where.push("s.`status` IN ('submitted', 'gate1', 'gate2', 'gate3', 'pending_manual')")
+    where.push('c.`review_submission_id` = s.`id`')
+  }
+  if (f.line) {
+    where.push('c.`line` = ?')
+    params.push(f.line)
+  }
+  const rows = await db.all<Record<string, any>>(
+    `SELECT s.\`id\` AS sid, s.\`status\`, s.\`is_stub\`, s.\`copy_id\`, s.\`copy_version_id\`, s.\`decided_by\`, s.\`reason\`,
+            s.\`rejected_gate\`, s.\`created_at\` AS submitted_at, s.\`updated_at\`,
+            c.\`title\`, v.\`title\` AS version_title, c.\`line\`, c.\`persona_id\`, p.\`name\` AS persona_name, v.\`version_no\`, v.\`created_by\` AS submitted_by
+       FROM \`review_submission\` s
+       JOIN \`copy\` c ON c.\`id\` = s.\`copy_id\`
+       LEFT JOIN \`persona\` p ON p.\`id\` = c.\`persona_id\`
+       LEFT JOIN \`copy_version\` v ON v.\`id\` = s.\`copy_version_id\`
+      WHERE ${where.join(' AND ')}
+      ORDER BY s.\`created_at\` ${f.scope === 'decided' ? 'DESC' : 'ASC'}
+      LIMIT 200`,
+    params,
+  )
+  return rows.map((r) => ({
+    submissionId: r.sid,
+    status: r.status,
+    isStub: !!Number(r.is_stub),
+    copyId: r.copy_id,
+    // 列表显示提交版本的标题；版本无标题时退回文案标题
+    copyTitle: r.version_title || r.title || null,
+    line: r.line ?? null,
+    personaId: r.persona_id ?? null,
+    personaName: r.persona_name ?? null,
+    versionId: r.copy_version_id,
+    versionNo: r.version_no === null || r.version_no === undefined ? null : Number(r.version_no),
+    submittedBy: r.submitted_by ?? null,
+    submittedAt: fromDbTime(r.submitted_at),
+    decidedBy: r.decided_by ?? null,
+    reason: r.reason ?? null,
+    rejectedGate: r.rejected_gate ?? null,
+    updatedAt: fromDbTime(r.updated_at),
+  }))
 }
 
 async function plainTextOfVersion(versionId: string, db: Db): Promise<string | null> {

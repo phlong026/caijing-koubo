@@ -7,10 +7,18 @@ import { logApiCall } from '../../modules/metrics/call-log.js'
  * 百炼文件转写（D5）：平移 AI-Studio electron/mapi/aliyun/transcription.ts 的逻辑
  * —— 提交（异步）→ 轮询 task → 下载 transcription_url → 解析 text + 句级时间戳，并修复时间轴重叠。
  */
+export interface AsrWord {
+  text: string
+  beginTime: number
+  endTime: number
+}
+
 export interface AsrSentence {
   text: string
   beginTime: number
   endTime: number
+  /** 字 / 词级时间戳（FR-P5 时间轴对齐主路径用；老响应无此字段时按句内线性插值兜底） */
+  words?: AsrWord[]
 }
 
 export interface AsrResult {
@@ -66,7 +74,8 @@ export async function submitTask(fileUrl: string, ref?: { type: string; id: stri
       ok: true,
       httpStatus: res.status,
       durationMs: Date.now() - started,
-      cost: config.dashscope.asrUnitPrice,
+      // 按时长计价时提交时还不知道时长，成本在转写完成后按实际时长记一笔（extract.ts）
+      cost: config.dashscope.asrPricePerSec > 0 ? 0 : config.dashscope.asrUnitPrice,
       requestId: res.headers?.['x-request-id'] ? String(res.headers['x-request-id']) : null,
     })
     return taskId
@@ -142,10 +151,17 @@ function parseTranscription(transcription: any, taskId: string): AsrResult {
   let fullText = ''
   for (const transcript of transcription?.transcripts ?? []) {
     for (const s of transcript?.sentences ?? []) {
+      // 词级时间戳（qwen3-asr / parafile 响应的 words 数组，字段名与句级一致）
+      const words: AsrWord[] | undefined = Array.isArray(s.words)
+        ? s.words
+            .map((w: any) => ({ text: String(w.text ?? ''), beginTime: w.begin_time ?? 0, endTime: w.end_time ?? 0 }))
+            .filter((w: AsrWord) => w.text)
+        : undefined
       sentences.push({
         text: s.text ?? '',
         beginTime: s.begin_time ?? 0,
         endTime: s.end_time ?? 0,
+        ...(words && words.length ? { words } : {}),
       })
     }
     if (transcript?.text) fullText += transcript.text
@@ -173,10 +189,18 @@ function mockAsrResult(taskId: string): AsrResult {
     '第三，任何承诺收益的说法都要提高警惕。',
     '最后提醒：市场有风险，投资需谨慎。',
   ]
-  const sentences: AsrSentence[] = lines.map((text, i) => ({
-    text,
-    beginTime: i * 5000,
-    endTime: i * 5000 + 4200,
-  }))
+  const sentences: AsrSentence[] = lines.map((text, i) => {
+    const beginTime = i * 5000
+    const endTime = i * 5000 + 4200
+    // mock 也带词级时间戳：让对齐算法在无密钥 smoke 里走与真实一致的代码路径
+    const chars = [...text]
+    const span = endTime - beginTime
+    const words: AsrWord[] = chars.map((ch, k) => ({
+      text: ch,
+      beginTime: Math.round(beginTime + (span * k) / chars.length),
+      endTime: Math.round(beginTime + (span * (k + 1)) / chars.length),
+    }))
+    return { text, beginTime, endTime, words }
+  })
   return { text: lines.join(''), sentences, taskId, mock: true }
 }

@@ -44,7 +44,13 @@
 
         <div class="flex items-center gap-2 shrink-0">
           <span v-if="saveHint" class="mw-subtle">{{ saveHint }}</span>
-          <a-button v-if="store.saveState === 'error'" size="small" :disabled="!store.isDirty || !store.canEdit" :loading="editor?.saving" @click="onSave">
+          <a-button
+            v-if="store.saveState === 'error'"
+            size="small"
+            :disabled="!store.isDirty || !store.canEdit"
+            :loading="editor?.saving"
+            @click="onSave"
+          >
             保存
           </a-button>
         </div>
@@ -69,8 +75,16 @@
     <template v-else>
       <!-- 精简工具栏（W4）：撤销 / 重做；段落的增删移动在各段右上角 -->
       <div class="px-5 pt-3 flex items-center gap-1">
-        <a-button size="mini" type="text" :disabled="!editor.sections.some(s => s.text.trim())" @click="onCopyBody">复制正文</a-button>
-        <a-button size="mini" type="text" :aria-pressed="showParagraphTools" @click="showParagraphTools=!showParagraphTools">{{ showParagraphTools ? '收起段落工具' : '段落工具' }}</a-button>
+        <a-button size="mini" type="text" :disabled="!editor.sections.some((s) => s.text.trim())" @click="onCopyBody"
+          >复制正文</a-button
+        >
+        <a-button
+          size="mini"
+          type="text"
+          :aria-pressed="showParagraphTools"
+          @click="showParagraphTools = !showParagraphTools"
+          >{{ showParagraphTools ? '收起段落工具' : '段落工具' }}</a-button
+        >
         <a-tooltip content="撤销">
           <a-button aria-label="撤销" size="mini" type="text" :disabled="!store.canUndo" @click="store.undo()">
             <template #icon><icon-undo /></template>
@@ -91,7 +105,8 @@
           :disabled="readonly"
           placeholder="文案标题"
           :auto-size="{ minRows: 1 }"
-          aria-label="文案标题" id="copy-draft-title"
+          aria-label="文案标题"
+          id="copy-draft-title"
           class="title-input"
           @input="store.markDirty()"
         />
@@ -102,19 +117,35 @@
         <div
           v-for="(s, i) in editor.sections"
           :key="i"
-          class="section-item" :id="`copy-section-${i}`"
-          :class="{ 'has-violation': hardViolations.has(i), 'has-soft-warning': violations.has(i) && !hardViolations.has(i) }"
+          class="section-item"
+          :id="`copy-section-${i}`"
+          :class="{
+            'has-violation': hardViolations.has(i),
+            'has-soft-warning': violations.has(i) && !hardViolations.has(i),
+          }"
         >
           <div v-if="showParagraphTools" class="section-actions flex items-center gap-2 mb-1.5">
             <span v-if="s.sourceRefs?.length" class="mw-subtle">原文 {{ s.sourceRefs.join('、') }} 段</span>
             <span class="flex-1" />
             <a-tooltip content="生成这一段的其他写法">
-              <a-button aria-label="生成本段其他写法" size="mini" type="text" :disabled="readonly" @click="emit('variant', i)">
+              <a-button
+                aria-label="生成本段其他写法"
+                size="mini"
+                type="text"
+                :disabled="readonly"
+                @click="emit('variant', i)"
+              >
                 <template #icon><icon-swap /></template>
               </a-button>
             </a-tooltip>
             <a-tooltip content="上移">
-              <a-button aria-label="上移段落" size="mini" type="text" :disabled="readonly || i === 0" @click="store.moveSection(i, -1)">
+              <a-button
+                aria-label="上移段落"
+                size="mini"
+                type="text"
+                :disabled="readonly || i === 0"
+                @click="store.moveSection(i, -1)"
+              >
                 <template #icon><icon-arrow-up /></template>
               </a-button>
             </a-tooltip>
@@ -172,13 +203,26 @@
 
       <!-- 底部统计 -->
       <div class="copy-editor-status">
-        <span>正文 <b class="text-[#131f38] tabular-nums">{{ bodyWords }}</b> 字</span>
-        <span>预计 <b class="text-[#131f38] tabular-nums">{{ estSeconds }}</b> 秒</span>
+        <span
+          >正文 <b class="text-[#131f38] tabular-nums">{{ bodyWords }}</b> 字</span
+        >
+        <span
+          >预计 <b class="text-[#131f38] tabular-nums">{{ estSeconds }}</b> 秒</span
+        >
         <span class="flex-1" />
         <span v-if="wordOffsetHint" :class="wordOffsetHint.cls">{{ wordOffsetHint.text }}</span>
       </div>
     </template>
-    <a-modal :visible="!!pendingDraft" title="当前稿有未保存改动" @cancel="cancelSwitch"><p>可以先保存再切换，也可以留在当前稿继续编辑。</p><template #footer><a-button @click="cancelSwitch">继续编辑</a-button><a-button status="danger" @click="confirmSwitch(true)">放弃并切换</a-button><a-button type="primary" :loading="editor?.saving" @click="confirmSwitch(false)">保存并切换</a-button></template></a-modal>
+    <a-modal :visible="!!pendingDraft" title="当前稿有未保存改动" @cancel="cancelSwitch"
+      ><p>可以先保存再切换，也可以留在当前稿继续编辑。</p>
+      <template #footer
+        ><a-button @click="cancelSwitch">继续编辑</a-button
+        ><a-button status="danger" @click="confirmSwitch(true)">放弃并切换</a-button
+        ><a-button type="primary" :loading="editor?.saving" @click="confirmSwitch(false)"
+          >保存并切换</a-button
+        ></template
+      ></a-modal
+    >
   </div>
 </template>
 
@@ -194,31 +238,58 @@ const showParagraphTools = ref(false)
 const draftTabs = ref<HTMLElement | null>(null)
 let tabsObserver: ResizeObserver | undefined
 function revealCurrentTab() {
-  const strip=draftTabs.value, active=strip?.querySelector<HTMLElement>('.draft-tab.active')
-  if(!strip || !active)return
-  const box=strip.getBoundingClientRect(), tab=active.getBoundingClientRect()
-  if(tab.right>box.right)strip.scrollLeft+=tab.right-box.right+4
-  else if(tab.left<box.left)strip.scrollLeft+=tab.left-box.left-4
+  const strip = draftTabs.value,
+    active = strip?.querySelector<HTMLElement>('.draft-tab.active')
+  if (!strip || !active) return
+  const box = strip.getBoundingClientRect(),
+    tab = active.getBoundingClientRect()
+  if (tab.right > box.right) strip.scrollLeft += tab.right - box.right + 4
+  else if (tab.left < box.left) strip.scrollLeft += tab.left - box.left - 4
 }
-onMounted(()=>{tabsObserver=new ResizeObserver(revealCurrentTab);if(draftTabs.value)tabsObserver.observe(draftTabs.value)})
-onBeforeUnmount(()=>tabsObserver?.disconnect())
+onMounted(() => {
+  tabsObserver = new ResizeObserver(revealCurrentTab)
+  if (draftTabs.value) tabsObserver.observe(draftTabs.value)
+})
+onBeforeUnmount(() => tabsObserver?.disconnect())
 const pendingDraft = ref<string | null>(null)
-let resolveSwitch: ((v:boolean)=>void) | null = null
+let resolveSwitch: ((v: boolean) => void) | null = null
 defineExpose({ selectDraft: onSwitchDraft })
-function locateHit(e:Event) { const h=(e as CustomEvent).detail as ComplianceHit; void nextTick(()=>{ const el=document.querySelector<HTMLTextAreaElement>(h.sectionIndex < 0 ? '#copy-draft-title textarea, textarea#copy-draft-title' : `#copy-section-${h.sectionIndex} textarea`);el?.scrollIntoView({block:'center',behavior:'smooth'});el?.focus();el?.setSelectionRange(h.start,h.end) }) }
-onMounted(()=>window.addEventListener('copy-focus-hit',locateHit))
-onBeforeUnmount(()=>{window.removeEventListener('copy-focus-hit',locateHit);resolveSwitch?.(false)})
+function locateHit(e: Event) {
+  const h = (e as CustomEvent).detail as ComplianceHit
+  void nextTick(() => {
+    const el = document.querySelector<HTMLTextAreaElement>(
+      h.sectionIndex < 0
+        ? '#copy-draft-title textarea, textarea#copy-draft-title'
+        : `#copy-section-${h.sectionIndex} textarea`,
+    )
+    el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    el?.focus()
+    el?.setSelectionRange(h.start, h.end)
+  })
+}
+onMounted(() => window.addEventListener('copy-focus-hit', locateHit))
+onBeforeUnmount(() => {
+  window.removeEventListener('copy-focus-hit', locateHit)
+  resolveSwitch?.(false)
+})
 
 const editor = computed(() => store.editor)
 const readonly = computed(() => !store.canEdit || store.locked)
 
-watch(()=>[editor.value?.draftId,store.drafts.length],()=>{void nextTick(revealCurrentTab)},{immediate:true,flush:'post'})
+watch(
+  () => [editor.value?.draftId, store.drafts.length],
+  () => {
+    void nextTick(revealCurrentTab)
+  },
+  { immediate: true, flush: 'post' },
+)
 
 const riskHint = computed(() => {
-  const tpl = store.options?.templates.find((t) => t.id === (store.copy?.settings as Record<string, unknown>)?.templateId)
+  const tpl = store.options?.templates.find(
+    (t) => t.id === (store.copy?.settings as Record<string, unknown>)?.templateId,
+  )
   return (
-    tpl?.riskHint ||
-    '本内容仅作信息分享与投资者教育，不构成投资建议。市场有风险，投资须谨慎；历史表现不代表未来收益。'
+    tpl?.riskHint || '本内容仅作信息分享与投资者教育，不构成投资建议。市场有风险，投资须谨慎；历史表现不代表未来收益。'
   )
 })
 
@@ -280,13 +351,13 @@ const wordOffsetHint = computed(() => {
   if (!tier) return null
   const max = tier.custom ? Number(store.creativeSettings.durationSeconds) : tier.maxSeconds
   const min = tier.custom ? max : tier.minSeconds
-  if (estSeconds.value > max) return { text: `预计超时 ${(estSeconds.value-max).toFixed(1)} 秒`, cls: 'text-[#b95f1d]' }
-  if (estSeconds.value < min) return { text: `预计少于目标 ${(min-estSeconds.value).toFixed(1)} 秒`, cls: 'text-[#b95f1d]' }
+  if (estSeconds.value > max)
+    return { text: `预计超时 ${(estSeconds.value - max).toFixed(1)} 秒`, cls: 'text-[#b95f1d]' }
+  if (estSeconds.value < min)
+    return { text: `预计少于目标 ${(min - estSeconds.value).toFixed(1)} 秒`, cls: 'text-[#b95f1d]' }
   if (tier.custom) return { text: '预计时长符合目标', cls: 'text-[#12805c]' }
-  if (totalWords.value < tier.minWords)
-    return { text: `低于建议下限 ${tier.minWords} 字`, cls: 'text-[#b95f1d]' }
-  if (totalWords.value > tier.maxWords)
-    return { text: `超出建议上限 ${tier.maxWords} 字`, cls: 'text-[#b95f1d]' }
+  if (totalWords.value < tier.minWords) return { text: `低于建议下限 ${tier.minWords} 字`, cls: 'text-[#b95f1d]' }
+  if (totalWords.value > tier.maxWords) return { text: `超出建议上限 ${tier.maxWords} 字`, cls: 'text-[#b95f1d]' }
   return { text: '字数在建议区间内', cls: 'text-[#12805c]' }
 })
 
@@ -365,21 +436,21 @@ onBeforeUnmount(() => {
 })
 
 const violations = computed(() => new Set(hits.value.map((h) => h.sectionIndex)))
-const hardViolations = computed(() => new Set(hits.value.filter(h => h.level === 'hard').map(h => h.sectionIndex)))
+const hardViolations = computed(() => new Set(hits.value.filter((h) => h.level === 'hard').map((h) => h.sectionIndex)))
 
 function hitsOfSection(index: number): ComplianceHit[] {
   return hits.value.filter((h) => h.sectionIndex === index)
 }
-
-/** P1-22：标题的命中（sectionIndex = -1） */
-const titleHits = computed(() => hits.value.filter((h) => h.sectionIndex === -1))
 
 function onSectionInput(_index: number): void {
   store.markDirty()
 }
 
 async function onCopyBody(): Promise<void> {
-  const text = editor.value?.sections.map(s => s.text.trim()).filter(Boolean).join('\n\n')
+  const text = editor.value?.sections
+    .map((s) => s.text.trim())
+    .filter(Boolean)
+    .join('\n\n')
   if (!text) return
   try {
     await navigator.clipboard.writeText(text)
@@ -437,17 +508,31 @@ async function onSwitchDraft(draftId: string): Promise<boolean> {
   if (store.isDirty) {
     if (pendingDraft.value) return false
     store.cancelAutosave()
-    pendingDraft.value=draftId
-    return new Promise(resolve=>{resolveSwitch=resolve})
+    pendingDraft.value = draftId
+    return new Promise((resolve) => {
+      resolveSwitch = resolve
+    })
   }
   return await store.switchDraft(draftId)
 }
-function cancelSwitch() { pendingDraft.value=null;resolveSwitch?.(false);resolveSwitch=null;if(store.isDirty)void store.autosave() }
-async function confirmSwitch(discard:boolean) {
-  const id=pendingDraft.value;if(!id)return
-  if(discard)store.acceptServerState()
-  else if(await store.save()!=='ok'){Message.error(store.error || '保存未完成，请继续编辑');return}
-  const ok=await store.switchDraft(id);pendingDraft.value=null;resolveSwitch?.(ok);resolveSwitch=null
+function cancelSwitch() {
+  pendingDraft.value = null
+  resolveSwitch?.(false)
+  resolveSwitch = null
+  if (store.isDirty) void store.autosave()
+}
+async function confirmSwitch(discard: boolean) {
+  const id = pendingDraft.value
+  if (!id) return
+  if (discard) store.acceptServerState()
+  else if ((await store.save()) !== 'ok') {
+    Message.error(store.error || '保存未完成，请继续编辑')
+    return
+  }
+  const ok = await store.switchDraft(id)
+  pendingDraft.value = null
+  resolveSwitch?.(ok)
+  resolveSwitch = null
 }
 
 async function onNewDraft(): Promise<void> {
@@ -470,12 +555,30 @@ async function onDuplicate(): Promise<void> {
 </script>
 
 <style scoped>
-.is-continuous .section-item{background:transparent;padding:0;border-radius:0}
-.is-continuous .section-item :deep(.arco-textarea-wrapper){background:transparent;border-color:transparent}
-.section-item :deep(.arco-textarea){font-size:16px;line-height:2}
-.is-continuous .section-item :deep(.arco-textarea){padding:0}
-.is-continuous .section-item :deep(.arco-textarea-wrapper:focus-within){border-color:#dbe6df}
-.risk-caption summary{font-size:12px;color:#6b7688;cursor:pointer}
+.is-continuous .section-item {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+.is-continuous .section-item :deep(.arco-textarea-wrapper) {
+  background: transparent;
+  border-color: transparent;
+}
+.section-item :deep(.arco-textarea) {
+  font-size: 16px;
+  line-height: 2;
+}
+.is-continuous .section-item :deep(.arco-textarea) {
+  padding: 0;
+}
+.is-continuous .section-item :deep(.arco-textarea-wrapper:focus-within) {
+  border-color: #dbe6df;
+}
+.risk-caption summary {
+  font-size: 12px;
+  color: #6b7688;
+  cursor: pointer;
+}
 
 .switch-notice {
   display: flex;
@@ -564,5 +667,4 @@ async function onDuplicate(): Promise<void> {
   border-color: #f5d4d1;
   background: #fefafa;
 }
-
 </style>

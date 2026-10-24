@@ -9,7 +9,12 @@
 
     <!-- 今日概览 -->
     <div class="workbench-metrics">
-      <div v-for="m in metrics" :key="m.name" class="mw-card p-5 cursor-pointer transition-shadow hover:shadow-sm" @click="$router.push(m.to)">
+      <div
+        v-for="m in metrics"
+        :key="m.name"
+        class="mw-card p-5 cursor-pointer transition-shadow hover:shadow-sm"
+        @click="$router.push(m.to)"
+      >
         <div class="flex items-center justify-between">
           <span class="mw-subtle">{{ m.name }}</span>
           <span class="mw-tag" :class="m.cls">{{ m.tag }}</span>
@@ -48,7 +53,12 @@
           <div class="text-[15px] font-semibold">待处理</div>
           <span class="mw-link" @click="$router.push('/tasks')">前往任务中心 <icon-right :size="12" /></span>
         </div>
-        <div v-for="t in todos" :key="t.title" class="flex items-center gap-3 py-2.5 border-b border-[#f2f4f7] last:border-none cursor-pointer" @click="$router.push(t.to)">
+        <div
+          v-for="t in todos"
+          :key="t.title"
+          class="flex items-center gap-3 py-2.5 border-b border-[#f2f4f7] last:border-none cursor-pointer"
+          @click="$router.push(t.to)"
+        >
           <ThumbBox :seed="t.title" :width="46" :height="34" />
           <div class="flex-1 min-w-0">
             <div class="text-[13.5px] font-medium truncate">{{ t.title }}</div>
@@ -61,7 +71,12 @@
       <div class="mw-card p-5">
         <div class="text-[15px] font-semibold mb-3">快捷入口</div>
         <div class="grid grid-cols-2 gap-3">
-          <div v-for="q in quicks" :key="q.label" class="p-4 rounded-[10px] border border-[var(--mw-border)] cursor-pointer hover:border-[color:var(--mw-primary-soft)] hover:bg-[color:var(--mw-primary-faint)] transition-colors" @click="$router.push(q.to)">
+          <div
+            v-for="q in quicks"
+            :key="q.label"
+            class="p-4 rounded-[10px] border border-[var(--mw-border)] cursor-pointer hover:border-[color:var(--mw-primary-soft)] hover:bg-[color:var(--mw-primary-faint)] transition-colors"
+            @click="$router.push(q.to)"
+          >
             <component :is="q.icon" :size="20" class="text-primary-c" />
             <div class="text-[13.5px] font-medium mt-2">{{ q.label }}</div>
             <div class="mw-subtle mt-0.5">{{ q.desc }}</div>
@@ -78,17 +93,46 @@ import PageHead from '@/components/PageHead.vue'
 import ThumbBox from '@/components/ThumbBox.vue'
 import { IconFire, IconFile, IconPlayCircle, IconBarChart } from '@arco-design/web-vue/es/icon'
 
-const todayText = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
+const todayText = new Date().toLocaleDateString('zh-CN', {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+  weekday: 'long',
+})
 
 const metrics = [
-  { name: '今日新增任务', value: '6', tag: '全部阶段', cls: 'mw-tag-blue', hint: '经理 IP 3 · 员工 KOS 3', to: '/tasks' },
-  { name: '待人工审核', value: '2', tag: '审核链第3关后', cls: 'mw-tag-yellow', hint: '日均审核 20-30 条', to: '/review' },
+  {
+    name: '今日新增任务',
+    value: '6',
+    tag: '全部阶段',
+    cls: 'mw-tag-blue',
+    hint: '经理 IP 3 · 员工 KOS 3',
+    to: '/tasks',
+  },
+  {
+    name: '待人工审核',
+    value: '2',
+    tag: '审核链第3关后',
+    cls: 'mw-tag-yellow',
+    hint: '日均审核 20-30 条',
+    to: '/review',
+  },
   { name: '待发布', value: '3', tag: '成片复审通过', cls: 'mw-tag-green', hint: '抖音 2 · 小红书 1', to: '/publish' },
-  { name: '数据待回采', value: '5', tag: 'T+1 到期', cls: 'mw-tag-gray', hint: '每日 06:00 自动回采', to: '/analytics' },
+  {
+    name: '数据待回采',
+    value: '5',
+    tag: 'T+1 到期',
+    cls: 'mw-tag-gray',
+    hint: '每日 06:00 自动回采',
+    to: '/analytics',
+  },
 ]
 const lines = [
   {
-    name: '经理 IP', cls: 'mw-tag-deep', scope: '仅抖音 · 日均 1 条', to: '/copy',
+    name: '经理 IP',
+    cls: 'mw-tag-deep',
+    scope: '仅抖音 · 日均 1 条',
+    to: '/copy',
     steps: [
       { label: '内容输入', desc: 'Word 文章 / 当日热点', dot: '#1d4ed8' },
       { label: '审核链', desc: '三关已过 1 条 · 待复核 1 条', dot: '#e69b3c' },
@@ -97,7 +141,10 @@ const lines = [
     today: '已产出 2 条',
   },
   {
-    name: '员工 KOS', cls: 'mw-tag-blue', scope: '抖音 + 小红书 · 日均 1-2 条', to: '/topics',
+    name: '员工 KOS',
+    cls: 'mw-tag-blue',
+    scope: '抖音 + 小红书 · 日均 1-2 条',
+    to: '/topics',
     steps: [
       { label: '内容输入', desc: '热点资讯 / 产品素材', dot: '#1d4ed8' },
       { label: '审核链', desc: '队列 5 条 · 已通过 12 条', dot: '#0f7b3e' },
@@ -106,7 +153,10 @@ const lines = [
     today: '已产出 10 条',
   },
   {
-    name: '素人矩阵', cls: 'mw-tag-purple', scope: '三平台 · 日均 2-3 条', to: '/topics',
+    name: '素人矩阵',
+    cls: 'mw-tag-purple',
+    scope: '三平台 · 日均 2-3 条',
+    to: '/topics',
     steps: [
       { label: '对标采集', desc: '新发现候选 2 个 · 爆款 3 条', dot: '#7c5cd6' },
       { label: '审核链', desc: '查重 < 30% 已卡控', dot: '#0f7b3e' },
@@ -116,9 +166,27 @@ const lines = [
   },
 ]
 const todos = [
-  { title: '市场波动与长期配置', desc: '文案生成 · 待人工审核 · 张经理 · 经理 IP', action: '去审核', cls: 'mw-tag-yellow', to: '/review' },
-  { title: '基金定投入门', desc: '剪辑合成 · 草稿 v2 · 小林科普 · 员工 KOS', action: '继续剪辑', cls: 'mw-tag-blue', to: '/video/edit' },
-  { title: '基金定投入门（发布）', desc: '成片复审通过 · 待安排 · 定时 10月13日 10:00', action: '去发布', cls: 'mw-tag-green', to: '/publish' },
+  {
+    title: '市场波动与长期配置',
+    desc: '文案生成 · 待人工审核 · 张经理 · 经理 IP',
+    action: '去审核',
+    cls: 'mw-tag-yellow',
+    to: '/review',
+  },
+  {
+    title: '基金定投入门',
+    desc: '剪辑合成 · 草稿 v2 · 小林科普 · 员工 KOS',
+    action: '继续剪辑',
+    cls: 'mw-tag-blue',
+    to: '/video/edit',
+  },
+  {
+    title: '基金定投入门（发布）',
+    desc: '成片复审通过 · 待安排 · 定时 10月13日 10:00',
+    action: '去发布',
+    cls: 'mw-tag-green',
+    to: '/publish',
+  },
 ]
 const quicks = [
   { icon: IconFire, label: '爆款选题', desc: '热点资讯 / 对标账号 → 候选选题', to: '/topics' },

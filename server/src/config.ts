@@ -27,7 +27,12 @@ function bool(key: string, def: boolean): boolean {
 export const paths = {
   serverRoot,
   tempDir: path.resolve(serverRoot, str('TEMP_DIR', './.data/tmp')),
-  dataDir: path.resolve(serverRoot, './.data'),
+  // DATA_DIR 供测试隔离本地兜底存储（.data/oss）；缺省仍是 server/.data
+  dataDir: process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.resolve(serverRoot, './.data'),
+  // 发布管理的持久化浏览器上下文根目录（PB3：每账号一目录，Cookie/登录态留在目录内不入库）
+  browserData: process.env.PUBLISH_BROWSER_DATA_DIR
+    ? path.resolve(process.env.PUBLISH_BROWSER_DATA_DIR)
+    : path.resolve(serverRoot, './.data/browser-data'),
 }
 
 export const config = {
@@ -79,6 +84,11 @@ export const config = {
     timeoutMs: num('DASHSCOPE_TIMEOUT_MS', 120000),
     llmUnitPrice: num('LLM_UNIT_PRICE', 0.004),
     asrUnitPrice: num('ASR_UNIT_PRICE', 0.0005),
+    /**
+     * P2-13a：ASR 按音频时长计费的单价（元 / 秒）。配置后提取成本 = 时长 × 单价，
+     * 未配置（0）时沿用按次计价 ASR_UNIT_PRICE。具体单价以百炼账单为准。
+     */
+    asrPricePerSec: num('ASR_PRICE_PER_SEC', 0),
   },
 
   oss: {
@@ -87,6 +97,14 @@ export const config = {
     accessKeyId: str('OSS_ACCESS_KEY_ID', ''),
     accessKeySecret: str('OSS_ACCESS_KEY_SECRET', ''),
     internal: bool('OSS_INTERNAL', false),
+    /** 数据面自定义端点（私有域名 / VPC 专线 / 本地仿真）；留空用 region 推导的官方域名 */
+    endpoint: str('OSS_ENDPOINT', ''),
+    /** 端点是绑定到 Bucket 的自定义域名（CNAME）时置 true：此时 URL 不再拼 bucket 前缀 */
+    cname: bool('OSS_CNAME', false),
+    /** 签名 URL 专用公网端点：飞影等外部服务必须能访问，OSS_INTERNAL=true 时不得走内网域名；留空 = 官方公网域名 */
+    signEndpoint: str('OSS_SIGN_ENDPOINT', ''),
+    /** 超过该大小改走分片上传（MB），避免把大视频整个读进内存 */
+    multipartThresholdMb: num('OSS_MULTIPART_THRESHOLD_MB', 50),
     prefix: str('OSS_PREFIX', 'benchmark-audio/'),
     signedUrlTtl: num('OSS_SIGNED_URL_TTL', 7200),
   },
@@ -187,7 +205,7 @@ export const config = {
     llmRetry: num('COPY_LLM_RETRY', 1),
     /**
      * 审核桩开关（W1）：开启时提交后自动模拟三关并开放人工裁决接口，仅供审核模块就绪前联调。
-     * 项目尚无登录鉴权、X-Operator 由请求方自填，开着桩等于任何人都能把文案批成通过，
+     * 桩裁决接口虽已限定审核员角色，但会跳过真实三关，
      * 因此生产环境默认关闭；关闭后审核单停在「已提交」，等待真实审核模块回写结果。
      */
     reviewStubEnabled: bool('REVIEW_STUB_ENABLED', str('NODE_ENV', 'development') !== 'production'),
@@ -213,6 +231,12 @@ export const config = {
     unitPrice: num('COPY_LLM_UNIT_PRICE', 0),
     inputPricePer1k: num('COPY_LLM_INPUT_PRICE_PER_1K', 0),
     outputPricePer1k: num('COPY_LLM_OUTPUT_PRICE_PER_1K', 0),
+    /**
+     * P0-4 合规闸门：COPY_LLM_* 指向第三方中转（如 ccg-cli.online）时，文案与人物档案会发往该服务。
+     * 生产环境必须显式设为 true（表示已获产品与合规书面批准）才启用，否则自动回退百炼；
+     * 开发环境不受影响。
+     */
+    complianceApproved: bool('COPY_LLM_COMPLIANCE_APPROVED', str('NODE_ENV', 'development') !== 'production'),
   },
 
   /**
@@ -242,6 +266,169 @@ export const config = {
     kosSharedAccountLimit: num('KOS_SHARED_ACCOUNT_LIMIT', 5),
   },
 
+  /**
+   * 飞影成片结果域名白名单（FR-P4 防 SSRF：`video_Url` 只允许这些主机）。
+   * PoC 记录实际域名后配置；未配置时放行 `*.hifly.cc` 与 `*.hiflycdn.com` 一类已知后缀。
+   */
+  videoResultHosts: str('HIFLY_RESULT_HOSTS', '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+
+  /**
+   * 视频创作模块（任务书 §3.3 生成参数基线）。
+   * 计价与生成耗时系数按 PoC 实测修订（V3 交付物）。
+   */
+  video: {
+    /** 口播时长上限（秒，Q11）与提交文本上限（飞影 create_by_tts 10000 字） */
+    maxSeconds: num('VIDEO_MAX_SECONDS', 180),
+    maxTextChars: 10000,
+    /** 输出规格（Q7）：规范化目标 */
+    outputWidth: num('VIDEO_OUTPUT_WIDTH', 1080),
+    outputHeight: num('VIDEO_OUTPUT_HEIGHT', 1920),
+    outputFps: num('VIDEO_OUTPUT_FPS', 30),
+    /** 飞影侧全局生成并发（A6）与本地阶段 worker 并发（下载/校验/对齐/合成） */
+    genConcurrency: num('VIDEO_GEN_CONCURRENCY', 3),
+    workerConcurrency: num('VIDEO_WORKER_CONCURRENCY', 2),
+    /** 轮询间隔（video-poll-sweep 扫描周期）与查询异常退避序列 */
+    pollIntervalMs: num('VIDEO_POLL_INTERVAL_MS', 10000),
+    pollBackoffMs: [5000, 10000, 20000, 30000],
+    /** 1001/1015（并发/提交数上限）延后重排秒数与最大重排次数 */
+    submitResecSec: num('VIDEO_SUBMIT_REQUEUE_SEC', 60),
+    submitResecMax: num('VIDEO_SUBMIT_REQUEUE_MAX', 5),
+    /** 单 copy 基础视频版本上限 */
+    jobLimitPerCopy: num('VIDEO_JOB_LIMIT_PER_COPY', 10),
+    /** 成片下载上限（MB）与时长校验容差（毫秒） */
+    archiveMaxMb: num('VIDEO_ARCHIVE_MAX_MB', 512),
+    durationToleranceMs: num('VIDEO_DURATION_TOLERANCE_MS', 1000),
+    /** 时间轴对齐分数阈值（FR-P5） */
+    alignMinScore: num('VIDEO_ALIGN_MIN_SCORE', 0.85),
+    /** 超长句二次切分上限（字符，FR-P1） */
+    sentenceMaxChars: num('VIDEO_SENTENCE_MAX', 120),
+    /** Q3=B 音频驱动时的句间隔（毫秒） */
+    sentenceGapMs: num('VIDEO_SENTENCE_GAP_MS', 120),
+    /** 切句与配音缓存身份的规则版本（规则变更即失效旧缓存） */
+    segmentationVersion: str('VIDEO_SEGMENTATION_VERSION', 'v1'),
+    /**
+     * 生成进度估算：样本 <3 时预计生成秒数 = max(genSecondsMin, 预计秒 × genSecondsFactor)
+     * （FR-A7，PoC 实测前默认 max(180, 预计秒 × 4)）
+     */
+    genSecondsFactor: num('VIDEO_GEN_SECONDS_FACTOR', 4),
+    genSecondsMin: num('VIDEO_GEN_SECONDS_MIN', 180),
+    /** 进度样本保留条数（按飞影最近 N 次生成耗时中位数自适应） */
+    progressSamples: num('VIDEO_PROGRESS_SAMPLES', 10),
+    /**
+     * 预估积分 = creditsPerSec × 成片秒数（PoC 计价规则，未定前仅供界面展示，
+     * 精确对账不在一期，§1.2）
+     */
+    creditsPerSec: num('VIDEO_CREDITS_PER_SEC', 0.5),
+  },
+
+  /**
+   * 发布管理模块（任务书 §4.2 / PU0）。
+   * 引擎抽象见 modules/publish/engine.ts：真实引擎平移 AI-Studio Playwright 流程，
+   * mock 引擎（MOCK_FALLBACK=true 且未配置 PUBLISH_HEADLESS 环境时自动兜底）支持故障注入。
+   */
+  publish: {
+    /** 服务端浏览器形态（PB2）：headless 默认开；PU9 灰度首验不过则回退 headful+Xvfb */
+    headless: bool('PUBLISH_HEADLESS', true),
+    /** 全局并发浏览器上下文上限（PB9，按服务器内存复核） */
+    maxContexts: num('PUBLISH_MAX_CONTEXTS', 3),
+    /** 空闲上下文自动关闭（毫秒） */
+    idleCloseMs: num('PUBLISH_IDLE_CLOSE_MS', 600000),
+    /** 获取上下文排队超时（毫秒）：超时任务回 scheduled 下轮再试，不失败 */
+    acquireTimeoutMs: num('PUBLISH_ACQUIRE_TIMEOUT_MS', 300000),
+    /** 每账号每日发布上限（PB8）：单独重发占用额度，补录不占用 */
+    dailyLimitPerAccount: num('PUBLISH_DAILY_LIMIT_PER_ACCOUNT', 5),
+    /** 发布确认窗口（毫秒，FR-E1）：平移 AI-Studio waitForPublishConfirmation 的 15 分钟 */
+    confirmTimeoutMs: num('PUBLISH_CONFIRM_TIMEOUT_MS', 900000),
+    /** confirming 卡死 sweep 兜底（毫秒，FR-E3）：只兜 worker 崩溃异常，引擎 15 分钟自行落定 */
+    confirmSweepMs: num('PUBLISH_CONFIRM_SWEEP_MS', 1200000),
+    /** 验证码人工窗口（毫秒，PB10）：verification_required 保留上下文等待人工 */
+    manualWindowMs: num('PUBLISH_MANUAL_WINDOW_MS', 1800000),
+    /** 登录会话超时（毫秒，FR-L1）与轮询节奏（publish-login-sweep） */
+    loginSessionTimeoutMs: num('PUBLISH_LOGIN_SESSION_TIMEOUT_MS', 7200000),
+    loginPollIntervalMs: num('PUBLISH_LOGIN_POLL_INTERVAL_MS', 15000),
+    /** 发布 sweep 扫描周期（毫秒）：到期计划 / 重试 / 窗口超时 / 守护（§3.5） */
+    sweepIntervalMs: num('PUBLISH_SWEEP_INTERVAL_MS', 60000),
+    /** 失败自动重试延迟（毫秒，PB6：1 次 / 5 分钟） */
+    retryDelayMs: num('PUBLISH_RETRY_DELAY_MS', 300000),
+    /** schedule 最早可定时间（毫秒，FR-C3：≥ now + 1min） */
+    minScheduleAheadMs: num('PUBLISH_MIN_SCHEDULE_AHEAD_MS', 60000),
+    /** executing 计划卡死守护阈值（毫秒） */
+    planStuckMs: num('PUBLISH_PLAN_STUCK_MS', 7200000),
+  },
+
+  /**
+   * 视频剪辑模块（任务书 §4.2 / CE0）。
+   * 渲染引擎见 modules/cut/engine.ts：ffmpeg 完整链路需环境带 libass/freetype
+   * （check-media-env 探测）；缺失且 MOCK_FALLBACK=true 时自动降级 mock（字幕直过、尾页纯色）。
+   */
+  cut: {
+    /** 渲染 worker 并发（Q7：与视频创作 genConcurrency 分队列互不影响） */
+    workerConcurrency: num('CUT_WORKER_CONCURRENCY', 2),
+    /** 单步 ffmpeg 超时（毫秒，沿 compose.runFfmpeg 基线） */
+    stepTimeoutMs: num('CUT_STEP_TIMEOUT_MS', 600000),
+    /** 整任务卡死兜底（毫秒，FR-J3）：rendering 超此时长无进展 → failed(CUT_RENDER_TIMEOUT) */
+    renderTimeoutMs: num('CUT_RENDER_TIMEOUT_MS', 1800000),
+    /** cancelling 无进展兜底（毫秒，§3.1）：超时 sweep 直接收尾 cancelled */
+    cancellingTimeoutMs: num('CUT_CANCELLING_TIMEOUT_MS', 600000),
+    /** video-cut-sweep 扫描周期（毫秒） */
+    sweepIntervalMs: num('CUT_SWEEP_INTERVAL_MS', 60000),
+    /** 剪气口默认参数（Q3：默认关） */
+    defaultNoiseDb: num('CUT_NOISE_DB', -30),
+    minSilenceMs: num('CUT_MIN_SILENCE_MS', 500),
+    keepGapMs: num('CUT_KEEP_GAP_MS', 120),
+    /** BGM 默认音量 / 淡入淡出（毫秒） */
+    bgmVolume: num('CUT_BGM_VOLUME', 0.2),
+    bgmFadeMs: num('CUT_BGM_FADE_MS', 2000),
+    /** 风险尾页默认时长（秒，Q4）与上限 */
+    riskTailSeconds: num('CUT_RISK_TAIL_SECONDS', 5),
+    riskTailMaxSeconds: num('CUT_RISK_TAIL_MAX_SECONDS', 15),
+    /** 内置字体目录（fontsdir）与单段字幕文本上限 */
+    fontsDir: str('CUT_FONTS_DIR', 'assets/fonts'),
+    maxSegmentsTextLen: num('CUT_SEGMENT_TEXT_MAX', 200),
+    /** BGM 上传大小上限（MB） */
+    bgmMaxMb: num('CUT_BGM_MAX_MB', 20),
+  },
+
+  /**
+   * 登录与权限（P0-1）。
+   * 操作人一律取自登录令牌，不再信任请求头 X-Operator。
+   * 生产环境必须配置 AUTH_JWT_SECRET（≥32 字符），否则拒绝启动。
+   */
+  auth: {
+    jwtSecret: str('AUTH_JWT_SECRET', ''),
+    tokenTtlHours: num('AUTH_TOKEN_TTL_HOURS', 12),
+    cookieName: 'mw_token',
+    /** 库内没有任何账号时，用它创建首个管理员；开发环境缺省 admin / admin123 */
+    bootstrapAdminUser: str('AUTH_BOOTSTRAP_ADMIN_USER', 'admin'),
+    bootstrapAdminPassword: str('AUTH_BOOTSTRAP_ADMIN_PASSWORD', ''),
+    /** 连续失败多少次后锁定、锁定多久（分钟） */
+    maxLoginFailures: num('AUTH_MAX_LOGIN_FAILURES', 5),
+    lockMinutes: num('AUTH_LOCK_MINUTES', 5),
+  },
+  /** P2-12：计费 / 高成本接口按操作人限流；RATE_LIMIT_SCALE 整体放大或缩小各接口的每分钟次数 */
+  rateLimit: {
+    enabled: bool('RATE_LIMIT_ENABLED', true),
+    scale: num('RATE_LIMIT_SCALE', 1),
+  },
+  /** 允许跨域的前端来源（逗号分隔）；生产缺省为空 = 只允许同源 */
+  corsOrigins: str(
+    'CORS_ORIGINS',
+    str('NODE_ENV', 'development') === 'production' ? '' : 'http://localhost:5173,http://127.0.0.1:5173',
+  )
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+
+  /**
+   * 示例数据（P1-6）：示例人物「张经理（示例）」等及其占位授权。
+   * 占位授权没有实体材料却标记为「已核验」，会进入合规审计口径，因此生产缺省关闭；
+   * 关闭时启动会把已存在的示例人物归档、示例授权撤销（幂等）。
+   */
+  seedDemo: bool('SEED_DEMO', str('NODE_ENV', 'development') !== 'production'),
+
   defaultOperator: str('DEFAULT_OPERATOR', 'ops'),
   // P1-7：生产环境默认**关闭** mock 兜底；否则漏配 key 时会静默返回假账号/假视频/假转写。
   mockFallback: bool('MOCK_FALLBACK', str('NODE_ENV', 'development') !== 'production'),
@@ -270,12 +457,33 @@ export function hasTikHub(): boolean {
 export function hasDashScope(): boolean {
   return !!config.dashscope.apiKey
 }
-/** 文案二创是否已配置专用模型（三项齐备才算） */
+/** 文案二创是否启用专用模型：BASE_URL 与 API_KEY 齐备，且（生产环境）已通过合规批准 */
 export function hasCopyLlm(): boolean {
-  return !!(config.copyLlm.baseUrl && config.copyLlm.apiKey)
+  return !!(config.copyLlm.baseUrl && config.copyLlm.apiKey && config.copyLlm.complianceApproved)
 }
 export function hasOss(): boolean {
   return !!(config.oss.bucket && config.oss.accessKeyId && config.oss.accessKeySecret)
+}
+/** OSS 配置自检：返回问题清单（半配置、内网域名无法被外部访问等），启动时打印 */
+export function ossConfigIssues(): string[] {
+  const o = config.oss
+  const issues: string[] = []
+  const set = [o.bucket, o.accessKeyId, o.accessKeySecret].filter(Boolean).length
+  if (set > 0 && set < 3) {
+    issues.push('OSS 配置不完整：OSS_BUCKET / OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET 需同时填写，当前按「未配置」处理（回落本地存储）')
+  }
+  if (set === 3) {
+    if (!/^oss-[a-z0-9-]+$/.test(o.region) && !o.endpoint) {
+      issues.push(`OSS_REGION「${o.region}」格式应为 oss-cn-shanghai 这类，或改填 OSS_ENDPOINT`)
+    }
+    if (o.internal && !o.signEndpoint) {
+      issues.push('OSS_INTERNAL=true：数据面走内网，签名 URL 已强制改用公网域名；如需自定义公网域名请设置 OSS_SIGN_ENDPOINT')
+    }
+    if (o.signEndpoint && !/^https:\/\//i.test(o.signEndpoint)) {
+      issues.push('OSS_SIGN_ENDPOINT 必须是 https:// 开头，否则飞影自取会被判不可用并回落自上传')
+    }
+  }
+  return issues
 }
 /** FinStep 资讯接口是否可用（无 Key 时该源整体不启用，不影响其它资讯源） */
 export function hasFinStep(): boolean {

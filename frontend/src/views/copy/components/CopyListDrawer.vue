@@ -1,11 +1,5 @@
 <template>
-  <a-drawer
-    :visible="visible"
-    :width="520"
-    title="文案任务"
-    unmount-on-close
-    @cancel="emit('update:visible', false)"
-  >
+  <a-drawer :visible="visible" :width="520" title="文案任务" unmount-on-close @cancel="emit('update:visible', false)">
     <template #footer>
       <a-button type="primary" long @click="openCreate">
         <template #icon><icon-plus /></template>
@@ -35,7 +29,11 @@
         <div
           v-for="it in items"
           :key="it.id"
-          class="list-row" role="button" tabindex="0" @keydown.enter="onPick(it.id)" @keydown.space.prevent="onPick(it.id)"
+          class="list-row"
+          role="button"
+          tabindex="0"
+          @keydown.enter="onPick(it.id)"
+          @keydown.space.prevent="onPick(it.id)"
           :class="{ active: it.id === store.copy?.id }"
           @click="onPick(it.id)"
         >
@@ -67,7 +65,12 @@
         <!-- P0-6②：FR-S4 要求可一次选多位目标人物，每位各产一条 -->
         <a-form-item label="目标人物" required>
           <a-select v-model="form.personaIds" multiple placeholder="选择一位或多位人物" @change="onPersonaChange">
-            <a-option v-for="p in personas" :key="p.id" :value="p.id" :label="`${p.name}（${p.lineLabel || p.line}）`" />
+            <a-option
+              v-for="p in personas"
+              :key="p.id"
+              :value="p.id"
+              :label="`${p.name}（${p.lineLabel || p.line}）`"
+            />
           </a-select>
           <div class="mw-subtle mt-1">选多位人物时，每位各生成一条文案</div>
         </a-form-item>
@@ -98,12 +101,7 @@
         <!-- 造文章 -->
         <a-form-item v-else label="文章文件">
           <div class="w-full">
-            <a-upload
-              :auto-upload="false"
-              :limit="1"
-              accept=".docx,.pdf,.txt,.md"
-              @change="onFileChange"
-            />
+            <a-upload :auto-upload="false" :limit="1" accept=".docx,.pdf,.txt,.md" @change="onFileChange" />
             <div class="mw-subtle mt-1">支持 .docx / .pdf / .txt / .md，单个文件不超过 10MB</div>
           </div>
         </a-form-item>

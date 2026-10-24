@@ -1,4 +1,3 @@
-import crypto from 'node:crypto'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { getDb, isDuplicateKey, type Db } from '../../db/index.js'
@@ -8,7 +7,7 @@ import { err } from '../../errors.js'
 import { paths } from '../../config.js'
 import { logger } from '../../log.js'
 import { putObjectFromFile, getObjectStream, isOssEnabled } from '../../integrations/aliyun-oss/client.js'
-import { MAGIC_HEAD_BYTES, validateUploadFile } from '../../lib/upload.js'
+import { MAGIC_HEAD_BYTES, sha256File, validateUploadFile } from '../../lib/upload.js'
 import { enqueue, QUEUE_NAMES, dedupOpts } from '../../queue/index.js'
 import { getPersonaById } from './repo.js'
 import {
@@ -144,7 +143,7 @@ export async function uploadAsset(input: UploadAssetInput): Promise<{ asset: Per
     maxBytes: limits.maxBytes,
   })
 
-  // 结构校验（图片，R27）
+  // 结构校验（图片，R27；图片上限 10MB，可整份读入）
   if (input.kind === 'photo' || input.kind === 'background_image') {
     const buf = await fsp.readFile(input.filePath)
     const issue = checkImageStructure(meta.ext, buf)
@@ -166,15 +165,25 @@ export async function uploadAsset(input: UploadAssetInput): Promise<{ asset: Per
     })
   }
 
-  // SHA-256 去重
-  const fileBuf = await fsp.readFile(input.filePath)
-  const sha256 = crypto.createHash('sha256').update(fileBuf).digest('hex')
+  // SHA-256 去重（P2-2：流式计算，分身素材最大 200MB）
+  const sha256 = await sha256File(input.filePath)
   const existing = await db.get<Record<string, any>>(
     'SELECT * FROM `persona_asset` WHERE `persona_id` = ? AND `kind` = ? AND `sha256_key` = ? AND `deleted_at` IS NULL',
     [input.personaId, input.kind, sha256],
   )
   if (existing) {
-    return { asset: mapAssetRow(existing), deduplicated: true }
+    // P2-3：处理失败、或卡在「已上传」超过 10 分钟（存储写入中断）的旧记录不再占去重位：
+    // 软删后按新上传处理，否则同一文件永远拿回这条坏记录
+    const createdAt = fromDb(existing.created_at)
+    const stuck = existing.status === 'uploaded' && (!createdAt || Date.now() - new Date(createdAt).getTime() > 10 * 60_000)
+    if (existing.status !== 'failed' && !stuck) {
+      return { asset: mapAssetRow(existing), deduplicated: true }
+    }
+    const ts = toDb(utcNow())
+    await db.run(
+      'UPDATE `persona_asset` SET `deleted_at` = ?, `deleted_by` = ?, `sha256_key` = NULL, `updated_at` = ? WHERE `id` = ? AND `sha256_key` = ?',
+      [ts, input.operator, ts, existing.id, sha256],
+    )
   }
 
   const id = newId('pa')
@@ -223,8 +232,15 @@ export async function uploadAsset(input: UploadAssetInput): Promise<{ asset: Per
     throw e
   }
 
-  // 私有存储（OSS 或本地兜底）
-  await putObjectFromFile(input.filePath, storageKey, '')
+  // 私有存储（OSS 或本地兜底）。P2-3：写入失败时删除刚插入的记录，
+  // 否则记录停在「已上传」并占着去重位，重传同一文件会拿回这条坏记录
+  try {
+    await putObjectFromFile(input.filePath, storageKey, '')
+  } catch (e) {
+    await db.run('DELETE FROM `persona_asset` WHERE `id` = ? AND `status` = ?', [id, 'uploaded']).catch(() => undefined)
+    logger.error({ assetId: id, err: (e as Error).message }, 'persona.asset.store_failed')
+    throw err.upstream('素材存储失败，请稍后重试')
+  }
   await db.run('UPDATE `persona_asset` SET `status` = ?, `updated_at` = ? WHERE `id` = ?', ['processing', now, id])
 
   // 异步处理（FR-A2/§2.3）
@@ -324,6 +340,10 @@ export async function reviewAsset(id: string, input: ReviewAssetInput): Promise<
   if (asset.status !== 'pending_review') {
     throw err.invalidState(`当前状态（${asset.status}）不可审核，仅「待审核」素材可操作`, { status: asset.status })
   }
+  // P0-1 四眼原则：上传人不能审核自己上传的素材
+  if (asset.createdBy && asset.createdBy === input.operator) {
+    throw err.forbidden('素材须由上传人以外的审核员审核')
+  }
   const reason = String(input.reason ?? '').trim()
   if (input.decision === 'rejected' && !reason) {
     throw err.badRequest('驳回必须填写原因')
@@ -349,6 +369,9 @@ export async function setCoverAsset(personaId: string, assetId: string, operator
   const db = getDb()
   const asset = await getAssetById(assetId)
   if (!asset || asset.personaId !== personaId) throw err.notFound('素材不存在')
+  // P2-5：归档人物不可再修改封面
+  const persona = await getPersonaById(personaId, true)
+  if (persona?.archivedAt) throw err.personaArchived()
   if (asset.kind !== 'photo') throw err.badRequest('仅形象照片可设为封面')
   if (asset.status !== 'approved' || asset.deletedAt) throw err.assetNotApproved('照片尚未审核通过，不能设为封面')
   await db.run('UPDATE `persona` SET `cover_asset_id` = ?, `updated_at` = ?, `updated_by` = ? WHERE `id` = ?', [

@@ -1,14 +1,13 @@
-import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { getDb } from '../../../db/index.js'
 import { memEnqueue } from '../../../queue/memory.js'
-import { enqueue, QUEUE_NAMES, dedupOpts, getQueueBackend, registerWorker } from '../../../queue/index.js'
+import { enqueue, QUEUE_NAMES, dedupOpts, getQueueBackend, registerWorker, scheduleRepeatable } from '../../../queue/index.js'
 import { config, paths } from '../../../config.js'
 import { logger } from '../../../log.js'
 import { err } from '../../../errors.js'
 import { toDb, utcNow } from '../../../lib/time.js'
 import { recordOperation } from '../../audit/repo.js'
-import { getObjectStream, isOssEnabled, putObjectFromFile } from '../../../integrations/aliyun-oss/client.js'
+import { downloadObjectToFile, isOssEnabled, putObjectFromFile } from '../../../integrations/aliyun-oss/client.js'
 import {
   HiflySubmissionUncertain,
   HiflyVendorError,
@@ -40,21 +39,109 @@ type CloneJob =
   | { kind: 'voice'; recordId: string }
   | { kind: 'preview'; recordId: string }
 
-/* ── 轮询调度（BullMQ delay / 内存队列 setTimeout）──────────────── */
+/* ── 轮询调度（P0-2：next_poll_at + 周期扫描）──────────────────
+ *
+ * 不能在轮询任务内部用同一个去重 ID 给自己重新入队：BullMQ 的 deduplication 在任务结束前
+ * 一直占位，运行中的任务再入队会被判为重复直接丢弃，结果每条记录只轮询一次就停在「制作中」。
+ * 现在轮询只负责写 next_poll_at，由每 10 秒一次的 poll_sweep 把到期记录统一入队：
+ *  - 入队时用「记录 ID」去重，同一记录不会排两个轮询任务；
+ *  - 扫描时先写 2 分钟租约，轮询任务异常退出时由下一轮扫描接手；
+ *  - 进程重启（含内存队列降级）后，running 记录也会被扫描续上。
+ */
 
-async function scheduleJob(jobName: string, data: CloneJob, dedupId: string, delayMs: number): Promise<void> {
+const POLL_TABLES = {
+  avatar: 'persona_avatar',
+  voice: 'persona_voice',
+  preview: 'persona_voice_preview',
+} as const
+const POLL_JOBS = { avatar: 'avatar_poll', voice: 'voice_poll', preview: 'preview_poll' } as const
+type PollKind = keyof typeof POLL_TABLES
+
+/** 扫描周期与租约 */
+export const POLL_SWEEP_MS = Math.max(1000, Number(process.env.HIFLY_POLL_SWEEP_MS ?? 10_000) || 10_000)
+const POLL_LEASE_MS = 120_000
+
+/** 排下一次轮询：只写 next_poll_at，由 poll_sweep 到期入队 */
+async function schedulePoll(kind: PollKind, recordId: string, delayMs: number): Promise<void> {
+  await getDb().run(`UPDATE \`${POLL_TABLES[kind]}\` SET \`next_poll_at\` = ? WHERE \`id\` = ?`, [
+    toDb(new Date(Date.now() + Math.max(0, delayMs))),
+    recordId,
+  ])
+}
+
+async function enqueuePoll(kind: PollKind, recordId: string): Promise<void> {
+  const data: CloneJob = { kind, recordId }
+  const dedupId = `${kind}-poll-${recordId}`
   if (getQueueBackend() === 'memory') {
-    const timer = setTimeout(() => {
-      try {
-        memEnqueue(QUEUE_NAMES.personaClone, jobName, data, { deduplication: { id: dedupId } })
-      } catch {
-        /* 内存队列投递失败：等下次轮询兜底 */
-      }
-    }, Math.max(0, Math.min(delayMs, 120_000)))
-    timer.unref?.()
+    memEnqueue(QUEUE_NAMES.personaClone, POLL_JOBS[kind], data, { deduplication: { id: dedupId } })
     return
   }
-  await enqueue(QUEUE_NAMES.personaClone, jobName, data, { ...dedupOpts(dedupId), delay: Math.max(0, delayMs) })
+  await enqueue(QUEUE_NAMES.personaClone, POLL_JOBS[kind], data, dedupOpts(dedupId))
+}
+
+/**
+ * P2-8：提交任务丢失的记录重新入队提交（内存队列降级时进程重启会丢掉未执行的任务）。
+ * 只处理创建超过 2 分钟仍停在 pending 的分身 / 声音，以及还没拿到厂商任务号的试听；
+ * 提交步骤本身有状态守卫（pending → submitting 的 CAS），重复入队不会重复提交。
+ */
+async function resubmitStalePending(): Promise<number> {
+  const db = getDb()
+  const before = toDb(new Date(Date.now() - 2 * 60_000))
+  const jobs: Array<{ name: string; data: CloneJob; dedupId: string }> = []
+  const avatars = await db.all<{ id: string }>(
+    "SELECT `id` FROM `persona_avatar` WHERE `status` = 'pending' AND `deleted_at` IS NULL AND `created_at` < ? LIMIT 50",
+    [before],
+  )
+  for (const r of avatars) jobs.push({ name: 'avatar_submit', data: { kind: 'avatar', recordId: r.id }, dedupId: `avatar-submit-${r.id}` })
+  const voices = await db.all<{ id: string }>(
+    "SELECT `id` FROM `persona_voice` WHERE `status` = 'pending' AND `is_sample` = 0 AND `deleted_at` IS NULL AND `created_at` < ? LIMIT 50",
+    [before],
+  )
+  for (const r of voices) jobs.push({ name: 'voice_submit', data: { kind: 'voice', recordId: r.id }, dedupId: `voice-submit-${r.id}` })
+  // 试听提交结果未知时也停在这个状态；只在 30 分钟内补投，避免对持续失败的请求反复打厂商
+  const previews = await db.all<{ id: string }>(
+    "SELECT `id` FROM `persona_voice_preview` WHERE `status` = 'running' AND `vendor_task_id` IS NULL AND `created_at` < ? AND `created_at` > ? LIMIT 50",
+    [before, toDb(new Date(Date.now() - 30 * 60_000))],
+  )
+  for (const r of previews) jobs.push({ name: 'preview_submit', data: { kind: 'preview', recordId: r.id }, dedupId: `preview-submit-${r.id}` })
+  for (const j of jobs) {
+    if (getQueueBackend() === 'memory') memEnqueue(QUEUE_NAMES.personaClone, j.name, j.data, { deduplication: { id: j.dedupId } })
+    else await enqueue(QUEUE_NAMES.personaClone, j.name, j.data, dedupOpts(j.dedupId))
+  }
+  if (jobs.length) logger.warn({ count: jobs.length }, 'persona.clone.resubmit_stale_pending')
+  return jobs.length
+}
+
+/** 把到期的 running 记录入队轮询，并补投丢失的提交任务；返回入队数 */
+export async function sweepDuePolls(): Promise<number> {
+  const db = getDb()
+  const now = toDb(utcNow())
+  let enqueued = await resubmitStalePending().catch((e) => {
+    logger.warn({ err: (e as Error).message }, 'persona.clone.resubmit_failed')
+    return 0
+  })
+  for (const kind of Object.keys(POLL_TABLES) as PollKind[]) {
+    const table = POLL_TABLES[kind]
+    const scope = kind === 'voice' ? ' AND `is_sample` = 0 AND `deleted_at` IS NULL' : kind === 'avatar' ? ' AND `deleted_at` IS NULL' : ''
+    const rows = await db.all<{ id: string }>(
+      `SELECT \`id\` FROM \`${table}\`
+       WHERE \`status\` = 'running' AND \`vendor_task_id\` IS NOT NULL
+         AND (\`next_poll_at\` IS NULL OR \`next_poll_at\` <= ?)${scope}
+       LIMIT 50`,
+      [now],
+    )
+    for (const r of rows) {
+      // 租约：先把下次检查推后，避免轮询任务排队期间被下一轮扫描重复入队
+      await schedulePoll(kind, r.id, POLL_LEASE_MS)
+      try {
+        await enqueuePoll(kind, r.id)
+        enqueued += 1
+      } catch (e) {
+        logger.warn({ kind, recordId: r.id, err: (e as Error).message }, 'persona.clone.poll_enqueue_failed')
+      }
+    }
+  }
+  return enqueued
 }
 
 /** 轮询退避：15s 起，按 attempts 指数退避，上限 2min（FR-C2） */
@@ -69,20 +156,7 @@ function pollDelayOf(attempts: number): number {
 async function fetchToLocal(storageKey: string, destName: string): Promise<string> {
   await ensureTempDir()
   const dest = path.join(paths.tempDir, destName)
-  if (isOssEnabled()) {
-    const res = await getObjectStream(storageKey)
-    if (!res) throw new Error(`存储对象不存在或读取失败：${storageKey}`)
-    const chunks: Buffer[] = []
-    await new Promise<void>((resolve, reject) => {
-      ;(res.stream as NodeJS.ReadableStream).on('data', (c: Buffer) => chunks.push(c))
-      ;(res.stream as NodeJS.ReadableStream).on('end', () => resolve())
-      ;(res.stream as NodeJS.ReadableStream).on('error', reject)
-    })
-    await fsp.writeFile(dest, Buffer.concat(chunks))
-  } else {
-    const local = path.join(paths.dataDir, 'oss', storageKey)
-    await fsp.copyFile(local, dest)
-  }
+  await downloadObjectToFile(storageKey, dest)
   return dest
 }
 
@@ -190,7 +264,7 @@ export async function submitAvatar(avatarId: string): Promise<void> {
       detail: { avatarId, vendorTaskId: accept.taskId, mode: handover.mode, attempts },
     })
     logger.info({ avatarId, vendorTaskId: accept.taskId, mode: handover.mode }, 'persona.clone.avatar_submitted')
-    await scheduleJob('avatar_poll', { kind: 'avatar', recordId: avatarId }, `avatar-poll-${avatarId}`, pollDelayOf(attempts))
+    await schedulePoll('avatar', avatarId, pollDelayOf(attempts))
   } catch (e) {
     if (e instanceof HiflyVendorError) {
       // 明确业务码失败：failed（原因经业务码映射，FR-C2）
@@ -268,12 +342,7 @@ export async function pollAvatar(avatarId: string): Promise<PersonaAvatar> {
       logger.warn({ avatarId, message }, 'persona.clone.avatar_failed')
     } else {
       // DONE 但缺标识 → 继续等待（R15）；WAITING / PROCESSING → 退避轮询
-      await getDb().run('UPDATE `persona_avatar` SET `next_poll_at` = ?, `updated_at` = ? WHERE `id` = ?', [
-        toDb(new Date(Date.now() + pollDelayOf(attempts))),
-        toDb(utcNow()),
-        avatarId,
-      ])
-      await scheduleJob('avatar_poll', { kind: 'avatar', recordId: avatarId }, `avatar-poll-${avatarId}`, pollDelayOf(attempts))
+      await schedulePoll('avatar', avatarId, pollDelayOf(attempts))
     }
   } catch (e) {
     if (e instanceof HiflyVendorError) {
@@ -283,7 +352,7 @@ export async function pollAvatar(avatarId: string): Promise<PersonaAvatar> {
     } else {
       // 查询类网络异常：不判失败，继续等待（R2）
       const attempts = await bumpAttempts('persona_avatar', avatarId)
-      await scheduleJob('avatar_poll', { kind: 'avatar', recordId: avatarId }, `avatar-poll-${avatarId}`, pollDelayOf(attempts))
+      await schedulePoll('avatar', avatarId, pollDelayOf(attempts))
       logger.debug({ avatarId, err: (e as Error).message }, 'persona.clone.avatar_poll_retry')
     }
   }
@@ -442,7 +511,7 @@ export async function submitVoice(voiceId: string): Promise<void> {
       detail: { voiceId, vendorTaskId: accept.taskId, mode: handover.mode, attempts },
     })
     logger.info({ voiceId, vendorTaskId: accept.taskId, mode: handover.mode }, 'persona.clone.voice_submitted')
-    await scheduleJob('voice_poll', { kind: 'voice', recordId: voiceId }, `voice-poll-${voiceId}`, pollDelayOf(attempts))
+    await schedulePoll('voice', voiceId, pollDelayOf(attempts))
   } catch (e) {
     if (e instanceof HiflyVendorError) {
       await casStatus('persona_voice', voiceId, 'submitting', 'failed', { error: vendorMessage(e) })
@@ -521,12 +590,7 @@ export async function pollVoice(voiceId: string): Promise<PersonaVoice> {
       logger.warn({ voiceId, message }, 'persona.clone.voice_failed')
     } else {
       // DONE 但缺 voice / demo_url → 继续等待（R15）
-      await getDb().run('UPDATE `persona_voice` SET `next_poll_at` = ?, `updated_at` = ? WHERE `id` = ?', [
-        toDb(new Date(Date.now() + pollDelayOf(attempts))),
-        toDb(utcNow()),
-        voiceId,
-      ])
-      await scheduleJob('voice_poll', { kind: 'voice', recordId: voiceId }, `voice-poll-${voiceId}`, pollDelayOf(attempts))
+      await schedulePoll('voice', voiceId, pollDelayOf(attempts))
     }
   } catch (e) {
     if (e instanceof HiflyVendorError) {
@@ -535,7 +599,7 @@ export async function pollVoice(voiceId: string): Promise<PersonaVoice> {
       await notifyCloneState(voice.personaId, 'clone_failed', voiceId, `声音「${voice.name}」克隆失败：${message}`)
     } else {
       const attempts = await bumpAttempts('persona_voice', voiceId)
-      await scheduleJob('voice_poll', { kind: 'voice', recordId: voiceId }, `voice-poll-${voiceId}`, pollDelayOf(attempts))
+      await schedulePoll('voice', voiceId, pollDelayOf(attempts))
       logger.debug({ voiceId, err: (e as Error).message }, 'persona.clone.voice_poll_retry')
     }
   } finally {
@@ -582,7 +646,7 @@ export async function reconcileVoice(voiceId: string, operator: string): Promise
       targetId: voice.personaId,
       detail: { ...evidence, result: 'running', vendorVoiceId: matched.id, matchedTitle: matched.title },
     })
-    await scheduleJob('voice_poll', { kind: 'voice', recordId: voiceId }, `voice-poll-${voiceId}`, pollDelayOf(1))
+    await schedulePoll('voice', voiceId, pollDelayOf(1))
     return (await getVoiceById(voiceId, true))!
   }
 
@@ -664,7 +728,7 @@ export async function submitPreview(previewId: string): Promise<void> {
       targetId: voice.personaId,
       detail: { previewId, voiceId: voice.id, vendorTaskId: accept.taskId },
     })
-    await scheduleJob('preview_poll', { kind: 'preview', recordId: previewId }, `preview-poll-${previewId}`, pollDelayOf(1))
+    await schedulePoll('preview', previewId, pollDelayOf(1))
   } catch (e) {
     if (e instanceof HiflyVendorError) {
       await db.run('UPDATE `persona_voice_preview` SET `status` = ?, `error` = ? WHERE `id` = ?', [
@@ -714,16 +778,13 @@ export async function pollPreview(previewId: string): Promise<void> {
       await db.run('UPDATE `persona_voice_preview` SET `status` = ?, `error` = ? WHERE `id` = ?', ['failed', message, previewId])
     } else {
       const attempts = Number(row.attempts ?? 0) + 1
-      await db.run('UPDATE `persona_voice_preview` SET `attempts` = ?, `updated_at` = ? WHERE `id` = ?', [
-        attempts,
-        toDb(utcNow()),
-        previewId,
-      ])
-      await scheduleJob('preview_poll', { kind: 'preview', recordId: previewId }, `preview-poll-${previewId}`, pollDelayOf(attempts))
+      // P1-3：persona_voice_preview 没有 updated_at 列，原 UPDATE 每次报错导致 attempts 不增长、退避失效
+      await db.run('UPDATE `persona_voice_preview` SET `attempts` = ? WHERE `id` = ?', [attempts, previewId])
+      await schedulePoll('preview', previewId, pollDelayOf(attempts))
     }
   } catch (e) {
     logger.debug({ previewId, err: (e as Error).message }, 'persona.clone.preview_poll_retry')
-    await scheduleJob('preview_poll', { kind: 'preview', recordId: previewId }, `preview-poll-${previewId}`, pollDelayOf(2))
+    await schedulePoll('preview', previewId, pollDelayOf(2))
   } finally {
     await cleanup(tempFiles)
   }
@@ -804,6 +865,11 @@ export function registerCloneWorker(): void {
     QUEUE_NAMES.personaClone,
     async (job) => {
       const name = job.name
+      if (name === 'poll_sweep') {
+        const n = await sweepDuePolls()
+        if (n) logger.debug({ enqueued: n }, 'persona.clone.poll_sweep')
+        return
+      }
       const data = (job.data ?? {}) as CloneJob
       const fn = JOB_HIFLY[name]
       if (!fn) {
@@ -815,4 +881,10 @@ export function registerCloneWorker(): void {
     },
     { concurrency: 2 },
   )
+}
+
+/** 轮询扫描排期（P0-2）：每 POLL_SWEEP_MS 一次，启动时先扫一次接上重启前的 running 记录 */
+export async function scheduleCloneSweep(): Promise<void> {
+  await scheduleRepeatable(QUEUE_NAMES.personaClone, 'persona-clone-poll-sweep', POLL_SWEEP_MS, 'poll_sweep')
+  await sweepDuePolls().catch((e) => logger.warn({ err: (e as Error).message }, 'persona.clone.poll_sweep_failed'))
 }

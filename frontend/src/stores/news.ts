@@ -52,8 +52,8 @@ export const useNewsStore = defineStore('news', () => {
       count: c.count,
     })),
   )
-  const selectedItems = computed(() =>
-    selectedIds.value.map((id) => items.value.find((n) => n.id === id)).filter(Boolean) as NewsItem[],
+  const selectedItems = computed(
+    () => selectedIds.value.map((id) => items.value.find((n) => n.id === id)).filter(Boolean) as NewsItem[],
   )
 
   async function loadCategories(): Promise<void> {

@@ -1,11 +1,12 @@
-import { apiGet, apiPost, apiPatch, apiPut, apiDel, apiUpload, type QueryValue } from './client'
+import { apiGet, apiPost, apiPatch, apiPut, apiDel, apiUpload, apiUrl, type QueryValue } from './client'
 
 export type PersonaLine = 'manager' | 'kos' | 'persona'
 export type BindingMode = 'exclusive' | 'shared'
 
 /** §3.2 有效状态（读时派生） */
 export type EffectiveStatus = 'active' | 'auth_pending' | 'auth_expired' | 'auth_revoked' | 'disabled' | 'archived'
-export type PersonaExtraTag = 'voice_unconfirmed' | 'avatar_in_progress' | 'uncertain' | 'auth_expiring' | 'incomplete' | 'configured'
+export type PersonaExtraTag =
+  'voice_unconfirmed' | 'avatar_in_progress' | 'uncertain' | 'auth_expiring' | 'incomplete' | 'configured'
 
 export interface IpProfile {
   role: string
@@ -81,13 +82,16 @@ export function createPersona(input: {
 }
 
 /** PATCH 需带 rev（乐观锁，冲突 409 PERSONA_CONFLICT） */
-export function patchPersona(id: string, input: {
-  name?: string
-  ownerSubject?: string
-  description?: string
-  bindingMode?: BindingMode
-  rev: number
-}) {
+export function patchPersona(
+  id: string,
+  input: {
+    name?: string
+    ownerSubject?: string
+    description?: string
+    bindingMode?: BindingMode
+    rev: number
+  },
+) {
   return apiPatch<PersonaListItem>(`/personas/${id}`, input)
 }
 
@@ -108,20 +112,65 @@ export function savePersonaProfile(id: string, ipProfile: unknown, rev?: number)
   )
 }
 
+/** 详情（GET /personas/:id）：基本信息 + 派生状态 + 授权 / 绑定 / 素材 / 分身 / 声音 / 样本 / 版本 */
+export interface PersonaDetail extends PersonaListItem {
+  authorizations: PersonaAuthorization[]
+  bindings: AccountBinding[]
+  assets: PersonaAsset[]
+  avatars: PersonaAvatar[]
+  voices: PersonaVoice[]
+  voiceSamples: PersonaVoice[]
+  versions: Array<{ id: string; versionNo: number; trigger: string; createdAt: string | null }>
+}
+
 export function getPersonaDetail(id: string) {
-  return apiGet<PersonaListItem & {
-    authorizations: unknown[]
-    bindings: unknown[]
-    assets: unknown[]
-    avatars: unknown[]
-    voices: unknown[]
-    voiceSamples: unknown[]
-    versions: unknown[]
-  }>(`/personas/${id}`)
+  return apiGet<PersonaDetail>(`/personas/${id}`)
+}
+
+export interface PersonaStats {
+  lines: Record<PersonaLine, number>
+  total: number
+  unreadReminders: number
+}
+
+export function getPersonaStats() {
+  return apiGet<PersonaStats>('/personas/stats')
+}
+
+export interface PersonaOptions {
+  ipOptions: {
+    roles: string[]
+    serviceScopes: string[]
+    expressionStyles: string[]
+    contentDirections: string[]
+  } & Record<string, string[]>
+  lineLabels: Record<PersonaLine, string>
+  lineRules: Record<
+    PersonaLine,
+    { label: string; bindingModes: BindingMode[]; defaultBindingMode: BindingMode } & Record<string, unknown>
+  >
+  lineDefaultDirections: Record<PersonaLine, string[]>
+  lineDefaultForbidden: Record<PersonaLine, string[]>
+  contentMixPresets: Array<{ label: string }> | string[]
+  uploadLimits: Record<string, { exts: string[]; maxBytes: number } & Record<string, unknown>>
+  assetLimits: Record<AssetKind, number>
+  assetKindLabels: Record<string, string>
+  platformLabels: Record<string, string>
+  voiceLanguages: Array<{ code: string; label: string }>
+  consentTextVersion: string
+  consentTexts: Record<string, string>
+  hifly: { configured: boolean; mock: boolean; baseUrl: string; credit: number | null; creditError: string | null }
+  storage: { oss: boolean; mode: 'oss' | 'local' }
+}
+
+export function getPersonaOptions() {
+  return apiGet<PersonaOptions>('/personas/options')
 }
 
 export function getPersonaVersions(id: string) {
-  return apiGet<Array<{ id: string; versionNo: number; trigger: string; createdAt: string | null }>>(`/personas/${id}/versions`)
+  return apiGet<Array<{ id: string; versionNo: number; trigger: string; createdAt: string | null }>>(
+    `/personas/${id}/versions`,
+  )
 }
 
 /* ── readiness / production-profile（FR-X4 / FR-X5）──────────── */
@@ -134,24 +183,52 @@ export interface ReadinessCheck {
 }
 
 export function getReadiness(id: string, purpose: 'copy' | 'avatar_video' | 'mixcut') {
-  return apiGet<{ personaId: string; purpose: string; status: EffectiveStatus; pass: boolean; checks: ReadinessCheck[] }>(
-    `/personas/${id}/readiness`,
-    { purpose },
-  )
-}
-
-export function getProductionProfile(id: string, avatarId?: string) {
-  const suffix = avatarId ? `?avatarId=${encodeURIComponent(avatarId)}` : ''
   return apiGet<{
     personaId: string
-    versionId: string | null
-    versionNo: number | null
+    purpose: string
+    status: EffectiveStatus
+    pass: boolean
+    checks: ReadinessCheck[]
+  }>(`/personas/${id}/readiness`, { purpose })
+}
+
+export type ProductionPurpose = 'avatar_video' | 'mixcut'
+
+export interface ProductionProfile {
+  personaId: string
+  purpose: ProductionPurpose
+  versionId: string | null
+  versionNo: number | null
+  name: string
+  line: string
+  provider: 'hifly'
+  avatar: {
+    avatarId: string
+    vendorAvatarId: string
     name: string
-    line: string
-    provider: 'hifly'
-    avatar: { avatarId: string; vendorAvatarId: string; name: string; backgroundLabel: string | null; coverUrl: string | null; sourceWidth: number | null; sourceHeight: number | null }
-    voice: { voiceId: string; vendorVoiceId: string; name: string; language: string; speechRate: number; volume: number; pitch: number; demoUrl: string | null }
-  }>(`/personas/${id}/production-profile${suffix}`)
+    backgroundLabel: string | null
+    coverUrl: string | null
+    sourceWidth: number | null
+    sourceHeight: number | null
+  } | null
+  voice: {
+    voiceId: string
+    vendorVoiceId: string
+    name: string
+    language: string
+    speechRate: number
+    volume: number
+    pitch: number
+    demoUrl: string | null
+  } | null
+}
+
+export function getProductionProfile(id: string, opts: { avatarId?: string; purpose?: ProductionPurpose } = {}) {
+  const qs = new URLSearchParams()
+  if (opts.avatarId) qs.set('avatarId', opts.avatarId)
+  if (opts.purpose) qs.set('purpose', opts.purpose)
+  const suffix = qs.size > 0 ? `?${qs.toString()}` : ''
+  return apiGet<ProductionProfile>(`/personas/${id}/production-profile${suffix}`)
 }
 
 /* ── 素材 / 授权 / 声音（multipart；字段在前、文件在后）────────── */
@@ -302,7 +379,10 @@ export function confirmVoice(voiceId: string) {
 }
 
 /** 参数调整（R17 三段式：飞影先改后落库；0.5–2.0，最多一位小数） */
-export function updateVoiceSettings(voiceId: string, settings: { speechRate?: number; volume?: number; pitch?: number }) {
+export function updateVoiceSettings(
+  voiceId: string,
+  settings: { speechRate?: number; volume?: number; pitch?: number },
+) {
   return apiPut<PersonaVoice>(`/persona-voices/${voiceId}/settings`, settings)
 }
 
@@ -358,4 +438,163 @@ export function verifyAuthorization(authId: string, decision: 'verified' | 'reje
 
 export function revokeAuthorization(authId: string, reason: string) {
   return apiPost<{ id: string; status: string }>(`/persona-authorizations/${authId}/revoke`, { reason })
+}
+
+/* ── 素材：列表 / 审核 / 封面 / 删除 / 文件地址 ─────────────────── */
+
+export type AssetStatus = 'uploaded' | 'processing' | 'pending_review' | 'approved' | 'rejected' | 'failed'
+
+export interface PersonaAsset {
+  id: string
+  personaId: string
+  kind: AssetKind
+  name: string
+  backgroundLabel: string | null
+  status: AssetStatus
+  mime: string
+  sizeBytes: number
+  width: number | null
+  height: number | null
+  durationMs: number | null
+  fps: number | null
+  quality: {
+    hard: Array<{ code: string; message: string }>
+    soft: Array<{ code: string; message: string }>
+    metrics: Record<string, unknown>
+  } | null
+  tags: string[]
+  reviewDecision: string | null
+  reviewReason: string | null
+  reviewIssueCodes: string[]
+  error: string | null
+  thumbKey: string | null
+  compatKey: string | null
+  sort: number
+  createdAt: string | null
+  processing: boolean
+}
+
+export function getAssets(id: string, query: { kind?: AssetKind; status?: AssetStatus } = {}) {
+  return apiGet<PersonaAsset[]>(`/personas/${id}/assets`, { kind: query.kind, status: query.status })
+}
+
+export function reviewAsset(
+  assetId: string,
+  input: { decision: 'approved' | 'rejected'; reason?: string; issueCodes?: string[] },
+) {
+  return apiPost<PersonaAsset>(`/persona-assets/${assetId}/review`, input)
+}
+
+export function setAssetCover(assetId: string) {
+  return apiPost<PersonaAsset>(`/persona-assets/${assetId}/set-cover`)
+}
+
+export function patchAsset(
+  assetId: string,
+  input: { name?: string; backgroundLabel?: string; tags?: string[]; sort?: number },
+) {
+  return apiPatch<PersonaAsset>(`/persona-assets/${assetId}`, input)
+}
+
+export function deleteAsset(assetId: string) {
+  return apiDel<{ deleted: boolean }>(`/persona-assets/${assetId}`)
+}
+
+/** 缩略图 / 兼容版 / 原件：经后端代理，不暴露存储路径（读取 original 会记敏感访问审计） */
+export function assetFileUrl(assetId: string, variant: 'thumb' | 'compat' | 'original' = 'thumb'): string {
+  return apiUrl(`/persona-assets/${assetId}/file?variant=${variant}`)
+}
+
+/* ── 授权 / 绑定 / 提醒 ───────────────────────────────────────── */
+
+export type AuthorizationStatus = 'pending' | 'verified' | 'rejected' | 'revoked' | 'expired'
+
+export interface PersonaAuthorization {
+  id: string
+  personaId: string
+  grantorName: string
+  scopes: AuthorizationScope[]
+  fileMime: string
+  fileSize: number
+  effectiveFrom: string | null
+  expiresAt: string | null
+  status: AuthorizationStatus
+  decisionReason: string | null
+  verifiedBy: string | null
+  verifiedAt: string | null
+  revokedBy: string | null
+  revokedAt: string | null
+  note: string | null
+  createdAt: string | null
+}
+
+export function getAuthorizations(id: string) {
+  return apiGet<PersonaAuthorization[]>(`/personas/${id}/authorizations`)
+}
+
+export function authorizationFileUrl(authId: string): string {
+  return apiUrl(`/persona-authorizations/${authId}/file`)
+}
+
+export type Platform = 'douyin' | 'xiaohongshu' | 'kuaishou' | 'shipinhao'
+
+export interface AccountBinding {
+  id: string
+  personaId: string
+  platform: Platform
+  accountKey: string
+  displayName: string
+  createdAt: string | null
+}
+
+export function getAccounts(id: string) {
+  return apiGet<AccountBinding[]>(`/personas/${id}/accounts`)
+}
+
+/** 全量替换（空数组 = 全部解绑）；违反线规则 409 PERSONA_BINDING_RULE */
+export function setAccounts(
+  id: string,
+  accounts: Array<{ platform: Platform; accountKey: string; displayName: string }>,
+) {
+  return apiPut<AccountBinding[]>(`/personas/${id}/accounts`, { accounts })
+}
+
+export interface PersonaReminder {
+  id: string
+  personaId: string
+  kind: string
+  refId: string | null
+  message: string
+  readAt: string | null
+  createdAt: string | null
+}
+
+export function getReminders(unreadOnly = false) {
+  return apiGet<{ items: PersonaReminder[]; unread: number }>('/persona-reminders', {
+    unread: unreadOnly ? '1' : undefined,
+  })
+}
+
+export function readAllReminders() {
+  return apiPost<{ updated: number }>('/persona-reminders/read-all')
+}
+
+/** 声音：厂商试听（克隆完成时归档）与任意文本试听文件 */
+export function voiceDemoUrl(voiceId: string): string {
+  return apiUrl(`/persona-voices/${voiceId}/demo`)
+}
+
+export function voicePreviewUrl(previewId: string): string {
+  return apiUrl(`/persona-voice-previews/${previewId}/file`)
+}
+
+/** 版本详情（快照） */
+export function getPersonaVersion(versionId: string) {
+  return apiGet<{
+    id: string
+    versionNo: number
+    trigger: string
+    createdAt: string | null
+    snapshot: Record<string, unknown>
+  }>(`/persona-versions/${versionId}`)
 }

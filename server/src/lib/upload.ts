@@ -1,4 +1,7 @@
+import crypto from 'node:crypto'
+import fs from 'node:fs'
 import path from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import { err } from '../errors.js'
 
 /**
@@ -137,3 +140,10 @@ export function validateUploadFile(
 
 /** 读取文件头用于魔数校验（16 字节足够覆盖上述全部签名） */
 export const MAGIC_HEAD_BYTES = 16
+
+/** 流式计算文件 SHA-256（P2-2：分身素材最大 200MB，不能整份读入内存） */
+export async function sha256File(filePath: string): Promise<string> {
+  const hash = crypto.createHash('sha256')
+  await pipeline(fs.createReadStream(filePath), hash)
+  return hash.digest('hex')
+}

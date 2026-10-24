@@ -283,10 +283,11 @@ export async function setDefaultAvatar(id: string, operator: string): Promise<Pe
   if (!avatar.vendorAvatarId) {
     throw err.cloneNotReady('分身缺少飞影标识，不能设为默认（请先核对状态）')
   }
-  // 默认分身须肖像授权有效（FR-C4）
+  // 默认分身须肖像授权有效（FR-C4）。按「人物当前是否有任一有效的肖像授权」判定：
+  // 创建分身时所选授权到期后，上传并核验新授权即可恢复，不会被旧授权永久卡死
   const auths = await validAuthorizationsOf(avatar.personaId)
-  if (!auths.some((a) => a.id === avatar.authorizationId && a.scopes.includes('portrait'))) {
-    throw err.authorizationRequired('该分身的肖像授权已失效，不能设为默认', {
+  if (!auths.some((a) => a.scopes.includes('portrait'))) {
+    throw err.authorizationRequired('该人物没有有效的肖像授权，不能设为默认分身', {
       authorizationId: avatar.authorizationId,
     })
   }
@@ -339,10 +340,10 @@ export async function softDeleteAvatar(id: string, operator: string): Promise<vo
   if (avatar.deletedAt) return // 幂等
   // R19：制作中 / 不确定态不可删
   if (IN_PROGRESS.includes(avatar.status) || avatar.status === 'uncertain') {
-    throw err.invalidState(
-      avatar.status === 'uncertain' ? '状态待核对，不能删除（请先核对）' : '分身制作中，不能删除',
-      { status: avatar.status },
-    )
+    // 待核对 → CLONE_UNCERTAIN（须先核对）；制作中 → CLONE_NOT_READY（任务书 §5.2）
+    throw avatar.status === 'uncertain'
+      ? err.cloneUncertain('状态待核对，不能删除（请先核对）', { status: avatar.status })
+      : err.cloneNotReady('分身制作中，不能删除', { status: avatar.status })
   }
   // 默认分身须先换默认
   const persona = await getPersonaById(avatar.personaId, true)

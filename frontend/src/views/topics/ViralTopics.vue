@@ -3,17 +3,40 @@
     <header class="topics-toolbar">
       <h1>爆款选题</h1>
       <div class="topics-modes" role="group" aria-label="选题资料类型">
-        <button type="button" :aria-pressed="tab === 'news'" :class="{ active: tab === 'news' }" @click="tab = 'news'">热点资讯</button>
-        <button type="button" :aria-pressed="tab === 'bench'" :class="{ active: tab === 'bench' }" @click="tab = 'bench'">对标账号视频</button>
+        <button type="button" :aria-pressed="tab === 'news'" :class="{ active: tab === 'news' }" @click="tab = 'news'">
+          热点资讯
+        </button>
+        <button
+          type="button"
+          :aria-pressed="tab === 'bench'"
+          :class="{ active: tab === 'bench' }"
+          @click="tab = 'bench'"
+        >
+          对标账号视频
+        </button>
       </div>
       <div class="topics-toolbar-actions">
-        <a-button type="text" @click="methodologyVisible = true"><template #icon><icon-book /></template>选题方法论</a-button>
+        <a-button type="text" @click="methodologyVisible = true"
+          ><template #icon><icon-book /></template>选题方法论</a-button
+        >
         <template v-if="tab === 'news'">
-          <a-input-search v-model="news.keyword" placeholder="搜索资讯关键词" allow-clear aria-label="搜索资讯关键词" @search="(v: string) => news.setKeyword(v)" @press-enter="news.setKeyword(news.keyword)" @clear="news.setKeyword('')" />
-          <a-button :loading="news.refreshing" @click="onRefreshNews"><template #icon><icon-refresh /></template>采集资讯</a-button>
+          <a-input-search
+            v-model="news.keyword"
+            placeholder="搜索资讯关键词"
+            allow-clear
+            aria-label="搜索资讯关键词"
+            @search="(v: string) => news.setKeyword(v)"
+            @press-enter="news.setKeyword(news.keyword)"
+            @clear="news.setKeyword('')"
+          />
+          <a-button :loading="news.refreshing" @click="onRefreshNews"
+            ><template #icon><icon-refresh /></template>采集资讯</a-button
+          >
         </template>
         <template v-else>
-          <a-button @click="openAddAccount"><template #icon><icon-plus /></template>添加账号链接</a-button>
+          <a-button @click="openAddAccount"
+            ><template #icon><icon-plus /></template>添加账号链接</a-button
+          >
           <a-button type="outline" @click="openExtractLink">视频直接提取改写<icon-right class="ml-1" /></a-button>
         </template>
       </div>
@@ -23,23 +46,54 @@
       <div class="topics-source-column">
         <div class="topics-filters">
           <div class="topics-categories" role="group" aria-label="资讯分类">
-            <button v-for="c in news.chips" :key="c.key" type="button" :aria-pressed="news.category === c.key" :class="{ active: news.category === c.key }" @click="news.setCategory(c.key)">
+            <button
+              v-for="c in news.chips"
+              :key="c.key"
+              type="button"
+              :aria-pressed="news.category === c.key"
+              :class="{ active: news.category === c.key }"
+              @click="news.setCategory(c.key)"
+            >
               {{ c.label }} <span>{{ c.count }}</span>
             </button>
           </div>
-          <a-select :model-value="news.source" placeholder="全部来源" aria-label="资讯来源" allow-clear @change="onSourceChange">
+          <a-select
+            :model-value="news.source"
+            placeholder="全部来源"
+            aria-label="资讯来源"
+            allow-clear
+            @change="onSourceChange"
+          >
             <a-option v-for="s in news.categories.sources" :key="s" :value="s">{{ s }}</a-option>
           </a-select>
         </div>
         <div class="topics-news-scroll">
           <a-spin :loading="news.loading" class="w-full">
             <div class="topics-news-list">
-              <article v-for="n in news.items" :key="n.id" class="topics-news-row" :class="{ selected: news.isSelected(n.id) }" @click="toggleNews(n.id)">
-                <a-checkbox :model-value="news.isSelected(n.id)" @change="toggleNews(n.id)" @click.stop><span class="sr-only">选择资讯：{{ n.title }}</span></a-checkbox>
+              <article
+                v-for="n in news.items"
+                :key="n.id"
+                class="topics-news-row"
+                :class="{ selected: news.isSelected(n.id) }"
+                @click="toggleNews(n.id)"
+              >
+                <a-checkbox :model-value="news.isSelected(n.id)" @change="toggleNews(n.id)" @click.stop
+                  ><span class="sr-only">选择资讯：{{ n.title }}</span></a-checkbox
+                >
                 <div class="flex-1 min-w-0">
                   <div class="topics-news-meta">
-                    <span class="mw-tag mw-tag-gray">{{ n.category }}</span><span>{{ n.source }} · {{ fmtTime(n.publishedAt) }}</span>
-                    <a v-if="n.contentUrl" :href="n.contentUrl" target="_blank" rel="noreferrer" :aria-label="`查看来源：${n.title}`" title="查看来源" @click.stop><icon-export :size="15" /></a>
+                    <span class="mw-tag mw-tag-gray">{{ n.category }}</span
+                    ><span>{{ n.source }} · {{ fmtTime(n.publishedAt) }}</span>
+                    <a
+                      v-if="n.contentUrl"
+                      :href="n.contentUrl"
+                      target="_blank"
+                      rel="noreferrer"
+                      :aria-label="`查看来源：${n.title}`"
+                      title="查看来源"
+                      @click.stop
+                      ><icon-export :size="15"
+                    /></a>
                   </div>
                   <button type="button" class="news-title" @click.stop="openNewsDetail(n)">{{ n.title }}</button>
                   <p v-if="n.summary" class="topics-news-summary">{{ n.summary }}</p>
@@ -49,243 +103,427 @@
             <a-empty v-if="!news.loading && !news.items.length" description="暂无资讯，点击右上角采集资讯" />
           </a-spin>
           <div v-if="news.total > news.pageSize" class="topics-pagination">
-            <a-pagination :total="news.total" :current="news.page" :page-size="news.pageSize" size="small" show-total @change="(p: number) => news.setPage(p)" />
+            <a-pagination
+              :total="news.total"
+              :current="news.page"
+              :page-size="news.pageSize"
+              size="small"
+              show-total
+              @change="(p: number) => news.setPage(p)"
+            />
           </div>
         </div>
         <div class="topics-generation-dock">
           <div class="flex items-center gap-3 mb-3">
             <strong>已选 {{ news.selectedIds.length }} 条资料</strong>
-            <button v-if="news.selectedIds.length" type="button" class="mw-link" @click="news.clearSelect()">清空</button>
+            <button v-if="news.selectedIds.length" type="button" class="mw-link" @click="news.clearSelect()">
+              清空
+            </button>
             <span class="mw-subtle ml-auto">每次最多 10 条</span>
           </div>
           <div class="topics-generation-controls">
-            <label>人物
-              <a-select v-model="targetPersonas" placeholder="选择人物" aria-label="目标角色或人物" multiple :max-tag-count="1">
-                <a-option v-for="p in personas.enabled" :key="p.id" :value="p.id">{{ p.name }} · {{ p.ipProfile.role }}</a-option>
+            <label
+              >人物
+              <a-select
+                v-model="targetPersonas"
+                placeholder="选择人物"
+                aria-label="目标角色或人物"
+                multiple
+                :max-tag-count="1"
+              >
+                <a-option v-for="p in personas.enabled" :key="p.id" :value="p.id"
+                  >{{ p.name }} · {{ p.ipProfile.role }}</a-option
+                >
               </a-select>
             </label>
-            <label>生成数量<a-input-number v-model="genCount" :min="1" :max="10" mode="button" aria-label="生成数量" /></label>
+            <label
+              >生成数量<a-input-number v-model="genCount" :min="1" :max="10" mode="button" aria-label="生成数量"
+            /></label>
             <div>
-              <div class="flex items-center justify-between"><span>选题方法</span><a-dropdown trigger="click"><a-button type="text" size="mini" aria-label="管理选题方法"><icon-more /></a-button><template #content><a-doption @click="openTemplate()">新增方法</a-doption><a-doption :disabled="!templateId" @click="openTemplate(currentTemplate)">编辑当前方法</a-doption></template></a-dropdown></div>
-              <a-select v-model="templateId" placeholder="默认提示词" aria-label="选题方法" allow-clear><a-option v-for="t in topics.templates" :key="t.id" :value="t.id">{{ t.name }}</a-option></a-select>
+              <div class="flex items-center justify-between">
+                <span>选题方法</span
+                ><a-dropdown trigger="click"
+                  ><a-button type="text" size="mini" aria-label="管理选题方法"><icon-more /></a-button
+                  ><template #content
+                    ><a-doption @click="openTemplate()">新增方法</a-doption
+                    ><a-doption :disabled="!templateId" @click="openTemplate(currentTemplate)"
+                      >编辑当前方法</a-doption
+                    ></template
+                  ></a-dropdown
+                >
+              </div>
+              <a-select v-model="templateId" placeholder="默认提示词" aria-label="选题方法" allow-clear
+                ><a-option v-for="t in topics.templates" :key="t.id" :value="t.id">{{ t.name }}</a-option></a-select
+              >
             </div>
-            <a-button type="outline" :loading="topics.generating" @click="onGenerate"><template #icon><icon-file /></template>生成候选选题</a-button>
+            <a-button type="outline" :loading="topics.generating" @click="onGenerate"
+              ><template #icon><icon-file /></template>生成候选选题</a-button
+            >
           </div>
-          <p class="topics-dock-note">本批合计 {{ batchExpected }} 条选题 · 仅点击后生成<template v-if="news.lastRefresh"> · 上次采集新增 {{ news.lastRefresh.inserted }} 条</template></p>
+          <p class="topics-dock-note">
+            本批合计 {{ batchExpected }} 条选题 · 仅点击后生成<template v-if="news.lastRefresh">
+              · 上次采集新增 {{ news.lastRefresh.inserted }} 条</template
+            >
+          </p>
         </div>
       </div>
 
       <aside class="topics-candidate-column" aria-label="候选选题">
         <div class="topics-candidate-toolbar">
-          <h2>候选选题 <span>{{ topics.total }}</span></h2>
-          <a-select :model-value="topics.filter" aria-label="候选选题状态" @change="(v) => topics.setFilter(v as CandidateFilter)"><a-option value="pending">全部待送</a-option><a-option value="candidate">待分配</a-option><a-option value="assigned">已分配</a-option></a-select>
-          <a-button type="text" :loading="topics.loading" aria-label="刷新候选选题" @click="reloadCandidates"><template #icon><icon-refresh /></template></a-button>
+          <h2>
+            候选选题 <span>{{ topics.total }}</span>
+          </h2>
+          <a-select
+            :model-value="topics.filter"
+            aria-label="候选选题状态"
+            @change="(v) => topics.setFilter(v as CandidateFilter)"
+            ><a-option value="pending">全部待送</a-option><a-option value="candidate">待分配</a-option
+            ><a-option value="assigned">已分配</a-option></a-select
+          >
+          <a-button type="text" :loading="topics.loading" aria-label="刷新候选选题" @click="reloadCandidates"
+            ><template #icon><icon-refresh /></template
+          ></a-button>
         </div>
         <div v-if="topics.batchFilter || topics.batch" class="topics-batch-state">
           <a-tag v-if="topics.batchFilter" size="small" closable @close="topics.clearBatchFilter()">仅本批</a-tag>
-          <span v-if="topics.batch" class="mw-subtle">本批 {{ topics.batch.produced }}/{{ topics.batch.expected }}</span>
+          <span v-if="topics.batch" class="mw-subtle"
+            >本批 {{ topics.batch.produced }}/{{ topics.batch.expected }}</span
+          >
         </div>
         <div class="topics-candidate-scroll">
           <a-spin :loading="topics.loading" class="w-full">
-            <article v-for="c in topics.items" :key="c.id" class="topics-candidate-row" :class="{ selected: topics.checkedIds.includes(c.id) }" @click="topics.toggleCheck(c.id)">
-              <a-checkbox :model-value="topics.checkedIds.includes(c.id)" @change="() => topics.toggleCheck(c.id)" @click.stop><span class="sr-only">勾选选题：{{ c.title }}</span></a-checkbox>
+            <article
+              v-for="c in topics.items"
+              :key="c.id"
+              class="topics-candidate-row"
+              :class="{ selected: topics.checkedIds.includes(c.id) }"
+              @click="topics.toggleCheck(c.id)"
+            >
+              <a-checkbox
+                :model-value="topics.checkedIds.includes(c.id)"
+                @change="() => topics.toggleCheck(c.id)"
+                @click.stop
+                ><span class="sr-only">勾选选题：{{ c.title }}</span></a-checkbox
+              >
               <div class="flex-1 min-w-0">
-                <div class="flex items-start gap-2"><h3>{{ c.title }}</h3><a-button type="text" size="mini" :aria-label="`归档选题：${c.title}`" title="归档" @click.stop="onArchive(c.id)"><template #icon><icon-archive /></template></a-button></div>
-                <div v-if="c.direction" class="topics-direction"><span>方向</span><span class="mw-tag mw-tag-gray">{{ c.direction }}</span></div>
+                <div class="flex items-start gap-2">
+                  <h3>{{ c.title }}</h3>
+                  <a-button
+                    type="text"
+                    size="mini"
+                    :aria-label="`归档选题：${c.title}`"
+                    title="归档"
+                    @click.stop="onArchive(c.id)"
+                    ><template #icon><icon-archive /></template
+                  ></a-button>
+                </div>
+                <div v-if="c.direction" class="topics-direction">
+                  <span>方向</span><span class="mw-tag mw-tag-gray">{{ c.direction }}</span>
+                </div>
                 <p v-if="c.hook" class="topics-hook">钩子：{{ c.hook }}</p>
-                <div class="topics-persona"><span>分配给</span><a-select :model-value="currentPersonas(c)" placeholder="选择人物" :aria-label="`为${c.title}分配人物`" multiple :max-tag-count="1" @click.stop @change="(v) => onAssignChange(c.id, v)"><a-option v-for="p in personas.enabled" :key="p.id" :value="p.id">{{ p.name }}</a-option></a-select></div>
+                <div class="topics-persona">
+                  <span>分配给</span
+                  ><a-select
+                    :model-value="currentPersonas(c)"
+                    placeholder="选择人物"
+                    :aria-label="`为${c.title}分配人物`"
+                    multiple
+                    :max-tag-count="1"
+                    @click.stop
+                    @change="(v) => onAssignChange(c.id, v)"
+                    ><a-option v-for="p in personas.enabled" :key="p.id" :value="p.id">{{ p.name }}</a-option></a-select
+                  >
+                </div>
                 <p v-if="!currentPersonas(c).length" class="topics-assignment-note">分配人物后可送入文案工坊</p>
-                <p v-else-if="c.status === 'candidate'" class="topics-assignment-note">已预填目标人物，送入时按此分配</p>
+                <p v-else-if="c.status === 'candidate'" class="topics-assignment-note">
+                  已预填目标人物，送入时按此分配
+                </p>
               </div>
             </article>
             <a-empty v-if="!topics.loading && !topics.items.length" description="还没有候选选题" />
           </a-spin>
-          <div v-if="topics.total > topics.pageSize" class="topics-pagination"><a-pagination :current="topics.page" :page-size="topics.pageSize" :total="topics.total" size="mini" simple @change="(p: number) => topics.setPage(p)" /></div>
+          <div v-if="topics.total > topics.pageSize" class="topics-pagination">
+            <a-pagination
+              :current="topics.page"
+              :page-size="topics.pageSize"
+              :total="topics.total"
+              size="mini"
+              simple
+              @change="(p: number) => topics.setPage(p)"
+            />
+          </div>
         </div>
         <div class="topics-send-dock">
-          <div><strong>已选 {{ topics.checkedIds.length }} 条</strong> · 已分配 {{ topics.assignedChecked.length }} 条</div>
-          <a-button type="primary" long :disabled="!topics.checkedIds.length" @click="onSendToCopy">送入文案工坊<template v-if="topics.checkedIds.length">（{{ topics.checkedIds.length }}）</template><icon-right class="ml-2" /></a-button>
+          <div>
+            <strong>已选 {{ topics.checkedIds.length }} 条</strong> · 已分配 {{ topics.assignedChecked.length }} 条
+          </div>
+          <a-button type="primary" long :disabled="!topics.checkedIds.length" @click="onSendToCopy"
+            >送入文案工坊<template v-if="topics.checkedIds.length">（{{ topics.checkedIds.length }}）</template
+            ><icon-right class="ml-2"
+          /></a-button>
           <p class="topics-dock-note">人工确认并分配后，进入文案工坊编辑与送审。</p>
         </div>
       </aside>
     </section>
 
-      <!-- ============ 对标账号视频 ============ -->
-      <section v-show="tab === 'bench'" class="topics-bench">
-        <div class="mt-1 flex flex-col gap-4">
-          <section class="research-overview" aria-label="真实对标数据概览">
-            <div class="research-overview-head"><div><span class="research-eyebrow">BENCHMARK RESEARCH</span><h2>从真实作品，找到值得做的选题。</h2><p>先验证表现，再拆解表达，让内容创作有据可依。</p></div><span class="research-source-badge" :class="{ 'is-demo': overview?.provider.mode !== 'live' }"><i />{{ overview?.provider.mode === 'live' ? 'TikHub 真实数据' : overview?.provider.mode === 'demo' ? '演示数据模式' : '数据源待配置' }}</span></div>
-            <div class="research-overview-metrics"><div><span>对标账号</span><strong>{{ overview?.accounts ?? '—' }}<small>个</small></strong><p>{{ overview?.monitoring ?? 0 }} 个账号监控中</p></div><div><span>已采集作品</span><strong>{{ overview?.videos ?? '—' }}<small>条</small></strong><p>视频来源与数据均可追溯</p></div><div><span>已识别爆款</span><strong>{{ overview?.hotVideos ?? '—' }}<small>条</small></strong><p>同账号基线 ×{{ overview?.methodology.multiplier || 3 }}</p></div><div><span>累计赞评转</span><strong>{{ overview ? fmtNum(overview.interactions) : '—' }}</strong><p>{{ overview?.lastFetchedAt ? '最近采集 ' + fmtTime(overview.lastFetchedAt) : '等待首次真实采集' }}</p></div></div>
-            <div class="research-overview-foot"><span>① 采集对标作品</span><i>→</i><span>② 比较互动表现</span><i>→</i><span>③ 提取与拆解</span><i>→</i><span>④ 送文案工坊</span><button @click="methodologyVisible = true">查看完整方法论 ↗</button></div>
-            <p v-if="overviewError" class="research-error" role="alert">{{ overviewError }}</p>
-          </section>
-          <!-- 账号管理条 -->
-          <div class="mw-card p-5 research-accounts">
-            <div class="flex items-center gap-3 flex-wrap">
-              <span class="text-[15px] font-semibold">对标账号</span>
-              <span class="mw-tag mw-tag-gray">{{ bench.realAccounts.length }} 个</span>
-              <div class="flex-1"></div>
-              <a-tooltip v-if="bench.quota" :content="quotaTip">
-                <span class="mw-subtle cursor-help">
-                  <icon-info-circle :size="13" class="mr-1" />预计日调用
-                  <b class="text-[var(--mw-text)]">{{ bench.quota.dailyCalls }}</b> 次 · 估算费用
-                  <b class="text-[var(--mw-text)]">¥{{ bench.quota.estimatedCost.toFixed(2) }}</b>/天
-                </span>
-              </a-tooltip>
+    <!-- ============ 对标账号视频 ============ -->
+    <section v-show="tab === 'bench'" class="topics-bench">
+      <div class="mt-1 flex flex-col gap-4">
+        <section class="research-overview" aria-label="真实对标数据概览">
+          <div class="research-overview-head">
+            <div>
+              <span class="research-eyebrow">BENCHMARK RESEARCH</span>
+              <h2>从真实作品，找到值得做的选题。</h2>
+              <p>先验证表现，再拆解表达，让内容创作有据可依。</p>
             </div>
-
-            <div v-if="bench.realAccounts.length" class="mt-3 research-account-grid">
-              <div
-                v-for="a in bench.realAccounts"
-                :key="a.id"
-                class="research-account-card p-3 rounded-[10px] border flex items-center gap-3"
-                :class="isAbnormal(a)
-                  ? 'border-[color:var(--mw-danger,#c03e35)] bg-[#fdeeee]'
-                  : 'border-[var(--mw-border-light)] bg-[#fafbfc]'"
-              >
-                <a-avatar :size="36" :style="{ backgroundColor: '#dbe6f6', color: '#1d4ed8', flexShrink: 0 }">
-                  {{ (a.nickname || '?').slice(0, 1) }}
-                </a-avatar>
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2">
-                    <button class="research-account-name text-[13.5px] font-semibold truncate" :aria-label="`查看${a.nickname}的视频`" @click="onAccountFilter(a.id)">{{ a.nickname }}</button>
-                    <a-tag v-if="a.monitorStatus === 'paused'" size="small" color="gray">已暂停</a-tag>
-                    <a-tag v-else-if="isAbnormal(a)" size="small" color="red">异常</a-tag>
-                    <a-tag v-else size="small" color="green">监控中</a-tag>
-                  </div>
-                  <div class="mt-0.5 text-[12px] text-[var(--mw-text3)] truncate">
-                    粉丝 {{ fmtNum(a.fansCount) }} · 每 {{ a.monitorIntervalHours }}h ·
-                    下次 {{ fmtTime(a.nextCheckAt) }}
-                  </div>
-                  <div v-if="a.lastError" class="mt-0.5 text-[12px] text-[#c03e35] truncate">
-                    连续失败 {{ a.consecutiveFailures }} 次：{{ a.lastError }}
-                  </div>
-                </div>
-                <div class="flex items-center gap-1 flex-shrink-0">
-                  <a-tooltip content="立即检查一次">
-                    <a-button size="mini" type="text" :loading="!!pendingFetch[a.id]" :aria-label="`立即同步${a.nickname}`" @click="onFetchNow(a)">
-                      <template #icon><icon-refresh /></template>
-                    </a-button>
-                  </a-tooltip>
-                  <a-tooltip :content="a.monitorStatus === 'paused' ? '恢复监控' : '暂停监控'">
-                    <a-button size="mini" type="text" @click="onToggleMonitor(a)">
-                      <template #icon><icon-pause v-if="a.monitorStatus !== 'paused'" /><icon-play-arrow v-else /></template>
-                    </a-button>
-                  </a-tooltip>
-                  <a-popconfirm content="移除后不再监控，历史视频仍保留。确认移除？" @ok="() => bench.remove(a.id)">
-                    <a-button size="mini" type="text" status="danger">
-                      <template #icon><icon-delete /></template>
-                    </a-button>
-                  </a-popconfirm>
-                </div>
-              </div>
+            <span class="research-source-badge" :class="{ 'is-demo': overview?.provider.mode !== 'live' }"
+              ><i />{{
+                overview?.provider.mode === 'live'
+                  ? 'TikHub 真实数据'
+                  : overview?.provider.mode === 'demo'
+                    ? '演示数据模式'
+                    : '数据源待配置'
+              }}</span
+            >
+          </div>
+          <div class="research-overview-metrics">
+            <div>
+              <span>对标账号</span><strong>{{ overview?.accounts ?? '—' }}<small>个</small></strong>
+              <p>{{ overview?.monitoring ?? 0 }} 个账号监控中</p>
             </div>
-            <div v-else class="mt-3 p-4 rounded-[8px] bg-[#f7f8fa] text-[13px] text-[var(--mw-text2)]">
-              还没有对标账号。粘贴抖音主页链接即可添加，添加后自动回填最近一页作品并开始按周期检查。
+            <div>
+              <span>已采集作品</span><strong>{{ overview?.videos ?? '—' }}<small>条</small></strong>
+              <p>视频来源与数据均可追溯</p>
+            </div>
+            <div>
+              <span>已识别爆款</span><strong>{{ overview?.hotVideos ?? '—' }}<small>条</small></strong>
+              <p>同账号基线 ×{{ overview?.methodology.multiplier || 3 }}</p>
+            </div>
+            <div>
+              <span>累计赞评转</span><strong>{{ overview ? fmtNum(overview.interactions) : '—' }}</strong>
+              <p>{{ overview?.lastFetchedAt ? '最近采集 ' + fmtTime(overview.lastFetchedAt) : '等待首次真实采集' }}</p>
             </div>
           </div>
-
-          <!-- 告警 -->
-          <div class="mw-card p-4">
-            <div class="flex items-center gap-3">
-              <span class="text-[15px] font-semibold">监控告警</span>
-              <a-badge :count="bench.unread" :max-count="99">
-                <span class="mw-tag mw-tag-yellow">未读</span>
-              </a-badge>
-              <div class="flex-1"></div>
-              <a-button size="small" type="text" @click="showBenchAlerts = !showBenchAlerts">{{ showBenchAlerts ? '收起告警' : '展开告警' }}</a-button>
-              <a-button size="small" type="text" :disabled="!bench.unread" @click="onReadAll">全部标为已读</a-button>
-              <a-button size="small" type="text" @click="refreshAlerts">
-                <template #icon><icon-refresh /></template>
-              </a-button>
-            </div>
-
-            <div v-if="showBenchAlerts && bench.alerts.length" class="mt-3 flex flex-col gap-2 research-alert-list">
-              <div
-                v-for="al in bench.alerts"
-                :key="al.id"
-                class="flex items-center gap-3 p-3 rounded-[8px] border"
-                :class="al.isRead ? 'border-[var(--mw-border-light)] bg-white' : 'border-[#f3d9a4] bg-[#fffaf0]'"
-              >
-                <span class="mw-tag" :class="al.type === 'hot' ? 'mw-tag-red' : 'mw-tag-blue'">
-                  {{ al.type === 'hot' ? '爆款' : '新发布' }}
-                </span>
-                <div class="flex-1 min-w-0">
-                  <div class="text-[13.5px] truncate">{{ al.payload?.title || '（无标题）' }}</div>
-                  <div class="mt-0.5 text-[12px] text-[var(--mw-text3)]">
-                    {{ al.payload?.nickname || '—' }} · {{ fmtTime(al.createdAt) }}
-                    <template v-if="al.type === 'hot' && al.payload?.threshold">
-                      · 阈值 {{ fmtNum(Number(al.payload.threshold)) }}
-                    </template>
-                  </div>
-                </div>
-                <a-button v-if="!al.isRead" size="mini" type="text" @click="() => bench.markRead(al.id)">标为已读</a-button>
-              </div>
-            </div>
-            <div v-else-if="showBenchAlerts" class="mt-2 mw-subtle">暂无告警。首次回填不产生告警，后续新作品或新爆款会出现在这里。</div>
+          <div class="research-overview-foot">
+            <span>① 采集对标作品</span><i>→</i><span>② 比较互动表现</span><i>→</i><span>③ 提取与拆解</span><i>→</i
+            ><span>④ 送文案工坊</span><button @click="methodologyVisible = true">查看完整方法论 ↗</button>
           </div>
-
-          <!-- 视频筛选 -->
-          <div class="research-filters flex items-center gap-2 flex-wrap">
-            <a-select
-              :model-value="bench.videoFilter.accountId || ''"
-              :style="{ width: '200px' }"
-              placeholder="全部账号"
-              allow-clear
-              @change="onAccountFilter"
-            >
-              <a-option value="">全部账号</a-option>
-              <a-option v-for="a in bench.realAccounts" :key="a.id" :value="a.id">{{ a.nickname }}</a-option>
-            </a-select>
-            <a-select
-              :model-value="bench.videoFilter.extractStatus || ''"
-              :style="{ width: '160px' }"
-              placeholder="提取状态"
-              allow-clear
-              @change="onStatusFilter"
-            >
-              <a-option value="">提取状态</a-option>
-              <a-option v-for="s in extractStatusOptions" :key="s.value" :value="s.value">{{ s.label }}</a-option>
-            </a-select>
-            <a-checkbox :model-value="!!bench.videoFilter.onlyHot" @change="onOnlyHot">只看爆款</a-checkbox>
-            <a-checkbox :model-value="bench.videoFilter.origin === 'adhoc'" @change="onOnlyAdhoc"
-              >只看直接提取</a-checkbox
-            >
-            <a-select :model-value="bench.videoFilter.format || ''" aria-label="视频画幅" :style="{ width: '112px' }" @change="onFormatFilter"><a-option value="">全部画幅</a-option><a-option value="landscape">横屏视频</a-option><a-option value="portrait">竖屏视频</a-option><a-option value="square">方屏视频</a-option></a-select>
-            <a-select :model-value="bench.videoFilter.sort || 'latest'" aria-label="视频排序" :style="{ width: '112px' }" @change="onVideoSort"><a-option value="latest">最新发布</a-option><a-option value="interaction">互动最多</a-option></a-select>
+          <p v-if="overviewError" class="research-error" role="alert">{{ overviewError }}</p>
+        </section>
+        <!-- 账号管理条 -->
+        <div class="mw-card p-5 research-accounts">
+          <div class="flex items-center gap-3 flex-wrap">
+            <span class="text-[15px] font-semibold">对标账号</span>
+            <span class="mw-tag mw-tag-gray">{{ bench.realAccounts.length }} 个</span>
             <div class="flex-1"></div>
-            <span class="mw-subtle">共 {{ bench.videoTotal }} 条</span>
-            <a-button size="small" type="text" :loading="bench.videosLoading" @click="() => bench.loadVideos()">
+            <a-tooltip v-if="bench.quota" :content="quotaTip">
+              <span class="mw-subtle cursor-help">
+                <icon-info-circle :size="13" class="mr-1" />预计日调用
+                <b class="text-[var(--mw-text)]">{{ bench.quota.dailyCalls }}</b> 次 · 估算费用
+                <b class="text-[var(--mw-text)]">¥{{ bench.quota.estimatedCost.toFixed(2) }}</b
+                >/天
+              </span>
+            </a-tooltip>
+          </div>
+
+          <div v-if="bench.realAccounts.length" class="mt-3 research-account-grid">
+            <div
+              v-for="a in bench.realAccounts"
+              :key="a.id"
+              class="research-account-card p-3 rounded-[10px] border flex items-center gap-3"
+              :class="
+                isAbnormal(a)
+                  ? 'border-[color:var(--mw-danger,#c03e35)] bg-[#fdeeee]'
+                  : 'border-[var(--mw-border-light)] bg-[#fafbfc]'
+              "
+            >
+              <a-avatar :size="36" :style="{ backgroundColor: '#dbe6f6', color: '#1d4ed8', flexShrink: 0 }">
+                {{ (a.nickname || '?').slice(0, 1) }}
+              </a-avatar>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <button
+                    class="research-account-name text-[13.5px] font-semibold truncate"
+                    :aria-label="`查看${a.nickname}的视频`"
+                    @click="onAccountFilter(a.id)"
+                  >
+                    {{ a.nickname }}
+                  </button>
+                  <a-tag v-if="a.monitorStatus === 'paused'" size="small" color="gray">已暂停</a-tag>
+                  <a-tag v-else-if="isAbnormal(a)" size="small" color="red">异常</a-tag>
+                  <a-tag v-else size="small" color="green">监控中</a-tag>
+                </div>
+                <div class="mt-0.5 text-[12px] text-[var(--mw-text3)] truncate">
+                  粉丝 {{ fmtNum(a.fansCount) }} · 每 {{ a.monitorIntervalHours }}h · 下次 {{ fmtTime(a.nextCheckAt) }}
+                </div>
+                <div v-if="a.lastError" class="mt-0.5 text-[12px] text-[#c03e35] truncate">
+                  连续失败 {{ a.consecutiveFailures }} 次：{{ a.lastError }}
+                </div>
+              </div>
+              <div class="flex items-center gap-1 flex-shrink-0">
+                <a-tooltip content="立即检查一次">
+                  <a-button
+                    size="mini"
+                    type="text"
+                    :loading="!!pendingFetch[a.id]"
+                    :aria-label="`立即同步${a.nickname}`"
+                    @click="onFetchNow(a)"
+                  >
+                    <template #icon><icon-refresh /></template>
+                  </a-button>
+                </a-tooltip>
+                <a-tooltip :content="a.monitorStatus === 'paused' ? '恢复监控' : '暂停监控'">
+                  <a-button size="mini" type="text" @click="onToggleMonitor(a)">
+                    <template #icon
+                      ><icon-pause v-if="a.monitorStatus !== 'paused'" /><icon-play-arrow v-else
+                    /></template>
+                  </a-button>
+                </a-tooltip>
+                <a-popconfirm content="移除后不再监控，历史视频仍保留。确认移除？" @ok="() => bench.remove(a.id)">
+                  <a-button size="mini" type="text" status="danger">
+                    <template #icon><icon-delete /></template>
+                  </a-button>
+                </a-popconfirm>
+              </div>
+            </div>
+          </div>
+          <div v-else class="mt-3 p-4 rounded-[8px] bg-[#f7f8fa] text-[13px] text-[var(--mw-text2)]">
+            还没有对标账号。粘贴抖音主页链接即可添加，添加后自动回填最近一页作品并开始按周期检查。
+          </div>
+        </div>
+
+        <!-- 告警 -->
+        <div class="mw-card p-4">
+          <div class="flex items-center gap-3">
+            <span class="text-[15px] font-semibold">监控告警</span>
+            <a-badge :count="bench.unread" :max-count="99">
+              <span class="mw-tag mw-tag-yellow">未读</span>
+            </a-badge>
+            <div class="flex-1"></div>
+            <a-button size="small" type="text" @click="showBenchAlerts = !showBenchAlerts">{{
+              showBenchAlerts ? '收起告警' : '展开告警'
+            }}</a-button>
+            <a-button size="small" type="text" :disabled="!bench.unread" @click="onReadAll">全部标为已读</a-button>
+            <a-button size="small" type="text" @click="refreshAlerts">
               <template #icon><icon-refresh /></template>
             </a-button>
           </div>
 
-          <!-- 视频网格 -->
-          <a-spin :loading="bench.videosLoading" class="w-full">
-            <div class="research-video-grid">
-              <BenchmarkVideoCard v-for="v in bench.videos" :key="v.id" :video="v" :active="activeVideoId === v.id" :extraction-ready="overview?.extractionReady" @play="activeVideoId = $event" @detail="activeVideoId = null; detailVideo = $event" @extract="onDetailExtract" @send="openSendCopy" />
+          <div v-if="showBenchAlerts && bench.alerts.length" class="mt-3 flex flex-col gap-2 research-alert-list">
+            <div
+              v-for="al in bench.alerts"
+              :key="al.id"
+              class="flex items-center gap-3 p-3 rounded-[8px] border"
+              :class="al.isRead ? 'border-[var(--mw-border-light)] bg-white' : 'border-[#f3d9a4] bg-[#fffaf0]'"
+            >
+              <span class="mw-tag" :class="al.type === 'hot' ? 'mw-tag-red' : 'mw-tag-blue'">
+                {{ al.type === 'hot' ? '爆款' : '新发布' }}
+              </span>
+              <div class="flex-1 min-w-0">
+                <div class="text-[13.5px] truncate">{{ al.payload?.title || '（无标题）' }}</div>
+                <div class="mt-0.5 text-[12px] text-[var(--mw-text3)]">
+                  {{ al.payload?.nickname || '—' }} · {{ fmtTime(al.createdAt) }}
+                  <template v-if="al.type === 'hot' && al.payload?.threshold">
+                    · 阈值 {{ fmtNum(Number(al.payload.threshold)) }}
+                  </template>
+                </div>
+              </div>
+              <a-button v-if="!al.isRead" size="mini" type="text" @click="() => bench.markRead(al.id)"
+                >标为已读</a-button
+              >
             </div>
-            <a-empty v-if="!bench.videosLoading && !bench.videos.length" description="暂无视频，添加一个对标账号吧" />
-          </a-spin>
-          <p v-if="overview?.extractionReady === false" class="research-notice">视频与互动数据已接入。提取口播全文还需配置真实 ASR 和音频中转服务，配置完成后开放提取。</p>
-
-          <div v-if="bench.videoTotal > bench.videoPageSize" class="flex justify-center">
-            <a-pagination
-              :total="bench.videoTotal"
-              :current="bench.videoPage"
-              :page-size="bench.videoPageSize"
-              show-total
-              @change="(p: number) => bench.setVideoPage(p)"
-            />
           </div>
-
-          <div class="mw-subtle flex items-center gap-1">
-            <icon-info-circle :size="13" />
-            <template v-if="bench.showPlayCount">播放量口径：接口可返回播放数。</template>
-            <template v-else>非本人视频的播放量接口通常返回 0，爆款判定以「赞+评+转」互动合计为准。</template>
+          <div v-else-if="showBenchAlerts" class="mt-2 mw-subtle">
+            暂无告警。首次回填不产生告警，后续新作品或新爆款会出现在这里。
           </div>
         </div>
-      </section>
+
+        <!-- 视频筛选 -->
+        <div class="research-filters flex items-center gap-2 flex-wrap">
+          <a-select
+            :model-value="bench.videoFilter.accountId || ''"
+            :style="{ width: '200px' }"
+            placeholder="全部账号"
+            allow-clear
+            @change="onAccountFilter"
+          >
+            <a-option value="">全部账号</a-option>
+            <a-option v-for="a in bench.realAccounts" :key="a.id" :value="a.id">{{ a.nickname }}</a-option>
+          </a-select>
+          <a-select
+            :model-value="bench.videoFilter.extractStatus || ''"
+            :style="{ width: '160px' }"
+            placeholder="提取状态"
+            allow-clear
+            @change="onStatusFilter"
+          >
+            <a-option value="">提取状态</a-option>
+            <a-option v-for="s in extractStatusOptions" :key="s.value" :value="s.value">{{ s.label }}</a-option>
+          </a-select>
+          <a-checkbox :model-value="!!bench.videoFilter.onlyHot" @change="onOnlyHot">只看爆款</a-checkbox>
+          <a-checkbox :model-value="bench.videoFilter.origin === 'adhoc'" @change="onOnlyAdhoc"
+            >只看直接提取</a-checkbox
+          >
+          <a-select
+            :model-value="bench.videoFilter.format || ''"
+            aria-label="视频画幅"
+            :style="{ width: '112px' }"
+            @change="onFormatFilter"
+            ><a-option value="">全部画幅</a-option><a-option value="landscape">横屏视频</a-option
+            ><a-option value="portrait">竖屏视频</a-option><a-option value="square">方屏视频</a-option></a-select
+          >
+          <a-select
+            :model-value="bench.videoFilter.sort || 'latest'"
+            aria-label="视频排序"
+            :style="{ width: '112px' }"
+            @change="onVideoSort"
+            ><a-option value="latest">最新发布</a-option><a-option value="interaction">互动最多</a-option></a-select
+          >
+          <div class="flex-1"></div>
+          <span class="mw-subtle">共 {{ bench.videoTotal }} 条</span>
+          <a-button size="small" type="text" :loading="bench.videosLoading" @click="() => bench.loadVideos()">
+            <template #icon><icon-refresh /></template>
+          </a-button>
+        </div>
+
+        <!-- 视频网格 -->
+        <a-spin :loading="bench.videosLoading" class="w-full">
+          <div class="research-video-grid">
+            <BenchmarkVideoCard
+              v-for="v in bench.videos"
+              :key="v.id"
+              :video="v"
+              :active="activeVideoId === v.id"
+              :extraction-ready="overview?.extractionReady"
+              @play="activeVideoId = $event"
+              @detail="onDetailOpen"
+              @extract="onDetailExtract"
+              @send="openSendCopy"
+            />
+          </div>
+          <a-empty v-if="!bench.videosLoading && !bench.videos.length" description="暂无视频，添加一个对标账号吧" />
+        </a-spin>
+        <p v-if="overview?.extractionReady === false" class="research-notice">
+          视频与互动数据已接入。提取口播全文还需配置真实 ASR 和音频中转服务，配置完成后开放提取。
+        </p>
+
+        <div v-if="bench.videoTotal > bench.videoPageSize" class="flex justify-center">
+          <a-pagination
+            :total="bench.videoTotal"
+            :current="bench.videoPage"
+            :page-size="bench.videoPageSize"
+            show-total
+            @change="(p: number) => bench.setVideoPage(p)"
+          />
+        </div>
+
+        <div class="mw-subtle flex items-center gap-1">
+          <icon-info-circle :size="13" />
+          <template v-if="bench.showPlayCount">播放量口径：接口可返回播放数。</template>
+          <template v-else>非本人视频的播放量接口通常返回 0，爆款判定以「赞+评+转」互动合计为准。</template>
+        </div>
+      </div>
+    </section>
 
     <!-- ============ 弹窗：添加账号 ============ -->
     <a-modal v-model:visible="accModal.visible" title="添加对标账号" :mask-closable="false" @cancel="resetAccModal">
@@ -313,7 +551,9 @@
           </a-button>
         </a-form-item>
         <div v-if="accModal.previewed" class="p-3 rounded-[8px] bg-[#f7f8fa] text-[13px]">
-          <div><b>{{ accModal.previewed.nickname }}</b> · 粉丝 {{ fmtNum(accModal.previewed.fansCount) }}</div>
+          <div>
+            <b>{{ accModal.previewed.nickname }}</b> · 粉丝 {{ fmtNum(accModal.previewed.fansCount) }}
+          </div>
           <div v-if="accModal.previewed.exists" class="mt-1 text-[#a26a08]">该账号已在监控列表中，不能重复添加。</div>
         </div>
         <a-form-item label="检查周期" class="!mt-3">
@@ -337,9 +577,7 @@
               <span class="mw-subtle">{{ intervalHint }}</span>
             </div>
           </div>
-          <template #extra
-            ><span class="mw-subtle">最短 1 小时；周期越短，日调用量与费用越高。</span></template
-          >
+          <template #extra><span class="mw-subtle">最短 1 小时；周期越短，日调用量与费用越高。</span></template>
         </a-form-item>
       </a-form>
     </a-modal>
@@ -366,7 +604,13 @@
     </a-modal>
 
     <!-- ============ 弹窗：查看文案 ============ -->
-    <a-modal v-model:visible="scriptModal.visible" title="文案提取结果" class="benchmark-script-modal" width="720px" footer>
+    <a-modal
+      v-model:visible="scriptModal.visible"
+      title="文案提取结果"
+      class="benchmark-script-modal"
+      width="720px"
+      footer
+    >
       <template #footer>
         <a-button type="primary" @click="scriptModal.visible = false">关闭</a-button>
       </template>
@@ -412,7 +656,9 @@
               {{ p.name }} <span class="mw-subtle ml-1">{{ p.ipProfile.role }}</span>
             </a-option>
           </a-select>
-          <template #extra><span class="mw-subtle">将按「视频 × 人物」展开创建文案草稿，并带上提取全文与句级时间戳。</span></template>
+          <template #extra
+            ><span class="mw-subtle">将按「视频 × 人物」展开创建文案草稿，并带上提取全文与句级时间戳。</span></template
+          >
         </a-form-item>
       </a-form>
     </a-modal>
@@ -447,13 +693,7 @@
       </a-form>
     </a-modal>
     <!-- ============ 抽屉：资讯详情（点击标题打开） ============ -->
-    <a-drawer
-      v-model:visible="newsDetail.visible"
-      :width="560"
-      :footer="false"
-      unmount-on-close
-      title="资讯详情"
-    >
+    <a-drawer v-model:visible="newsDetail.visible" :width="560" :footer="false" unmount-on-close title="资讯详情">
       <a-spin :loading="newsDetail.loading" class="w-full">
         <template v-if="newsDetail.item">
           <div class="flex items-center gap-2 text-[12px] text-[var(--mw-text3)]">
@@ -466,10 +706,7 @@
 
           <h2 class="mt-3 text-[19px] font-semibold leading-8 text-[#131f38]">{{ newsDetail.item.title }}</h2>
 
-          <div
-            v-if="newsDetail.item.summary"
-            class="mt-4 text-[14px] leading-[1.9] text-[#3c4a63] whitespace-pre-wrap"
-          >
+          <div v-if="newsDetail.item.summary" class="mt-4 text-[14px] leading-[1.9] text-[#3c4a63] whitespace-pre-wrap">
             {{ newsDetail.item.summary }}
           </div>
           <a-empty v-else description="该资讯未提供正文内容" class="mt-6" />
@@ -485,8 +722,20 @@
         </template>
       </a-spin>
     </a-drawer>
-    <TopicMethodology :visible="methodologyVisible" :templates="topics.templates" :overview="overview" @close="methodologyVisible = false" @use="useMethodology" />
-    <BenchmarkVideoDrawer :video="detailVideo" :overview="overview" @close="detailVideo = null" @extract="onDetailExtract" @send="onDetailSend" />
+    <TopicMethodology
+      :visible="methodologyVisible"
+      :templates="topics.templates"
+      :overview="overview"
+      @close="methodologyVisible = false"
+      @use="useMethodology"
+    />
+    <BenchmarkVideoDrawer
+      :video="detailVideo"
+      :overview="overview"
+      @close="detailVideo = null"
+      @extract="onDetailExtract"
+      @send="onDetailSend"
+    />
   </div>
 </template>
 
@@ -505,7 +754,7 @@ import type { TopicTemplate } from '@/api/topics'
 import { CAT_CLASS, useNewsStore } from '@/stores/news'
 import { useTopicStore, type CandidateFilter } from '@/stores/topics'
 import { usePersonaStore } from '@/stores/personas'
-import { EXTRACTING, EXTRACT_LABEL, EXTRACT_TAG, useBenchmarkStore } from '@/stores/benchmark'
+import { EXTRACT_LABEL, useBenchmarkStore } from '@/stores/benchmark'
 
 const router = useRouter()
 const tab = ref('news')
@@ -522,16 +771,32 @@ const overview = ref<ResearchOverview | null>(null)
 const overviewError = ref('')
 const pendingFetch = ref<Record<string, { lastChecked: string | null; started: number }>>({})
 async function loadOverview() {
-  try { overview.value = await getResearchOverview(); overviewError.value = '' }
-  catch (e) { overviewError.value = errOf(e) }
+  try {
+    overview.value = await getResearchOverview()
+    overviewError.value = ''
+  } catch (e) {
+    overviewError.value = errOf(e)
+  }
 }
-function useMethodology(id: string) { templateId.value = id; tab.value = 'news'; methodologyVisible.value = false }
-function onDetailExtract(v: BenchVideo) { activeVideoId.value = null; detailVideo.value = null; if (v.extractStatus === 'done') void openScript(v); else void onExtract(v) }
-function onDetailSend(v: BenchVideo) { detailVideo.value = null; openSendCopy(v) }
-function onCoverError(e: Event) { const img = e.target as HTMLImageElement; img.style.visibility = 'hidden'; img.parentElement?.classList.add('has-cover-error') }
-function onCoverLoad(e: Event) { const img = e.target as HTMLImageElement; img.style.visibility = ''; img.parentElement?.classList.remove('has-cover-error') }
-
-const todayText = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
+function useMethodology(id: string) {
+  templateId.value = id
+  tab.value = 'news'
+  methodologyVisible.value = false
+}
+function onDetailExtract(v: BenchVideo) {
+  activeVideoId.value = null
+  detailVideo.value = null
+  if (v.extractStatus === 'done') void openScript(v)
+  else void onExtract(v)
+}
+function onDetailOpen(v: BenchVideo) {
+  activeVideoId.value = null
+  detailVideo.value = v
+}
+function onDetailSend(v: BenchVideo) {
+  detailVideo.value = null
+  openSendCopy(v)
+}
 
 /* ── 资讯 → 选题 ─────────────────────────── */
 const targetPersonas = ref<string[]>([])
@@ -807,8 +1072,12 @@ function onOnlyHot(v: unknown) {
 function onOnlyAdhoc(v: unknown) {
   void bench.loadVideos({ origin: v ? 'adhoc' : undefined })
 }
-function onFormatFilter(v: unknown) { void bench.loadVideos({ format: v ? String(v) as 'landscape' | 'portrait' | 'square' : undefined }) }
-function onVideoSort(v: unknown) { void bench.loadVideos({ sort: String(v) as 'latest' | 'interaction' }) }
+function onFormatFilter(v: unknown) {
+  void bench.loadVideos({ format: v ? (String(v) as 'landscape' | 'portrait' | 'square') : undefined })
+}
+function onVideoSort(v: unknown) {
+  void bench.loadVideos({ sort: String(v) as 'latest' | 'interaction' })
+}
 
 async function onExtract(v: BenchVideo) {
   // P1-3①：uncertain 意味着上一次提取可能已提交但结果未知，重试会再次计费，必须先人工确认
@@ -955,15 +1224,14 @@ function fmtFullTime(iso: string | null | undefined): string {
 function fmtDuration(sec: number): string {
   const s = Math.max(0, Math.round(sec))
   const pad = (n: number) => String(n).padStart(2, '0')
-  return s >= 3600 ? `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}` : `${pad(Math.floor(s / 60))}:${pad(s % 60)}`
+  return s >= 3600
+    ? `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`
+    : `${pad(Math.floor(s / 60))}:${pad(s % 60)}`
 }
 function mmss(ms: number): string {
   const s = Math.floor((ms || 0) / 1000)
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${pad(Math.floor(s / 60))}:${pad(s % 60)}`
-}
-function platformLabel(p: string): string {
-  return p === 'douyin' ? '抖音' : p
 }
 
 /* ── 轮询：提取中状态 + 未读告警 ────────── */
@@ -1008,7 +1276,7 @@ async function pollAccountFetch() {
   try {
     await bench.loadAccounts()
     for (const [id, pending] of Object.entries(pendingFetch.value)) {
-      const a = bench.accounts.find(x => x.id === id)
+      const a = bench.accounts.find((x) => x.id === id)
       if (!a || (a.lastCheckedAt && a.lastCheckedAt !== pending.lastChecked)) {
         delete pendingFetch.value[id]
         if (a?.lastError) Message.error(a.lastError)
@@ -1019,7 +1287,10 @@ async function pollAccountFetch() {
       }
     }
     await Promise.all([bench.loadVideos(), loadOverview(), bench.loadQuota()])
-  } catch (e) { overviewError.value = errOf(e) }
-  finally { checkingFetch = false }
+  } catch (e) {
+    overviewError.value = errOf(e)
+  } finally {
+    checkingFetch = false
+  }
 }
 </script>

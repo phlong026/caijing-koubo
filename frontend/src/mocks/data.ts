@@ -2,12 +2,6 @@
 
 export type Line = 'manager' | 'kos' | 'persona'
 
-export const lineNames: Record<Line, string> = {
-  manager: '经理 IP',
-  kos: '员工 KOS',
-  persona: '素人矩阵',
-}
-
 /** 资讯分类色 */
 export const catClass: Record<string, string> = {
   市场: 'mw-cat mw-tag-orange',
@@ -63,8 +57,22 @@ export interface TopicItem {
 }
 
 export const topicCandidates: TopicItem[] = [
-  { id: 't1', title: '三分钟读懂基金定投', dir: '基础科普', dirClass: 'mw-tag-blue', assigned: '小林科普', checked: true },
-  { id: 't2', title: '定投前，先想清楚这三个问题', dir: '风险认知', dirClass: 'mw-tag-yellow', assigned: '张经理', checked: true },
+  {
+    id: 't1',
+    title: '三分钟读懂基金定投',
+    dir: '基础科普',
+    dirClass: 'mw-tag-blue',
+    assigned: '小林科普',
+    checked: true,
+  },
+  {
+    id: 't2',
+    title: '定投前，先想清楚这三个问题',
+    dir: '风险认知',
+    dirClass: 'mw-tag-yellow',
+    assigned: '张经理',
+    checked: true,
+  },
   { id: 't3', title: '定投的常见误区', dir: '概念澄清', dirClass: 'mw-tag-purple' },
 ]
 
@@ -102,152 +110,6 @@ export const benchmarkVideos = [
   },
 ]
 
-/** 人物库 */
-export interface Person {
-  id: string
-  name: string
-  line: Line
-  desc: string
-  owner: string
-  photo: number
-  avatar: number
-  voice: number
-  duration: string
-  status: { text: string; cls: string }[]
-  positioning: {
-    role: string
-    major: string
-    style: string
-    content: string
-    mix: { text: string; cls: string }[]
-    scope: string
-    auth: string
-  }
-}
-
-export const people: Person[] = [
-  {
-    id: 'p1',
-    name: '小林科普',
-    line: 'kos',
-    desc: '归属：小林科普',
-    owner: '小林科普',
-    photo: 12,
-    avatar: 3,
-    voice: 1,
-    duration: '00:36',
-    status: [
-      { text: '分享可用（演示）', cls: 'mw-tag-green' },
-      { text: '声音待确认', cls: 'mw-tag-yellow' },
-    ],
-    positioning: {
-      role: '员工 KOS',
-      major: '基金知识',
-      style: '通俗、亲切',
-      content: '投资常识、风险教育',
-      mix: [
-        { text: '知识科普', cls: 'mw-tag-blue' },
-        { text: '市场解读', cls: 'mw-tag-green' },
-        { text: '风险提示', cls: 'mw-tag-yellow' },
-      ],
-      scope: '已分配的 KOS 账号',
-      auth: '待核验',
-    },
-  },
-  {
-    id: 'p2',
-    name: '张经理',
-    line: 'manager',
-    desc: '专属形象 · 一对一绑定',
-    owner: '张经理',
-    photo: 18,
-    avatar: 4,
-    voice: 1,
-    duration: '00:42',
-    status: [{ text: '已配置（演示）', cls: 'mw-tag-green' }],
-    positioning: {
-      role: '经理 IP',
-      major: '宏观与固收',
-      style: '专业严谨',
-      content: '市场解读、政策点评',
-      mix: [
-        { text: '市场解读', cls: 'mw-tag-green' },
-        { text: '风险提示', cls: 'mw-tag-yellow' },
-      ],
-      scope: '张经理专属账号',
-      auth: '已核验（示例）',
-    },
-  },
-  {
-    id: 'p3',
-    name: '员工亲和形象',
-    line: 'kos',
-    desc: '可供 2 个授权账号使用',
-    owner: '小林科普',
-    photo: 10,
-    avatar: 1,
-    voice: 1,
-    duration: '00:28',
-    status: [{ text: '分身制作中（模拟）', cls: 'mw-tag-blue' }],
-    positioning: {
-      role: '员工 KOS',
-      major: '理财入门',
-      style: '轻松活泼',
-      content: '投教科普',
-      mix: [{ text: '知识科普', cls: 'mw-tag-blue' }],
-      scope: '2 个授权账号',
-      auth: '已核验（示例）',
-    },
-  },
-  {
-    id: 'p4',
-    name: '员工讲解形象',
-    line: 'kos',
-    desc: '归属：小林科普',
-    owner: '小林科普',
-    photo: 8,
-    avatar: 2,
-    voice: 1,
-    duration: '00:51',
-    status: [{ text: '状态待核对（模拟）', cls: 'mw-tag-red' }],
-    positioning: {
-      role: '员工 KOS',
-      major: '产品讲解',
-      style: '清晰稳重',
-      content: '产品解读、风险认知',
-      mix: [{ text: '产品解读', cls: 'mw-tag-purple' }],
-      scope: '已分配的 KOS 账号',
-      auth: '待核验',
-    },
-  },
-]
-
-/** 任务中心 */
-export interface TaskRow {
-  id: string
-  no: string
-  title: string
-  subject: string
-  line: Line
-  owner: string
-  stage: string
-  status: string
-  statusCls: string
-  dot: string
-  progress?: number
-  next: string
-  target: string
-}
-
-export const tasks: TaskRow[] = [
-  { id: 'T-1024', no: 'T-1024', title: '基金定投入门', subject: '小林科普', line: 'kos', owner: '陈悦', stage: '剪辑合成', status: '草稿 v2', statusCls: '', dot: '#7c5cd6', next: '继续剪辑', target: '目标60秒' },
-  { id: 'T-1025', no: 'T-1025', title: '市场波动与长期配置', subject: '张经理', line: 'manager', owner: '王敏', stage: '文案生成', status: '待人工审核', statusCls: 'color:#b26a00', dot: '#e69b3c', next: '查看审核', target: '目标60秒' },
-  { id: 'T-1026', no: 'T-1026', title: '城市里的理财常识', subject: '小林科普', line: 'kos', owner: '周宁', stage: '选题生成', status: '候选待选择', statusCls: '', dot: '#3b82f6', next: '选择选题', target: '目标60秒' },
-  { id: 'T-1027', no: 'T-1027', title: '认识基金净值', subject: '小林科普', line: 'kos', owner: '陈悦', stage: '基础视频', status: '生成中 38%', statusCls: '', dot: '#2563eb', next: '查看进度', target: '目标60秒', progress: 38 },
-  { id: 'T-1028', no: 'T-1028', title: '风险与收益的关系', subject: '张经理', line: 'manager', owner: '周宁', stage: '基础视频', status: '保存失败', statusCls: 'color:#c0392b', dot: '#e05252', next: '重试下载', target: '目标60秒' },
-  { id: 'T-1029', no: 'T-1029', title: '如何定期回顾目标', subject: '张经理', line: 'manager', owner: '王敏', stage: '基础视频', status: '状态待确认', statusCls: '', dot: '#9ca3af', next: '查询原任务', target: '目标60秒' },
-]
-
 /** 审核工作台 */
 export interface ReviewItem {
   id: string
@@ -278,8 +140,7 @@ export const reviewQueue: ReviewItem[] = [
       sensitive: '敏感词：未命中',
       conf: 96,
     },
-    copy:
-      '大家好，今天聊聊一个大事儿——央行降准了！降了0.5个百分点，释放了1万亿的长期资金。这对咱们手里的债基是个好消息，因为市场钱多了，债券收益率下行，债基净值就会涨。以富国信用债A为例，它在历次降准后的表现都比较稳健。不过要提醒大家，基金投资有风险，过往业绩不代表未来收益。',
+    copy: '大家好，今天聊聊一个大事儿——央行降准了！降了0.5个百分点，释放了1万亿的长期资金。这对咱们手里的债基是个好消息，因为市场钱多了，债券收益率下行，债基净值就会涨。以富国信用债A为例，它在历次降准后的表现都比较稳健。不过要提醒大家，基金投资有风险，过往业绩不代表未来收益。',
     skillText:
       '基金有风险，投资需谨慎。本材料不构成投资建议，基金过往业绩不代表未来表现，投资者应根据自身风险承受能力谨慎决策。',
   },
@@ -298,10 +159,8 @@ export const reviewQueue: ReviewItem[] = [
       sensitive: '敏感词：未命中',
       conf: 95,
     },
-    copy:
-      '很多朋友问，定投到底是不是稳赚？先把规则讲清楚。定投是定期投入的一种方式，它让投入更有计划，但并不意味着可以避开市场波动。开始之前，先想清楚三件事：这笔钱多久会用、自己能承受多大波动、产品的费率和风险等级。坚持，也要定期回顾目标和资金安排。',
-    skillText:
-      '基金有风险，投资需谨慎。本内容仅为知识科普，不构成投资建议。投资者应根据自身风险承受能力谨慎决策。',
+    copy: '很多朋友问，定投到底是不是稳赚？先把规则讲清楚。定投是定期投入的一种方式，它让投入更有计划，但并不意味着可以避开市场波动。开始之前，先想清楚三件事：这笔钱多久会用、自己能承受多大波动、产品的费率和风险等级。坚持，也要定期回顾目标和资金安排。',
+    skillText: '基金有风险，投资需谨慎。本内容仅为知识科普，不构成投资建议。投资者应根据自身风险承受能力谨慎决策。',
   },
 ]
 
@@ -340,9 +199,33 @@ export const publishContents = [
 ]
 
 export const platformRecords = [
-  { platform: '抖音', icon: '▶', color: '#111827', status: '验证待完成', cls: 'mw-tag-yellow', desc: '需完成账号授权与权限验证', action: '查看验证' },
-  { platform: '小红书', icon: '书', color: '#FF2442', status: '人工待处理', cls: 'mw-tag-yellow', desc: '账号信息需人工核对', action: '查看原因' },
-  { platform: '抖音', icon: '▶', color: '#111827', status: '失败', cls: 'mw-tag-red', desc: '平台返回错误，详情见日志', action: '查看日志' },
+  {
+    platform: '抖音',
+    icon: '▶',
+    color: '#111827',
+    status: '验证待完成',
+    cls: 'mw-tag-yellow',
+    desc: '需完成账号授权与权限验证',
+    action: '查看验证',
+  },
+  {
+    platform: '小红书',
+    icon: '书',
+    color: '#FF2442',
+    status: '人工待处理',
+    cls: 'mw-tag-yellow',
+    desc: '账号信息需人工核对',
+    action: '查看原因',
+  },
+  {
+    platform: '抖音',
+    icon: '▶',
+    color: '#111827',
+    status: '失败',
+    cls: 'mw-tag-red',
+    desc: '平台返回错误，详情见日志',
+    action: '查看日志',
+  },
 ]
 
 /** 数据看板 */
@@ -356,9 +239,39 @@ export const trendData = {
 }
 
 export const contentPerf = [
-  { id: 'a1', title: '基金定投入门', subject: '小林科普 · 员工 KOS', platform: '抖音', node: 'T+1', play: '8,600', interact: '286', finish: '—', hot: false },
-  { id: 'a2', title: '市场波动与长期配置', subject: '张经理 · 经理 IP', platform: '抖音', node: 'T+7', play: '12,400', interact: '408', finish: '—', hot: true },
-  { id: 'a3', title: '认识基金净值', subject: '小林科普 · 员工 KOS', platform: '小红书', node: 'T+1', play: '5,200', interact: '193', finish: '—', hot: false },
+  {
+    id: 'a1',
+    title: '基金定投入门',
+    subject: '小林科普 · 员工 KOS',
+    platform: '抖音',
+    node: 'T+1',
+    play: '8,600',
+    interact: '286',
+    finish: '—',
+    hot: false,
+  },
+  {
+    id: 'a2',
+    title: '市场波动与长期配置',
+    subject: '张经理 · 经理 IP',
+    platform: '抖音',
+    node: 'T+7',
+    play: '12,400',
+    interact: '408',
+    finish: '—',
+    hot: true,
+  },
+  {
+    id: 'a3',
+    title: '认识基金净值',
+    subject: '小林科普 · 员工 KOS',
+    platform: '小红书',
+    node: 'T+1',
+    play: '5,200',
+    interact: '193',
+    finish: '—',
+    hot: false,
+  },
 ]
 
 /** 视频剪辑：字幕段落 */

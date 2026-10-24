@@ -1,6 +1,11 @@
 const rawBase = import.meta.env.VITE_API_BASE || '/api'
 const API_BASE = rawBase.replace(/\/$/, '')
 
+/** 拼出可直接给 <img> / <video> / <audio> 使用的绝对接口地址（走同一 API_BASE） */
+export function apiUrl(path: string): string {
+  return `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`
+}
+
 export type PageResult<T> = {
   items: T[]
   total: number
@@ -20,9 +25,7 @@ export class ApiError extends Error {
   }
 }
 
-type ApiEnvelope<T> =
-  | { ok: true; data: T }
-  | { ok: false; error: { code: string; message: string } }
+type ApiEnvelope<T> = { ok: true; data: T } | { ok: false; error: { code: string; message: string } }
 
 export type QueryValue = string | number | boolean | null | undefined
 
@@ -39,25 +42,47 @@ function buildUrl(path: string, query?: Record<string, QueryValue>) {
   return search ? `${url}?${search}` : url
 }
 
+function normalizedLoginPath(path: string): boolean {
+  return /^\/?auth\/login/.test(path)
+}
+
 function isEnvelope(value: unknown): value is ApiEnvelope<unknown> {
   return typeof value === 'object' && value !== null && 'ok' in value
 }
 
-/** 操作人（D14）；隐私模式等读不到 localStorage 时回落默认值 */
-function readOperator(): string {
+/**
+ * 登录令牌（P0-1）。操作人由服务端从令牌解析，前端不再自报 X-Operator。
+ * 隐私模式等读不到 localStorage 时仍可靠服务端下发的 HttpOnly Cookie 读取媒体文件。
+ */
+const TOKEN_KEY = 'mw_token'
+
+export function readToken(): string | null {
   try {
-    return localStorage.getItem('mw_operator') || 'ops'
+    return localStorage.getItem(TOKEN_KEY)
   } catch {
-    return 'ops'
+    return null
   }
 }
+
+export function writeToken(token: string | null): void {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token)
+    else localStorage.removeItem(TOKEN_KEY)
+  } catch {
+    /* 存储不可用：本次会话内仍可用内存中的登录状态 */
+  }
+}
+
+/** 401 统一出口：由 main.ts 监听后跳转登录页 */
+export const UNAUTHORIZED_EVENT = 'mw:unauthorized'
 
 export async function request<T>(path: string, init: RequestInit = {}, query?: Record<string, QueryValue>): Promise<T> {
   const headers = new Headers(init.headers)
   // 无 body 时不能声明 application/json，否则服务端会报 "Body cannot be empty"
   // FormData 也不能设，需由浏览器自动补 multipart 的 boundary
   if (init.body !== undefined && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
-  headers.set('X-Operator', readOperator())
+  const token = readToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
 
   let response: Response
   let text: string
@@ -74,6 +99,11 @@ export async function request<T>(path: string, init: RequestInit = {}, query?: R
     payload = text ? JSON.parse(text) : undefined
   } catch {
     payload = undefined
+  }
+
+  if (response.status === 401 && !normalizedLoginPath(path)) {
+    writeToken(null)
+    window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT))
   }
 
   if (!response.ok) {

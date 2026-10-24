@@ -363,7 +363,8 @@ function claimsToWords(raw: string): string[] {
     .replace(/[（(][^）)]*[）)]/g, '')
     .replace(/[「『"“《][^」』"”》]*[」』"”》]/g, '')
     .trim()
-  if (core.length >= 2 && core.length <= 12 && core !== src.replace(/[（(][^）)]*[）)]/g, '').trim()) {
+  // 禁用词本身（「稳赚不赔」）去前缀后与原句相同，同样要保留：只有这样最常见的写法才会被匹配
+  if (core.length >= 2 && core.length <= 12) {
     out.push(core)
   }
   return Array.from(new Set(out))

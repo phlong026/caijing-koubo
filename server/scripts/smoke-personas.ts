@@ -10,6 +10,7 @@
  * 覆盖：AC-L1~L5 / AC-I1~I5 / AC-A1~A4 / AC-C1~C6 / AC-V1~V9 / AC-U1~U4 / AC-X1/X2/X4/X5（X3 可选）。
  * 依赖：ffmpeg / ffprobe 在 PATH（素材样例由脚本现场生成）；飞影未配密钥时走 mock（HIFLY_MOCK_POLLS_TO_DONE=2）。
  */
+import { authHeader, initSmokeAuth } from './lib/smoke-auth.js'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import fs from 'node:fs'
@@ -18,6 +19,7 @@ import path from 'node:path'
 
 const pexec = promisify(execFile)
 const BASE = process.env.SMOKE_BASE || 'http://127.0.0.1:8787/api'
+await initSmokeAuth(BASE)
 const KEEP = process.env.SMOKE_KEEP === '1'
 const WITH_LLM = process.env.SMOKE_WITH_LLM === '1'
 
@@ -50,7 +52,7 @@ async function req<T = any>(
   body?: unknown,
   headers: Record<string, string> = {},
 ): Promise<{ status: number; data: T; raw: any }> {
-  const h: Record<string, string> = { 'X-Operator': 'smoke', ...headers }
+  const h: Record<string, string> = { ...authHeader(method, path), ...headers }
   if (body !== undefined) h['Content-Type'] = 'application/json'
   const res = await fetch(`${BASE}${path}`, {
     method,
@@ -70,7 +72,7 @@ async function reqMultipart<T = any>(
   const fd = new FormData()
   for (const [k, v] of Object.entries(fields)) fd.append(k, v)
   fd.append('file', new Blob([file.buf], { type: file.type }), file.filename)
-  const res = await fetch(`${BASE}${path}`, { method: 'POST', headers: { 'X-Operator': 'smoke' }, body: fd })
+  const res = await fetch(`${BASE}${path}`, { method: 'POST', headers: authHeader('POST', path), body: fd })
   const raw: any = await res.json().catch(() => ({}))
   return { status: res.status, data: raw?.data, raw }
 }
@@ -158,7 +160,7 @@ async function main(): Promise<void> {
   const stale = await req('GET', '/personas?includeDisabled=1&includeArchived=1&keyword=' + encodeURIComponent('冒烟测试人物'))
   const staleItems: any[] = stale.data?.items ?? []
   for (const p of staleItems) {
-    if (p.status !== 'archived') await req('POST', `/personas/${p.id}/archive`, { force: true })
+    if (p.status !== 'archived') await req('POST', `/personas/${p.id}/archive`, { force: true }, authHeader('POST', '/', 'admin'))
   }
   info(`归档历史测试人物 ${staleItems.length} 个`)
 
@@ -233,6 +235,12 @@ async function main(): Promise<void> {
   const readinessBefore = await req('GET', `/personas/${idA}/readiness?purpose=copy`)
   check('授权待核验时 readiness(copy) 不过', readinessBefore.data?.pass === false, readinessBefore.data?.checks)
 
+  // P0-1：运营不能核验授权（角色）；上传人不能核验自己上传的材料（四眼）
+  const opsVerify = await req('POST', `/persona-authorizations/${authId}/verify`, { decision: 'verified' }, authHeader('POST', '/', 'ops'))
+  check('运营核验授权被拒（403）', opsVerify.status === 403, opsVerify.raw)
+  const selfVerify = await req('POST', `/persona-authorizations/${authId}/verify`, { decision: 'verified' }, authHeader('POST', '/', 'admin'))
+  check('管理员可核验他人上传的授权（四眼仅限上传人）', selfVerify.status === 200, selfVerify.raw)
+  await req('POST', `/persona-authorizations/${authId}/verify`, { decision: 'rejected', reason: '冒烟：重置为驳回后再由审核员核验' }, authHeader('POST', '/', 'admin'))
   const verified = await req('POST', `/persona-authorizations/${authId}/verify`, { decision: 'verified' })
   check('核验授权 200', verified.status === 200, verified.raw)
   const readinessAfter = await req('GET', `/personas/${idA}/readiness?purpose=copy`)
@@ -297,8 +305,14 @@ async function main(): Promise<void> {
   const setCover = await req('POST', `/persona-assets/${photoId}/set-cover`)
   check('设置封面 200', setCover.status === 200, setCover.raw)
 
-  const thumb = await fetch(`${BASE}/persona-assets/${photoId}/file?variant=thumb`, { headers: { 'X-Operator': 'smoke' } })
-  check('缩略图可流式读取（200 + 图片类型）', thumb.status === 200 && (thumb.headers.get('content-type') ?? '').startsWith('image/'), thumb.status)
+  const thumb = await fetch(`${BASE}/persona-assets/${photoId}/file?variant=thumb`, { headers: authHeader('GET', '/') })
+  const thumbBytes = Buffer.from(await thumb.arrayBuffer())
+  check('缩略图可流式读取（200 + 图片类型 + 有真实字节）', thumb.status === 200 && (thumb.headers.get('content-type') ?? '').startsWith('image/') && thumbBytes.length > 100 && thumbBytes[0] === 0xff && thumbBytes[1] === 0xd8, { status: thumb.status, bytes: thumbBytes.length })
+  // P2-4：Range（含末尾范围）与越界 416
+  const tail = await fetch(`${BASE}/persona-assets/${photoId}/file?variant=thumb`, { headers: { ...authHeader('GET', '/'), Range: 'bytes=-16' } })
+  check('末尾范围 bytes=-16 返回 206 且 16 字节', tail.status === 206 && (await tail.arrayBuffer()).byteLength === 16, tail.status)
+  const beyond = await fetch(`${BASE}/persona-assets/${photoId}/file?variant=thumb`, { headers: { ...authHeader('GET', '/'), Range: 'bytes=999999999-' } })
+  check('越界范围返回 416', beyond.status === 416, beyond.status)
 
   const dupAsset = await reqMultipart(`/personas/${idA}/assets`, { kind: 'photo' }, {
     buf: photo,
@@ -306,6 +320,12 @@ async function main(): Promise<void> {
     type: 'image/jpeg',
   })
   check('同内容重复上传走幂等去重（AC-A4）', dupAsset.data?.deduplicated === true && dupAsset.data?.assetId === photoId, dupAsset.data)
+
+  // P1-1：字段在前、文件超限时必须立即 413，不能挂住请求
+  const oversize = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(11 * 1024 * 1024)])
+  const t0 = Date.now()
+  const tooLarge = await reqMultipart(`/personas/${idA}/assets`, { kind: 'photo' }, { buf: oversize, filename: 'big.jpg', type: 'image/jpeg' })
+  check('超限照片立即返回 413 ASSET_TOO_LARGE（P1-1）', tooLarge.status === 413 && tooLarge.raw?.error?.code === 'ASSET_TOO_LARGE' && Date.now() - t0 < 10_000, { status: tooLarge.status, ms: Date.now() - t0 })
 
   /* [6] 分身克隆全链路（AC-C1~C6） */
   console.log('[6] 分身克隆全链路')
@@ -427,8 +447,9 @@ async function main(): Promise<void> {
   check('声音带厂商标识', typeof voiceReady?.vendorVoiceId === 'string' && voiceReady.vendorVoiceId.startsWith('mock_voice'), voiceReady?.vendorVoiceId)
   check('声音带归档试听（demo_key）', !!voiceReady?.demoKey || !!voiceReady?.demo_key, voiceReady?.demoKey)
 
-  const demo = await fetch(`${BASE}/persona-voices/${voiceId}/demo`, { headers: { 'X-Operator': 'smoke' } })
-  check('厂商试听可播放（200 + audio）', demo.status === 200 && (demo.headers.get('content-type') ?? '').startsWith('audio/'), demo.status)
+  const demo = await fetch(`${BASE}/persona-voices/${voiceId}/demo`, { headers: authHeader('GET', '/') })
+  const demoBytes = Buffer.from(await demo.arrayBuffer())
+  check('厂商试听可播放（200 + audio + 有真实字节）', demo.status === 200 && (demo.headers.get('content-type') ?? '').startsWith('audio/') && demoBytes.length > 1000, { status: demo.status, bytes: demoBytes.length })
 
   const confirm = await req('POST', `/persona-voices/${voiceId}/confirm`)
   check('确认声音（FR-V5）200', confirm.status === 200 && confirm.data?.confirmed === true, confirm.raw)
@@ -449,8 +470,9 @@ async function main(): Promise<void> {
     return g.data?.status === 'ready' ? g.data : null
   })
   check('试听 ready 且可播放（AC-V7）', previewReady?.status === 'ready' && !!previewReady?.audioKey, previewReady?.status)
-  const previewFile = await fetch(`${BASE}/persona-voice-previews/${previewId}/file`, { headers: { 'X-Operator': 'smoke' } })
-  check('试听音频可读取', previewFile.status === 200 && (previewFile.headers.get('content-type') ?? '').startsWith('audio/'), previewFile.status)
+  const previewFile = await fetch(`${BASE}/persona-voice-previews/${previewId}/file`, { headers: authHeader('GET', '/') })
+  const previewBytes = Buffer.from(await previewFile.arrayBuffer())
+  check('试听音频可读取（有真实字节）', previewFile.status === 200 && (previewFile.headers.get('content-type') ?? '').startsWith('audio/') && previewBytes.length > 1000, { status: previewFile.status, bytes: previewBytes.length })
 
   const previewCache = await req('POST', `/persona-voices/${voiceId}/preview`, { text: '大家好，欢迎来到我的频道，今天聊聊家庭理财。' })
   check('同参数同文本试听走缓存（AC-V7）', previewCache.data?.cached === true, previewCache.data)
@@ -486,6 +508,16 @@ async function main(): Promise<void> {
   check('未就绪人物 production-profile 409 PERSONA_NOT_READY', profileB.status === 409 && profileB.raw?.error?.code === 'PERSONA_NOT_READY', profileB.raw)
   check('409 带 checks 明细', Array.isArray(profileB.raw?.error?.details?.checks), profileB.raw?.error?.details)
 
+  // mixcut 取用（视频创作 V0 前置）：只要声音、不要分身
+  const profileMixA = await req('GET', `/personas/${idA}/production-profile?purpose=mixcut`)
+  check(
+    'mixcut 取用 200：无分身、有声音',
+    profileMixA.status === 200 && profileMixA.data?.avatar === null && !!profileMixA.data?.voice?.vendorVoiceId,
+    profileMixA.raw,
+  )
+  const profileMixB = await req('GET', `/personas/${idB}/production-profile?purpose=mixcut`)
+  check('素人 mixcut 取用：分身与声音均可空（M3 公共音色兜底）', profileMixB.status === 200 && profileMixB.data?.avatar === null && profileMixB.data?.voice === null, profileMixB.raw)
+
   /* [9] 对接文案工坊（AC-X2） */
   console.log('[9] 对接文案工坊（人物校验）')
   const copyOk = await req('POST', '/copy', { source: 'manual', title: '冒烟文案-正常', personaIds: [idB] })
@@ -495,7 +527,7 @@ async function main(): Promise<void> {
   check('停用人物创建文案被拒（409）', copyDisabled.status === 409, copyDisabled.raw)
   check('拒绝消息含「已停用」', String(copyDisabled.raw?.error?.message ?? '').includes('已停用'), copyDisabled.raw?.error?.message)
   await req('POST', `/personas/${idB}/enable`)
-  await req('POST', `/personas/${idB}/archive`, { force: true })
+  await req('POST', `/personas/${idB}/archive`, { force: true }, authHeader('POST', '/', 'admin'))
   const copyArchived = await req('POST', '/copy', { source: 'manual', title: '冒烟文案-归档', personaIds: [idB] })
   check('归档人物创建文案被拒（PERSONA_ARCHIVED）', copyArchived.status === 409 && copyArchived.raw?.error?.code === 'PERSONA_ARCHIVED', copyArchived.raw)
   const missing = await req('POST', '/copy', { source: 'manual', title: '冒烟文案-不存在', personaIds: ['pa_nonexistent'] })
@@ -529,17 +561,14 @@ async function main(): Promise<void> {
   check('进行中克隆阻断归档 409 PERSONA_IN_USE', blocked.status === 409 && blocked.raw?.error?.code === 'PERSONA_IN_USE', blocked.raw)
   check('阻断原因含「进行中的分身制作」', String(blocked.raw?.error?.message ?? '').includes('分身'), blocked.raw?.error?.message)
 
-  // 推进到终态后允许归档
-  await waitFor('分身乙终态', 120_000, 2000, async () => {
+  // P0-2：不手动 refresh，只靠后台 next_poll_at + poll_sweep 自动推进到终态
+  const avatarBDone = await waitFor('分身乙自动轮询到终态', 120_000, 2000, async () => {
     const r = await req('GET', `/persona-avatars/${avatarBId}`)
     const s = r.data?.status
-    if (s === 'running') {
-      await req('POST', `/persona-avatars/${avatarBId}/refresh`)
-      return null
-    }
     if (s === 'ready' || s === 'failed' || s === 'uncertain') return r.data
-    return false
+    return null
   })
+  check('不手动刷新也能自动制作完成（P0-2）', avatarBDone?.status === 'ready', avatarBDone?.status)
   // 终态后可能仍非默认，直接删掉再归档（默认分身甲不受影响）
   const avatarB2 = await req('GET', `/persona-avatars/${avatarBId}`)
   if (avatarB2.data?.status === 'ready') await req('DELETE', `/persona-avatars/${avatarBId}`)
@@ -582,7 +611,7 @@ async function main(): Promise<void> {
     check('文案生成成功', genDone?.status === 'done' || genDone?.status === 'partial', genDone)
     check('生成记录带 personaVersionId（AC-X3）', !!genDone?.personaVersionId, genDone?.personaVersionId)
     check('生成记录回显版本号', typeof genDone?.personaVersionNo === 'number', genDone?.personaVersionNo)
-    if (!KEEP) await req('POST', `/personas/${idC}/archive`, { force: true })
+    if (!KEEP) await req('POST', `/personas/${idC}/archive`, { force: true }, authHeader('POST', '/', 'admin'))
   } else {
     info('跳过 AC-X3（SMOKE_WITH_LLM=1 可开启，走真实 LLM 约 1 分钟）')
   }

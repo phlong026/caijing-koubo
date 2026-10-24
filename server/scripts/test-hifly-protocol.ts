@@ -28,6 +28,8 @@ import {
   type HiflyClient,
 } from '../src/integrations/hifly/client.js'
 import { clearHiflyInjections, getMockHiflyClient, injectHifly } from '../src/integrations/hifly/mock.js'
+import { buildVendorTitle } from '../src/modules/personas/clone/short-ref.js'
+import { config } from '../src/config.js'
 import { isApiError } from '../src/errors.js'
 
 // 独立临时库：让 api_call_log 落库成功，避免「数据库未初始化」噪音
@@ -107,6 +109,9 @@ async function main(): Promise<void> {
     if (req.url === PATHS.voiceCreate) {
       return json(res, 200, { code: 0, message: 'ok', data: { task_id: 'task_vc_1' } })
     }
+    if (req.url === PATHS.videoCreateByTts) {
+      return json(res, 200, { code: 0, message: 'ok', data: { task_id: 'task_v_1' } })
+    }
     if (req.url === PATHS.avatarTask) {
       return json(res, 200, { code: '0', data: { task_id: 'task_av_1', status: 3, avatar_id: 'av_x1' } })
     }
@@ -155,6 +160,24 @@ async function main(): Promise<void> {
   await check('TTS 文本 >10000 字客户端直接拒绝', async () => {
     await assert.rejects(
       () => c1.createAudioByTts({ voiceId: 'v1', text: 'x'.repeat(MAX_TTS_CHARS + 1) }),
+      (e: unknown) => isApiError(e) && e.code === 'HIFLY_BAD_REQUEST',
+    )
+  })
+
+  // ── 视频创作模块（P5：V14 st_show=0 与短引用标题断言）──
+  await check('create_by_tts：st_show=0 且标题保留短引用（V14）', async () => {
+    const longTitle = '一二三四五六七八九十一二三四五六七八九十'
+    await c1.createVideoByTts({ title: buildVendorTitle(longTitle, 'ABC234'), avatarId: 'av_1', voiceId: 'vc_1', text: '大家好', stShow: 0 })
+    const sent = srv1.received.filter((x) => x.path === PATHS.videoCreateByTts).at(-1)!
+    assert.equal(sent.body.st_show, 0)
+    assert.equal(sent.body.aigc_flag, config.hifly.aigcFlag)
+    assert.ok(sent.body.title.length <= 20, `标题应 ≤20 字，实际 ${sent.body.title}`)
+    assert.ok(sent.body.title.endsWith('-ABC234'), '短引用必须保留在标题尾部（uncertain 核对依据）')
+  })
+
+  await check('字幕参数白名单：stShow 非 0 直接拒绝', async () => {
+    await assert.rejects(
+      () => c1.createVideoByTts({ title: 't', avatarId: 'av_1', voiceId: 'vc_1', text: '大家好', stShow: 1 as 0 }),
       (e: unknown) => isApiError(e) && e.code === 'HIFLY_BAD_REQUEST',
     )
   })

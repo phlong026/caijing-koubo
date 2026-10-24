@@ -1,11 +1,10 @@
-import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { getDb } from '../../../db/index.js'
 import { jenc } from '../../../lib/util.js'
 import { toDb, utcNow } from '../../../lib/time.js'
 import { logger } from '../../../log.js'
 import { paths } from '../../../config.js'
-import { putObjectFromFile, getObjectStream, isOssEnabled } from '../../../integrations/aliyun-oss/client.js'
+import { downloadObjectToFile, putObjectFromFile } from '../../../integrations/aliyun-oss/client.js'
 import {
   extractCoverFrame,
   makeThumb,
@@ -30,20 +29,7 @@ async function fetchOriginal(asset: PersonaAsset): Promise<string> {
   await ensureTempDir()
   const ext = path.extname(asset.storageKey) || '.bin'
   const dest = path.join(paths.tempDir, `${asset.id}_orig${ext}`)
-  if (isOssEnabled()) {
-    const res = await getObjectStream(asset.storageKey)
-    if (!res) throw new Error('存储对象不存在或读取失败')
-    const chunks: Buffer[] = []
-    await new Promise<void>((resolve, reject) => {
-      ;(res.stream as NodeJS.ReadableStream).on('data', (c: Buffer) => chunks.push(c))
-      ;(res.stream as NodeJS.ReadableStream).on('end', () => resolve())
-      ;(res.stream as NodeJS.ReadableStream).on('error', reject)
-    })
-    await fsp.writeFile(dest, Buffer.concat(chunks))
-  } else {
-    const local = path.join(paths.dataDir, 'oss', asset.storageKey)
-    await fsp.copyFile(local, dest)
-  }
+  await downloadObjectToFile(asset.storageKey, dest)
   return dest
 }
 

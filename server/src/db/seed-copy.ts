@@ -1,6 +1,7 @@
 import type { Db } from './index.js'
 import { upsert } from './index.js'
 import { toDb, utcNow } from '../lib/time.js'
+import { jdec } from '../lib/util.js'
 import { DURATION_TIERS } from '../modules/copy/constants.js'
 
 /**
@@ -221,14 +222,10 @@ export async function seedPersonaExtensions(db: Db): Promise<void> {
     },
   }
   for (const [id, patch] of Object.entries(ext)) {
-    const row = await db.get<{ ip_profile: string | null }>('SELECT `ip_profile` FROM `persona` WHERE `id` = ?', [id])
+    const row = await db.get<{ ip_profile: unknown }>('SELECT `ip_profile` FROM `persona` WHERE `id` = ?', [id])
     if (!row) continue
-    let ip: Record<string, unknown> = {}
-    try {
-      ip = row.ip_profile ? (JSON.parse(row.ip_profile) as Record<string, unknown>) : {}
-    } catch {
-      ip = {}
-    }
+    // MySQL 的 JSON 列已被驱动解析成对象；这里若再 JSON.parse 会抛错并把既有档案当空对象覆盖
+    const ip: Record<string, unknown> = jdec<Record<string, unknown>>(row.ip_profile, {})
     let changed = false
     for (const [k, v] of Object.entries(patch)) {
       if (ip[k] === undefined || ip[k] === null || ip[k] === '') {

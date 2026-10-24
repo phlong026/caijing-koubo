@@ -10,17 +10,11 @@ import { redis, queueStats, getQueueBackend } from './queue/index.js'
 import { registerRoutes } from './routes.js'
 import { toDb, utcNow } from './lib/time.js'
 import { UPLOAD_LIMITS } from './modules/personas/types.js'
+import { registerAuthGuard } from './modules/auth/guard.js'
 
 /** 统一成功响应结构：{ ok: true, data } */
 export function ok<T>(data: T): { ok: true; data: T } {
   return { ok: true as const, data }
-}
-
-/** D14：操作人取值 —— 请求头 X-Operator，缺省 ops */
-export function operatorOf(req: FastifyRequest): string {
-  const raw = req.headers['x-operator']
-  const v = Array.isArray(raw) ? raw[0] : raw
-  return (v && String(v).trim()) || config.defaultOperator
 }
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -36,7 +30,11 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
   })
 
-  await app.register(cors, { origin: true, credentials: false })
+  // P0-1：跨域只放行白名单来源（生产缺省为空 = 只允许同源访问）
+  await app.register(cors, {
+    origin: config.corsOrigins.length ? config.corsOrigins : false,
+    credentials: true,
+  })
 
   // P0-3：文章上传走 multipart；单文件 + 大小上限由各路由用 limits 覆盖
   // 注意：@fastify/multipart 的插件级 limits 会覆盖每次调用的 limits（deepmergeAll 后者胜），
@@ -52,9 +50,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     throwFileSizeLimit: false,
   })
 
-  app.addHook('onRequest', async (req) => {
-    req.operator = operatorOf(req)
-  })
+  // P0-1：登录与角色守卫（操作人取自令牌，不再信任请求头 X-Operator）
+  registerAuthGuard(app)
 
   app.addHook('onResponse', async (req, reply) => {
     if (req.url === '/health' || req.url === '/api/health') return
@@ -64,7 +61,10 @@ export async function buildApp(): Promise<FastifyInstance> {
     )
   })
 
-  app.setErrorHandler(async (error, _req, reply: FastifyReply) => {
+  app.setErrorHandler(async (error, req, reply: FastifyReply) => {
+    // P1-1：上传超限等在请求体读完之前就报错时，服务端会关闭该连接；
+    // 显式告知客户端不要复用，否则下一个请求会在同一连接上遇到 ECONNRESET
+    if (!req.raw.complete) reply.header('Connection', 'close')
     if (isApiError(error)) {
       return reply.status(error.status).send({
         ok: false,
@@ -128,6 +128,10 @@ export async function buildApp(): Promise<FastifyInstance> {
     // 队列统计不再依赖 redisUp：内存后端下 queues 依然有意义（waiting/active/completed/failed）
     const queues = await queueStats().catch(() => ({}))
     const queueBackend = getQueueBackend()
+    // AC-0.5：视频创作段的 ffmpeg/ffprobe 与飞影 / ASR 配置状态（脱敏，失败不阻断健康判定）
+    const video = await import('./modules/video/routes.js')
+      .then((m) => m.videoHealth())
+      .catch(() => null)
     // 判定口径：**DB 可用即视为服务可用**（200）。
     // Redis 只影响「队列后端选型」：Redis 可用走 BullMQ（持久、跨进程），
     // 不可用则切进程内队列（memory）——异步链路仍可跑，但不持久化、仅单实例消费。
@@ -143,6 +147,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         redis: { up: redisUp, host: config.redis.host, port: config.redis.port },
         queue: { backend: queueBackend, stats: queues },
         queues,
+        video,
         ...(degraded
           ? {
               hint:

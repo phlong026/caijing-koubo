@@ -9,6 +9,7 @@ export type ErrorCode =
   | 'domain_not_allowed'
   | 'too_long'
   | 'upstream_error'
+  | 'rate_limited'
   | 'internal'
   // ── 文案工坊（任务书 §5.2）──
   | 'COPY_LOCKED' // 审核中写操作
@@ -48,6 +49,56 @@ export type ErrorCode =
   | 'HIFLY_COMPLIANCE_REJECTED'
   | 'HIFLY_BAD_REQUEST'
   | 'HIFLY_UNAVAILABLE'
+  // ── 视频创作（任务书 §6.3）──
+  | 'VIDEO_MODE_NOT_ALLOWED' // 素人线口播（A5）
+  | 'VIDEO_PRECHECK_FAILED' // data 带 checks（含人物库 readiness 项）
+  | 'VIDEO_AVATAR_UNAVAILABLE' // 所选分身不属于该人物或非 ready
+  | 'VIDEO_PERSONA_CHANGED' // 提交前复核不一致（V7）
+  | 'VIDEO_TEXT_TOO_LONG' // >10000 字或预估 >180 秒
+  | 'VIDEO_JOB_ACTIVE' // 同 copy 已有进行中任务
+  | 'VIDEO_JOB_LIMIT' // 单 copy 版本上限
+  | 'VIDEO_NOT_READY' // 基础视频未完成，取用被拒
+  | 'VIDEO_ENGINE_UNAVAILABLE' // 飞影未配置且非 MOCK
+  | 'VIDEO_VENDOR_REJECTED' // 飞影业务码拒绝，data 带 vendorCode
+  | 'VIDEO_SUBMISSION_UNKNOWN' // 提交结果未知（V4）
+  | 'VIDEO_POLL_TIMEOUT' // 轮询超窗（2 小时转人工）
+  | 'VIDEO_SAVE_FAILED' // 已出片但下载/校验/入库失败
+  | 'VIDEO_RESULT_URL_BLOCKED' // 结果地址未过防 SSRF 校验
+  | 'VIDEO_STREAM_MISSING' // 缺视频/音频流
+  | 'VIDEO_DIMENSIONS_INVALID' // 规格不符
+  | 'VIDEO_DURATION_INVALID' // 时长校验不过
+  | 'MEDIA_EMPTY' // 媒体为空
+  | 'MATERIAL_PACK_EMPTY' // 素材包无可用素材
+  // ── 发布管理（任务书 §6.3）──
+  | 'PLATFORM_LINE_FORBIDDEN' // 线×平台矩阵越权（PB1）
+  | 'ACCOUNT_NOT_FOUND'
+  | 'ACCOUNT_IN_USE' // 有进行中发布 / 被人物绑定引用（FR-A4）
+  | 'ACCOUNT_NOT_ACTIVE' // 账号非 active 不可发布
+  | 'PUBLISH_RATE_LIMITED' // 每账号每日发布上限（PB8）
+  | 'PUBLISH_CONTEXT_BUSY' // 上下文创建失败（仅浏览器启动异常场景）
+  | 'PUBLISH_PLAN_NOT_FOUND'
+  | 'PUBLISH_PLAN_NOT_CANCELLABLE'
+  | 'PUBLISH_LOG_NOT_FOUND'
+  | 'PUBLISH_LOG_NOT_RETRYABLE' // 当前状态不允许重发 / 标记
+  | 'PUBLISH_NOT_CONFIRMED' // 引擎仍在确认窗口，不可重发
+  | 'REVIEW_REQUIRED' // 实质修改未经审核确认（FR-R2）
+  | 'LOGIN_SESSION_EXPIRED' // 登录会话已过期 / 失败
+  | 'LOGIN_QR_FAILED' // 二维码获取失败
+  // ── 视频剪辑（任务书 §6.3）──
+  | 'CUT_RISK_LOCKED' // 风险提示段字幕不可编辑（FR-C3）
+  | 'CUT_TEXT_TOO_LONG' // 单段字幕文本超长（FR-C3）
+  | 'CUT_STYLE_INVALID' // 字幕样式超出白名单范围（FR-S2）
+  | 'CUT_RENDER_BUSY' // 同 base 已有渲染中版本（FR-C4）
+  | 'CUT_RENDER_TIMEOUT' // rendering 卡死 sweep 兜底（FR-J3）
+  | 'CUT_NOT_DRAFT' // 草稿不存在 / 状态不允许该操作
+  | 'CUT_NOT_COMPLETED' // 成片未渲染完成，不允许提交复审（FR-V1）
+  | 'CUT_RISK_TEXT_EMPTY' // 开启风险尾页但文案为空（FR-K1）
+  | 'CUT_ENGINE_UNAVAILABLE' // 环境缺 libass/drawtext 且未开 MOCK_FALLBACK（EC2）
+  | 'BGM_NOT_FOUND' // BGM 不存在（FR-B1）
+  | 'BGM_IN_USE' // BGM 被成片版本引用，不可删除（FR-B3）
+  | 'FINAL_NOT_READY' // 成片不满足发布取用条件（FR-X1：未渲染/未过审/已实质修改）
+  // ── 任务中心（任务书 §6.2）──
+  | 'TASK_NOT_FOUND' // copy 不存在或已归档（只读聚合视图，不建任务主表）
 
 export class ApiError extends Error {
   readonly code: ErrorCode
@@ -66,6 +117,7 @@ export class ApiError extends Error {
 export const err = {
   badRequest: (msg: string, details?: unknown) => new ApiError('bad_request', msg, 400, details),
   notFound: (msg = '对象不存在') => new ApiError('not_found', msg, 404),
+  unauthorized: (msg = '请先登录') => new ApiError('unauthorized', msg, 401),
   forbidden: (msg = '无权限') => new ApiError('forbidden', msg, 403),
   conflict: (msg: string, details?: unknown) => new ApiError('conflict', msg, 409, details),
   invalidState: (msg: string, details?: unknown) => new ApiError('invalid_state', msg, 409, details),
@@ -73,6 +125,7 @@ export const err = {
     new ApiError('domain_not_allowed', msg, 400, details),
   tooLong: (msg: string, details?: unknown) => new ApiError('too_long', msg, 413, details),
   upstream: (msg: string, details?: unknown) => new ApiError('upstream_error', msg, 502, details),
+  rateLimited: (msg = '操作过于频繁，请稍后再试', details?: unknown) => new ApiError('rate_limited', msg, 429, details),
   internal: (msg = '服务内部错误') => new ApiError('internal', msg, 500),
 
   /* ── 文案工坊专属错误码（§5.2）───────────────────────────────── */
@@ -144,6 +197,94 @@ export const err = {
   hiflyBadRequest: (msg: string, details?: unknown) => new ApiError('HIFLY_BAD_REQUEST', msg, 400, details),
   hiflyUnavailable: (msg = '飞影服务暂不可用', details?: unknown) =>
     new ApiError('HIFLY_UNAVAILABLE', msg, 502, details),
+
+  /* ── 视频创作专属错误码（任务书 §6.3）────────────────────────────── */
+  videoModeNotAllowed: (msg = '素人矩阵不使用数字人口播，请改用素材混剪', details?: unknown) =>
+    new ApiError('VIDEO_MODE_NOT_ALLOWED', msg, 409, details),
+  videoPrecheckFailed: (msg = '配置检查未通过，请先处理红叉项', details?: unknown) =>
+    new ApiError('VIDEO_PRECHECK_FAILED', msg, 409, details),
+  videoAvatarUnavailable: (msg = '所选分身不可用（不属于该人物或未就绪）', details?: unknown) =>
+    new ApiError('VIDEO_AVATAR_UNAVAILABLE', msg, 409, details),
+  videoPersonaChanged: (msg = '人物形象或声音在排队期间被修改，已停止提交；请重新生成', details?: unknown) =>
+    new ApiError('VIDEO_PERSONA_CHANGED', msg, 409, details),
+  videoTextTooLong: (msg = '口播文本超出上限', details?: unknown) =>
+    new ApiError('VIDEO_TEXT_TOO_LONG', msg, 413, details),
+  videoJobActive: (msg = '该文案已有进行中的视频任务', details?: unknown) =>
+    new ApiError('VIDEO_JOB_ACTIVE', msg, 409, details),
+  videoJobLimit: (msg = '该文案的基础视频版本数已达上限，请先归档旧版本', details?: unknown) =>
+    new ApiError('VIDEO_JOB_LIMIT', msg, 409, details),
+  videoNotReady: (msg = '基础视频尚未完成', details?: unknown) =>
+    new ApiError('VIDEO_NOT_READY', msg, 409, details),
+  videoEngineUnavailable: (msg = '数字人引擎不可用（飞影未配置且未开启 MOCK）', details?: unknown) =>
+    new ApiError('VIDEO_ENGINE_UNAVAILABLE', msg, 503, details),
+  videoVendorRejected: (msg: string, details?: unknown) =>
+    new ApiError('VIDEO_VENDOR_REJECTED', msg, 422, details),
+  videoSubmissionUnknown: (msg = '提交结果待确认，重新生成可能产生额外费用', details?: unknown) =>
+    new ApiError('VIDEO_SUBMISSION_UNKNOWN', msg, 409, details),
+  videoPollTimeout: (msg = '数字人服务任务超过自动轮询窗口，已转入人工核对', details?: unknown) =>
+    new ApiError('VIDEO_POLL_TIMEOUT', msg, 409, details),
+  videoSaveFailed: (msg = '视频已生成，但保存失败，请重试下载', details?: unknown) =>
+    new ApiError('VIDEO_SAVE_FAILED', msg, 409, details),
+  videoResultUrlBlocked: (msg = '结果视频地址未通过安全校验，已拒绝下载', details?: unknown) =>
+    new ApiError('VIDEO_RESULT_URL_BLOCKED', msg, 502, details),
+  videoStreamMissing: (msg = '成片缺少视频或音频流', details?: unknown) =>
+    new ApiError('VIDEO_STREAM_MISSING', msg, 502, details),
+  videoDimensionsInvalid: (msg = '成片规格不符（应为 1080×1920 竖屏）', details?: unknown) =>
+    new ApiError('VIDEO_DIMENSIONS_INVALID', msg, 502, details),
+  videoDurationInvalid: (msg = '成片时长校验未通过', details?: unknown) =>
+    new ApiError('VIDEO_DURATION_INVALID', msg, 502, details),
+  mediaEmpty: (msg = '媒体文件为空或不可读', details?: unknown) => new ApiError('MEDIA_EMPTY', msg, 400, details),
+  materialPackEmpty: (msg = '素材包没有可用素材，请先导入', details?: unknown) =>
+    new ApiError('MATERIAL_PACK_EMPTY', msg, 409, details),
+
+  /* ── 发布管理专属错误码（任务书 §6.3）────────────────────────────── */
+  platformLineForbidden: (msg = '该生产线不可发布到此平台', details?: unknown) =>
+    new ApiError('PLATFORM_LINE_FORBIDDEN', msg, 409, details),
+  accountNotFound: (msg = '平台账号不存在') => new ApiError('ACCOUNT_NOT_FOUND', msg, 404),
+  accountInUse: (msg = '账号有进行中的发布或被人物绑定引用，无法删除', details?: unknown) =>
+    new ApiError('ACCOUNT_IN_USE', msg, 409, details),
+  accountNotActive: (msg = '账号未就绪（未登录 / 已过期 / 已停用），不能用于发布', details?: unknown) =>
+    new ApiError('ACCOUNT_NOT_ACTIVE', msg, 409, details),
+  publishRateLimited: (msg = '该账号今日发布数已达上限', details?: unknown) =>
+    new ApiError('PUBLISH_RATE_LIMITED', msg, 409, details),
+  publishContextBusy: (msg = '发布浏览器上下文创建失败，请稍后重试', details?: unknown) =>
+    new ApiError('PUBLISH_CONTEXT_BUSY', msg, 503, details),
+  publishPlanNotFound: (msg = '发布计划不存在') => new ApiError('PUBLISH_PLAN_NOT_FOUND', msg, 404),
+  publishPlanNotCancellable: (msg = '当前状态的发布计划不可取消', details?: unknown) =>
+    new ApiError('PUBLISH_PLAN_NOT_CANCELLABLE', msg, 409, details),
+  publishLogNotFound: (msg = '发布记录不存在') => new ApiError('PUBLISH_LOG_NOT_FOUND', msg, 404),
+  publishLogNotRetryable: (msg = '当前状态的发布记录不可执行此操作', details?: unknown) =>
+    new ApiError('PUBLISH_LOG_NOT_RETRYABLE', msg, 409, details),
+  publishNotConfirmed: (msg = '发布仍在确认中，请等待结果或使用重新检测', details?: unknown) =>
+    new ApiError('PUBLISH_NOT_CONFIRMED', msg, 409, details),
+  reviewRequired: (msg = '标题或封面有实质修改，需审核确认后才能发布', details?: unknown) =>
+    new ApiError('REVIEW_REQUIRED', msg, 409, details),
+  loginSessionExpired: (msg = '登录会话已过期，请重新发起扫码', details?: unknown) =>
+    new ApiError('LOGIN_SESSION_EXPIRED', msg, 409, details),
+  loginQrFailed: (msg = '获取登录二维码失败，请重试', details?: unknown) =>
+    new ApiError('LOGIN_QR_FAILED', msg, 502, details),
+  // ── 视频剪辑 ──
+  cutRiskLocked: (msg = '风险提示段为合规话术，不可编辑', details?: unknown) =>
+    new ApiError('CUT_RISK_LOCKED', msg, 400, details),
+  cutTextTooLong: (msg = '单段字幕文本超长', details?: unknown) => new ApiError('CUT_TEXT_TOO_LONG', msg, 400, details),
+  cutStyleInvalid: (msg = '字幕样式超出允许范围', details?: unknown) => new ApiError('CUT_STYLE_INVALID', msg, 400, details),
+  cutRenderBusy: (msg = '该视频已有渲染中的成片版本，请等待完成后再试', details?: unknown) =>
+    new ApiError('CUT_RENDER_BUSY', msg, 409, details),
+  cutNotDraft: (msg = '配置草稿不存在或状态不允许该操作', details?: unknown) =>
+    new ApiError('CUT_NOT_DRAFT', msg, 409, details),
+  cutNotCompleted: (msg = '成片尚未渲染完成，不能提交复审', details?: unknown) =>
+    new ApiError('CUT_NOT_COMPLETED', msg, 409, details),
+  cutRiskTextEmpty: (msg = '该文案没有风险提示内容，无法生成风险尾页', details?: unknown) =>
+    new ApiError('CUT_RISK_TEXT_EMPTY', msg, 400, details),
+  cutEngineUnavailable: (msg = '渲染环境缺少字幕能力（ffmpeg 需带 libass/freetype），且未开启 MOCK_FALLBACK', details?: unknown) =>
+    new ApiError('CUT_ENGINE_UNAVAILABLE', msg, 503, details),
+  bgmNotFound: (msg = 'BGM 不存在或已下架', details?: unknown) => new ApiError('BGM_NOT_FOUND', msg, 404, details),
+  bgmInUse: (msg = 'BGM 已被成片版本引用，不可删除', details?: unknown) => new ApiError('BGM_IN_USE', msg, 409, details),
+  finalNotReady: (msg = '成片不满足发布条件', details?: unknown) => new ApiError('FINAL_NOT_READY', msg, 409, details),
+
+  /* ── 任务中心（§6.2）─────────────────────────────────────────── */
+  /** 任务锚点是 copy：不存在或已归档都视为任务不可见 */
+  taskNotFound: (msg = '任务不存在或已归档', details?: unknown) => new ApiError('TASK_NOT_FOUND', msg, 404, details),
 }
 
 export function isApiError(e: unknown): e is ApiError {

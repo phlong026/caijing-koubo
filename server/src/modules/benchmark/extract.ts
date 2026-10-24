@@ -11,6 +11,7 @@ import { submitTask, waitForResult, type AsrSentence } from '../../integrations/
 import { putObjectFromFile, signedUrl } from '../../integrations/aliyun-oss/client.js'
 import { checkFfmpeg, cleanup, downloadToTemp, extractAudio } from '../../media/pipeline.js'
 import { getVideoById, type ExtractStatus } from './videos.js'
+import { logApiCall } from '../metrics/call-log.js'
 
 export interface CacheRow {
   id: string
@@ -316,16 +317,25 @@ async function pollAndPersist(cacheId: string, taskId: string): Promise<void> {
     logger.warn({ cacheId, taskId, err: msg }, 'extract.poll_kept_running')
     return
   }
+  const durationSec = result.sentences.length
+    ? Math.round((result.sentences[result.sentences.length - 1]?.endTime ?? 0) / 1000)
+    : null
+  // P2-13a：配置了按秒单价时按实际音频时长计费，否则沿用按次单价
+  const perSec = config.dashscope.asrPricePerSec
+  const cost = perSec > 0 ? Math.round((durationSec ?? 0) * perSec * 1e6) / 1e6 : config.dashscope.asrUnitPrice
   await db.run(
     "UPDATE `script_extract_cache` SET `status` = 'done', `text` = ?, `sentences` = ?, `duration` = ?, `cost` = `cost` + ?, `updated_at` = ? WHERE `id` = ?",
-    [
-      result.text,
-      jenc(result.sentences),
-      result.sentences.length ? Math.round((result.sentences[result.sentences.length - 1]?.endTime ?? 0) / 1000) : null,
-      config.dashscope.asrUnitPrice,
-      toDb(utcNow()),
-      cacheId,
-    ],
+    [result.text, jenc(result.sentences), durationSec, cost, toDb(utcNow()), cacheId],
   )
+  if (perSec > 0) {
+    await logApiCall({
+      provider: 'dashscope',
+      endpoint: 'asr/billing',
+      refType: 'script_extract_cache',
+      refId: cacheId,
+      ok: true,
+      cost,
+    })
+  }
   logger.info({ cacheId, taskId, chars: result.text.length, sentences: result.sentences.length }, 'extract.done')
 }

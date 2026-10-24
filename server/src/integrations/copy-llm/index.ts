@@ -75,7 +75,8 @@ function usable(v: string | undefined | null): boolean {
 
 export function resolveLlm(): ResolvedLlm | null {
   const cfg = config.copyLlm
-  const dedicated = usable(cfg.baseUrl) && usable(cfg.apiKey)
+  // P0-4：未获合规批准时不启用第三方中转，直接走下面的百炼回退
+  const dedicated = usable(cfg.baseUrl) && usable(cfg.apiKey) && cfg.complianceApproved
   if (dedicated) {
     const model = usable(cfg.model) ? cfg.model : 'claude-sonnet-4-5'
     const baseUrl = normalizeBase(cfg.baseUrl)

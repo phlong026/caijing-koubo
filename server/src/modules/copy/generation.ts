@@ -3,7 +3,7 @@ import { candidateUser } from './candidates.js'
 import { config } from '../../config.js'
 import { err } from '../../errors.js'
 import { logger } from '../../log.js'
-import { newId, jenc } from '../../lib/util.js'
+import { newId, jenc, jdec } from '../../lib/util.js'
 import { toDb, utcNow } from '../../lib/time.js'
 import { chat, currentModelLabel } from '../../integrations/copy-llm/index.js'
 import { recordOperation } from '../audit/repo.js'
@@ -321,7 +321,7 @@ async function buildSourceBlock(copy: CopyRow): Promise<Parameters<typeof assemb
           [copy.sourceRefId],
         )
       : null
-    const outline = article?.outline ? (JSON.parse(article.outline) as Array<{ index: number; level: number; title: string }>) : []
+    const outline = jdec<Array<{ index: number; level: number; title: string }>>(article?.outline, [])
     return {
       ...base,
       sourceText: article?.plain_text ?? base.sourceText,
@@ -593,7 +593,7 @@ export async function acceptVariant(args: VariantArgs): Promise<{ generationId: 
     [args.draftId, args.copyId],
   )
   if (!draft) throw err.notFound('稿不存在')
-  const sections = JSON.parse(String(draft.sections ?? '[]')) as Section[]
+  const sections = jdec<Section[]>(draft.sections, [])
   const idx = Number(args.sectionIndex ?? 0)
   if (!Number.isInteger(idx) || idx < 0 || idx >= sections.length) {
     throw err.badRequest('段落序号超出范围', { sectionIndex: idx, total: sections.length })
@@ -676,7 +676,7 @@ export async function runVariant(generationId: string): Promise<void> {
     return
   }
 
-  const sections = JSON.parse(String(draft.sections ?? '[]')) as Section[]
+  const sections = jdec<Section[]>(draft.sections, [])
   const idx = gen.targetSection ?? 0
   const target = sections[idx]
   const persona = copy.personaId ? await getPersonaById(copy.personaId, true) : null
@@ -767,7 +767,7 @@ export async function applyVariant(
     [v.draftId],
   )
   if (!draftRow) throw err.notFound('目标稿已删除')
-  const sections = JSON.parse(String(draftRow.sections ?? '[]')) as Section[]
+  const sections = jdec<Section[]>(draftRow.sections, [])
   const idx = v.sectionIndex
   if (!sections[idx]) throw err.invalidState('目标段落已不存在（稿结构已变化），请重新生成变体')
 

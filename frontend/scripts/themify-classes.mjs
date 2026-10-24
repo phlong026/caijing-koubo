@@ -23,9 +23,15 @@ function walk(dir) {
       let s = fs.readFileSync(p, 'utf8')
       let changed = false
       for (const [from, to] of reps) {
-        if (s.includes(from)) { s = s.split(from).join(to); changed = true }
+        if (s.includes(from)) {
+          s = s.split(from).join(to)
+          changed = true
+        }
       }
-      if (changed) { fs.writeFileSync(p, s); console.log('fixed:', p) }
+      if (changed) {
+        fs.writeFileSync(p, s)
+        console.log('fixed:', p)
+      }
     }
   }
 }
