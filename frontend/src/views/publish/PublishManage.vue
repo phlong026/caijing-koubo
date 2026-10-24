@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import PageHead from '@/components/PageHead.vue'
 import LineTag from '@/components/LineTag.vue'
@@ -37,6 +38,10 @@ import ManualRecordDialog from './ManualRecordDialog.vue'
  */
 const store = usePublishStore()
 const auth = useAuthStore()
+const route = useRoute()
+
+/** 任务中心 / 内容页「去发布」跳转定位（TC8）：按 copyId 过滤发布计划并高亮 */
+const highlightCopyId = ref<string | null>(null)
 
 const tab = ref<'todo' | 'plan' | 'log'>('todo')
 const logPlatform = ref<Platform | undefined>()
@@ -150,7 +155,12 @@ async function submitPlan(immediately: boolean): Promise<void> {
 }
 
 /* ── 计划 ── */
-const loadPlans = () => store.loadPlans()
+const loadPlans = () => store.loadPlans(highlightCopyId.value ? { copyId: highlightCopyId.value } : undefined)
+
+function clearCopyHighlight(): void {
+  highlightCopyId.value = null
+  void loadPlans()
+}
 
 async function onSchedule(plan: PublishPlan): Promise<void> {
   try {
@@ -278,6 +288,12 @@ async function refreshAll(): Promise<void> {
 }
 
 onMounted(async () => {
+  // 任务中心 / 内容页「去发布」带 copyId 进入时，切到发布计划并按该文案过滤（TC8）
+  const qCopyId = route.query.copyId
+  if (typeof qCopyId === 'string' && qCopyId) {
+    highlightCopyId.value = qCopyId
+    tab.value = 'plan'
+  }
   await refreshAll()
   // 记录状态变化快：20 秒轻轮询当前 Tab（服务端 sweep 60 秒兜底）
   pollTimer = window.setInterval(() => {
@@ -452,8 +468,22 @@ const platformKeys = Object.keys(PLATFORM_LABELS) as Platform[]
     <!-- ══ 发布计划 ══ -->
     <div v-else-if="tab === 'plan'" class="flex flex-col gap-3">
       <p v-if="store.error" class="mw-subtle" role="alert">{{ store.error }}</p>
+      <div
+        v-if="highlightCopyId"
+        class="flex items-center gap-2 px-3 py-2 rounded-[8px] border border-[color:var(--mw-primary-soft)] bg-[color:var(--mw-primary-faint)] text-[13px]"
+      >
+        <span>正在查看该文案的发布计划</span>
+        <span class="mw-subtle flex-1 min-w-0 truncate">{{ highlightCopyId }}</span>
+        <a-link @click="clearCopyHighlight">查看全部</a-link>
+      </div>
       <a-spin :loading="store.loading" class="w-full">
-        <div v-for="p in store.plans" :key="p.id" class="mw-card p-4" data-testid="plan-card">
+        <div
+          v-for="p in store.plans"
+          :key="p.id"
+          class="mw-card p-4"
+          :class="highlightCopyId && p.copyId === highlightCopyId ? 'ring-1 ring-[#7c5cd6]' : ''"
+          data-testid="plan-card"
+        >
           <div class="flex items-center gap-2 flex-wrap">
             <span class="text-[15px] font-semibold flex-1 min-w-0 truncate">{{ p.title }}</span>
             <span

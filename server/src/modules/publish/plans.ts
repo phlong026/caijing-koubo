@@ -127,8 +127,8 @@ async function logViews(planId: string): Promise<PublishLogView[]> {
   return rows.map((r) => ({ ...mapLog(r), accountName: r.account_name ?? null, planTitle: r.plan_title ?? null }))
 }
 
-/** FR-X3：任务中心「发布」节点的下一步动作 */
-export function nextActionOf(plan: PublishPlan): string | null {
+/** FR-X3：任务中心「发布」节点的下一步动作（参数按需收窄，调用方传完整 PublishPlan 兼容） */
+export function nextActionOf(plan: Pick<PublishPlan, 'reviewState' | 'status'>): string | null {
   if (plan.reviewState === 'needs_review') return 'wait_review'
   switch (plan.status) {
     case 'draft':

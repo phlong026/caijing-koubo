@@ -180,6 +180,7 @@
               >撤回提交</a-button
             >
             <a-button v-else-if="copy.status === 'approved'" type="primary" @click="onGoVideo">去视频创作</a-button>
+            <a-button v-if="canGoPublish" @click="onGoPublish">去发布</a-button>
           </div>
         </div>
       </section>
@@ -231,6 +232,7 @@ import { Message, Modal } from '@arco-design/web-vue'
 import PageHead from '@/components/PageHead.vue'
 import { useCopyStore } from '@/stores/copy'
 import { copyApi, type DurationTier, type CreativeSettings, type SourceReview } from '@/api/copy'
+import { listVideoJobs } from '@/api/video'
 import SourcePanel from './components/SourceWorkbench.vue'
 import SourceIntake from './components/SourceIntake.vue'
 import CandidateShelf from './components/CandidateShelf.vue'
@@ -265,6 +267,8 @@ function toggleWritingFocus() {
   if (workspace.focusWriting) goToStep('write')
 }
 const createdTargetId = ref<string | null>(null)
+/** 已过审且基础视频就绪时展示「去发布」（发布管理 FR-X2 遗留入口，TC8） */
+const canGoPublish = ref(false)
 function onSourcesCreated(ids: string[]) {
   if (ids.length) {
     createdTargetId.value = ids.length === 1 ? ids[0] : null
@@ -360,6 +364,15 @@ async function loadByRoute(): Promise<void> {
     return
   }
   await store.load(target)
+  // 已过审的文案异步探测基础视频是否就绪（TC8 去发布入口），不阻塞加载
+  canGoPublish.value = false
+  if (store.copy?.status === 'approved') {
+    void listVideoJobs({ copyId: target })
+      .then((r) => {
+        canGoPublish.value = r.items.some((j) => j.phase === 'completed')
+      })
+      .catch(() => undefined)
+  }
   // 载入后按人物刷新可选风格（Q4 按线过滤）。
   // 注意：`copy.persona` 只在**列表项**里有值，`GET /copy/:id` 返回的 copy 对象不带该字段
   // （人物在详情顶层 persona）。早先只读 copy.persona.id，导致详情页永远拿不到人物，
@@ -468,6 +481,12 @@ function onGoVideo(): void {
     return
   }
   router.push({ path: '/video/create', query: { copyId: id } })
+}
+
+function onGoPublish(): void {
+  const id = resolveId()
+  if (!id) return
+  router.push({ path: '/publish', query: { copyId: id } })
 }
 
 function reload(): void {

@@ -186,6 +186,10 @@ export function nextActionsOf(job: { phase: string; remoteTaskId: string | null;
     case 'submitting':
     case 'generating':
       return ['view_progress']
+    case 'tts':
+    case 'composing':
+      // 混剪专属阶段（配音 / 合成）此前落入 default 无动作，任务中心归一表要求进行中即可查看进度
+      return ['view_progress']
     case 'recovering':
       return ['view_progress']
     case 'downloading':

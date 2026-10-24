@@ -2,12 +2,6 @@
 
 export type Line = 'manager' | 'kos' | 'persona'
 
-export const lineNames: Record<Line, string> = {
-  manager: '经理 IP',
-  kos: '员工 KOS',
-  persona: '素人矩阵',
-}
-
 /** 资讯分类色 */
 export const catClass: Record<string, string> = {
   市场: 'mw-cat mw-tag-orange',
@@ -113,111 +107,6 @@ export const benchmarkVideos = [
     stats: '5.6w 播放 · 互动 1.9k',
     time: '5 天前',
     extracted: '提取中',
-  },
-]
-
-/** 任务中心 */
-export interface TaskRow {
-  id: string
-  no: string
-  title: string
-  subject: string
-  line: Line
-  owner: string
-  stage: string
-  status: string
-  statusCls: string
-  dot: string
-  progress?: number
-  next: string
-  target: string
-}
-
-export const tasks: TaskRow[] = [
-  {
-    id: 'T-1024',
-    no: 'T-1024',
-    title: '基金定投入门',
-    subject: '小林科普',
-    line: 'kos',
-    owner: '陈悦',
-    stage: '剪辑合成',
-    status: '草稿 v2',
-    statusCls: '',
-    dot: '#7c5cd6',
-    next: '继续剪辑',
-    target: '目标60秒',
-  },
-  {
-    id: 'T-1025',
-    no: 'T-1025',
-    title: '市场波动与长期配置',
-    subject: '张经理',
-    line: 'manager',
-    owner: '王敏',
-    stage: '文案生成',
-    status: '待人工审核',
-    statusCls: 'color:#b26a00',
-    dot: '#e69b3c',
-    next: '查看审核',
-    target: '目标60秒',
-  },
-  {
-    id: 'T-1026',
-    no: 'T-1026',
-    title: '城市里的理财常识',
-    subject: '小林科普',
-    line: 'kos',
-    owner: '周宁',
-    stage: '选题生成',
-    status: '候选待选择',
-    statusCls: '',
-    dot: '#3b82f6',
-    next: '选择选题',
-    target: '目标60秒',
-  },
-  {
-    id: 'T-1027',
-    no: 'T-1027',
-    title: '认识基金净值',
-    subject: '小林科普',
-    line: 'kos',
-    owner: '陈悦',
-    stage: '基础视频',
-    status: '生成中 38%',
-    statusCls: '',
-    dot: '#2563eb',
-    next: '查看进度',
-    target: '目标60秒',
-    progress: 38,
-  },
-  {
-    id: 'T-1028',
-    no: 'T-1028',
-    title: '风险与收益的关系',
-    subject: '张经理',
-    line: 'manager',
-    owner: '周宁',
-    stage: '基础视频',
-    status: '保存失败',
-    statusCls: 'color:#c0392b',
-    dot: '#e05252',
-    next: '重试下载',
-    target: '目标60秒',
-  },
-  {
-    id: 'T-1029',
-    no: 'T-1029',
-    title: '如何定期回顾目标',
-    subject: '张经理',
-    line: 'manager',
-    owner: '王敏',
-    stage: '基础视频',
-    status: '状态待确认',
-    statusCls: '',
-    dot: '#9ca3af',
-    next: '查询原任务',
-    target: '目标60秒',
   },
 ]
 

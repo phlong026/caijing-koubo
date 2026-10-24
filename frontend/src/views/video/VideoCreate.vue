@@ -391,6 +391,12 @@
           >
             <template #icon><icon-play-arrow /></template>进入视频剪辑
           </a-button>
+          <a-button
+            v-if="selectedJob?.phase === 'completed' && selectedJob.copyId"
+            @click="$router.push({ path: '/publish', query: { copyId: selectedJob.copyId } })"
+          >
+            <template #icon><icon-send /></template>去发布
+          </a-button>
         </div>
       </template>
     </a-spin>
