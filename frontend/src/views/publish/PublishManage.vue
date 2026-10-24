@@ -91,7 +91,8 @@ const form = reactive({
   title: '',
   description: '',
   tags: '',
-  scheduledAt: '',
+  // Arco DatePicker 的 modelValue 不接受 ''（非法值会让弹层状态异常），留空用 undefined
+  scheduledAt: undefined as string | undefined,
   items: [] as Array<{ platform: Platform; accountId: string }>,
 })
 
@@ -121,7 +122,7 @@ function selectJob(j: PublishableJob): void {
   // 默认标题取文案过审版本标题（与后端实质修改 hash 基准同源）；vendorTitle 是飞影诊断标识，用它会导致每单都触发复审
   form.title = j.title
   form.items = []
-  form.scheduledAt = ''
+  form.scheduledAt = undefined
   void copyApi
     .approved(j.copyId)
     .then((r) => {

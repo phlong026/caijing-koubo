@@ -158,7 +158,7 @@ export interface PersonaOptions {
   platformLabels: Record<string, string>
   voiceLanguages: Array<{ code: string; label: string }>
   consentTextVersion: string
-  consentTexts: Record<string, string>
+  consentTexts: Record<string, { title: string; body: string }>
   hifly: { configured: boolean; mock: boolean; baseUrl: string; credit: number | null; creditError: string | null }
   storage: { oss: boolean; mode: 'oss' | 'local' }
 }

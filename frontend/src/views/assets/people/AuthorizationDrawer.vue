@@ -27,13 +27,18 @@
           <div v-if="a.note" class="mt-1 text-[12.5px] text-[var(--mw-text2)]">备注：{{ a.note }}</div>
           <div class="mt-2 flex items-center gap-2 flex-wrap">
             <a-button size="mini" type="outline" @click="openFile(a.id)">查看文件</a-button>
-            <template v-if="a.status === 'pending'">
+            <!-- 核验 / 驳回 / 撤销与后端 ROLE_RULES 对齐：仅 reviewer / admin -->
+            <template v-if="a.status === 'pending' && canReview">
               <a-button size="mini" type="primary" :loading="busyId === a.id" @click="decide(a.id, 'verified')"
                 >核验通过</a-button
               >
               <a-button size="mini" status="danger" @click="askReason('reject', a.id)">驳回</a-button>
             </template>
-            <a-button v-if="a.status === 'verified'" size="mini" status="danger" @click="askReason('revoke', a.id)"
+            <a-button
+              v-if="a.status === 'verified' && canReview"
+              size="mini"
+              status="danger"
+              @click="askReason('revoke', a.id)"
               >撤销</a-button
             >
           </div>
@@ -87,8 +92,9 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
+import { useAuthStore } from '@/stores/auth'
 import {
   authorizationFileUrl,
   getAuthorizations,
@@ -103,6 +109,10 @@ import { AUTH_STATUS, dayOffset, errMsg, fmtDate, SCOPE_LABEL, toastError } from
 
 const props = defineProps<{ visible: boolean; persona: PersonaDetail }>()
 const emit = defineEmits<{ (e: 'update:visible', v: boolean): void; (e: 'changed'): void }>()
+
+const auth = useAuthStore()
+/** 授权核验 / 驳回 / 撤销（POST /persona-authorizations/:id/*）后端限 reviewer / admin */
+const canReview = computed(() => auth.hasRole('reviewer', 'admin'))
 
 const auths = ref<PersonaAuthorization[]>([])
 const loading = ref(false)

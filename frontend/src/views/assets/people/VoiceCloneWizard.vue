@@ -48,9 +48,12 @@
             ></template
           >
         </a-form-item>
-        <a-checkbox v-model="form.agree" class="consent"
-          ><span class="text-[12.5px] leading-5">{{ consentText }}</span></a-checkbox
-        >
+        <a-checkbox v-model="form.agree" class="consent">
+          <span class="text-[12.5px] leading-5">
+            <strong class="block mb-0.5">{{ consentDoc.title }}</strong
+            >{{ consentDoc.body }}
+          </span>
+        </a-checkbox>
         <div v-if="persona.bindingMode === 'shared'" class="mw-alert-banner mt-3" role="note">
           共享人物的声音用于多个账号时，须在授权中勾选「允许共享」，否则不能设为默认声音。
         </div>
@@ -113,10 +116,12 @@ let consentId = ''
 
 const auths = computed(() => usableAuthorizations(props.persona.authorizations, 'voice'))
 const languages = computed(() => props.options?.voiceLanguages ?? [])
-const consentText = computed(
+const consentDoc = computed<{ title: string; body: string }>(
   () =>
-    props.options?.consentTexts?.VOICE_CLONE ??
-    '我确认已获得声音权利人的书面授权，同意将该样本提交给第三方服务克隆声音，并仅用于授权范围内的内容生产。',
+    props.options?.consentTexts?.VOICE_CLONE ?? {
+      title: '声音克隆授权确认',
+      body: '我确认已获得声音权利人的书面授权，同意将该样本提交给第三方服务克隆声音，并仅用于授权范围内的内容生产。',
+    },
 )
 
 watch(
