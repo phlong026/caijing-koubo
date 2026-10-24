@@ -124,6 +124,13 @@ page.on('response', (r) => {
     apiFailures.push(`${r.status()} ${r.request().method()} ${u.replace(BASE, '')}`)
 })
 
+/** 失败原因：首行 + Playwright 调用日志末尾几行（谁挡住了点击、元素是否可见 / 可用），CI 上看不到截图时靠它定位 */
+function failureText(e) {
+  const lines = String(e?.message ?? e).split('\n')
+  const log = lines.filter((l) => /^\s+- /.test(l)).slice(-4)
+  return [lines[0].slice(0, 300), ...log.map((l) => l.trim().slice(0, 300))].join('\n     ')
+}
+
 let pass = 0
 let fail = 0
 const fails = []
@@ -135,7 +142,7 @@ async function step(name, fn) {
   } catch (e) {
     fail++
     fails.push(name)
-    console.log(`  ❌ ${name}\n     ${String(e.message).split('\n')[0].slice(0, 300)}`)
+    console.log(`  ❌ ${name}\n     ${failureText(e)}`)
     await page.screenshot({ path: path.join(SHOTS, `fail-${fails.length}.png`), fullPage: true }).catch(() => {})
   }
 }
@@ -400,11 +407,14 @@ await step('版本历史抽屉可打开且含多个版本', async () => {
   const n = await drawer.getByText(/^v\d+$/).count()
   expect(n >= 2, `版本数 ${n}`)
   await page.keyboard.press('Escape')
+  // 等抽屉（含遮罩）真正关闭，否则下一步的点击可能落在正在淡出的遮罩上
+  await page.locator('.arco-drawer-mask:visible').waitFor({ state: 'detached', timeout: 6000 })
 })
 await step('账号绑定：保存 1 个账号；第 2 个共享账号合法', async () => {
   await tab('IP 定位')
   await detail().getByRole('button', { name: '管理', exact: true }).click()
-  const modal = page.locator('.arco-modal:visible').last()
+  const modal = page.locator('.arco-modal:visible', { hasText: '添加账号' }).last()
+  await modal.waitFor({ timeout: 8000 })
   await modal.getByRole('button', { name: '添加账号' }).click()
   await modal.getByLabel('第 1 个账号标识').fill(`acct-${Date.now()}`)
   await modal.getByLabel('第 1 个账号显示名').fill('主账号')

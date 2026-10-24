@@ -245,10 +245,11 @@ export function createRunner(page, shots) {
     } catch (e) {
       state.fail++
       state.fails.push(name)
+      // 首行 + Playwright 调用日志末尾（谁挡住了点击、元素是否可见 / 可用），CI 上看不到截图时靠它定位
+      const lines = String(e?.message ?? e).split('\n')
+      const log = lines.filter((l) => /^\s+- /.test(l)).slice(-4)
       console.log(
-        `  ❌ ${name}\n     ${String(e?.message ?? e)
-          .split('\n')[0]
-          .slice(0, 300)}`,
+        `  ❌ ${name}\n     ${[lines[0].slice(0, 300), ...log.map((l) => l.trim().slice(0, 300))].join('\n     ')}`,
       )
       await page
         .screenshot({ path: path.join(shots, `fail-${state.fails.length}.png`), fullPage: true })
