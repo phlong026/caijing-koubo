@@ -7,6 +7,7 @@ import LineTag from '@/components/LineTag.vue'
 import { usePublishStore } from '@/stores/publish'
 import { useAuthStore } from '@/stores/auth'
 import { listVideoJobs } from '@/api/video'
+import { copyApi } from '@/api/copy'
 import {
   cancelPlan,
   confirmPlanReview,
@@ -117,9 +118,16 @@ const isPicked = (platform: Platform, accountId: string): boolean =>
 
 function selectJob(j: PublishableJob): void {
   selectedJob.value = j
+  // 默认标题取文案过审版本标题（与后端实质修改 hash 基准同源）；vendorTitle 是飞影诊断标识，用它会导致每单都触发复审
   form.title = j.title
   form.items = []
   form.scheduledAt = ''
+  void copyApi
+    .approved(j.copyId)
+    .then((r) => {
+      if (selectedJob.value?.id === j.id && r.title) form.title = r.title
+    })
+    .catch(() => undefined)
 }
 
 async function submitPlan(immediately: boolean): Promise<void> {

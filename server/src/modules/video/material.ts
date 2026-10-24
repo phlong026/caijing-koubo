@@ -254,7 +254,8 @@ function mapGroup(r: Record<string, unknown>): KeywordGroupRow {
 }
 
 export async function listKeywordGroups() {
-  const rows = await getDb().all('SELECT * FROM `material_keyword_group` ORDER BY `sort` ASC, `created_at` ASC')
+  // 表无 created_at 列（schema 只有 sort 与 updated_at），按 sort + id 稳定排序
+  const rows = await getDb().all('SELECT * FROM `material_keyword_group` ORDER BY `sort` ASC, `id` ASC')
   return rows.map(mapGroup)
 }
 
