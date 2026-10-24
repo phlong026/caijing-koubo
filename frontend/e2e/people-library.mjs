@@ -153,8 +153,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const detail = () => page.locator('.people-detail')
 const toast = (text) => page.locator('.arco-message', { hasText: text }).first()
 
+/**
+ * 切详情 Tab。字体较宽时（如 CI 的文泉驿）五个 Tab 放不下，Arco 会出现左右滚动箭头，
+ * 已滚到右侧时首个 Tab 被左箭头盖住——像用户一样先点箭头把它滚出来再点。
+ */
 async function tab(name) {
-  await detail().locator('.arco-tabs-tab', { hasText: name }).first().click()
+  const target = detail().locator('.arco-tabs-tab', { hasText: name }).first()
+  for (let i = 0; i < 6; i++) {
+    try {
+      await target.click({ timeout: 1500 })
+      await sleep(300)
+      return
+    } catch {
+      // 目标在左箭头左侧（或被它盖住）就往左滚，否则往右滚
+      const left = detail().locator('.arco-tabs-nav-button-left').first()
+      const [t, l] = await Promise.all([target.boundingBox(), left.boundingBox().catch(() => null)])
+      const side = l && t && t.x < l.x + l.width ? 'left' : 'right'
+      const arrow = detail().locator(`.arco-tabs-nav-button-${side}:not(.arco-tabs-nav-button-disabled)`).first()
+      if (await arrow.isVisible().catch(() => false)) await arrow.click().catch(() => {})
+    }
+  }
+  await target.click()
   await sleep(300)
 }
 
