@@ -1,11 +1,12 @@
 /**
  * 一键冒烟（P1-9）：起一个隔离的服务实例（临时 SQLite + 独立队列前缀 + 第三方 mock），
- * 依次跑 smoke / smoke:copy / smoke:topics / smoke:personas，结束后关闭服务并清理临时库。
+ * 依次跑共享实例四套（smoke / smoke:copy / smoke:topics / smoke:personas）与
+ * 自建实例四套（smoke:video / smoke:publish / smoke:cut / smoke:chain 跨模块联动）。
  *
  * 用法：npm run smoke:all
  * 环境变量：
  *  - SMOKE_PORT       服务端口，默认 8797（避免与本地 dev 的 8787 冲突）
- *  - SMOKE_SUITES     逗号分隔，默认全部四套
+ *  - SMOKE_SUITES     逗号分隔，默认全部八套
  * Redis 可用时走 BullMQ（REDIS_HOST / REDIS_PORT），不可用时服务自动降级为内存队列。
  */
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -17,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 const serverRoot = resolve(fileURLToPath(import.meta.url), '../..')
 const port = Number(process.env.SMOKE_PORT ?? 8797)
 const base = `http://127.0.0.1:${port}/api`
-const suites = (process.env.SMOKE_SUITES ?? 'smoke,smoke-copy,smoke-topics,smoke-personas,smoke-video,smoke-publish,smoke-cut')
+const suites = (process.env.SMOKE_SUITES ?? 'smoke,smoke-copy,smoke-topics,smoke-personas,smoke-video,smoke-publish,smoke-cut,smoke-chain')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)
