@@ -40,6 +40,7 @@
     "smoke:video": "tsx scripts/smoke-video.ts",
     "smoke:publish": "tsx scripts/smoke-publish.ts",
     "smoke:cut": "tsx scripts/smoke-cut.ts",
+    "smoke:chain": "tsx scripts/smoke-chain.ts",
     "check:media-env": "tsx scripts/check-media-env.ts",
     "test:video:align": "tsx scripts/test-video-align.ts"
   },
@@ -61,6 +62,7 @@
   "devDependencies": {
     "@types/node": "^22.9.0",
     "node-sql-parser": "^5.4.0",
+    "playwright": "1.49.1",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vitest": "^3.2.7"

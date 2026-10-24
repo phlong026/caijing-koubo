@@ -76,6 +76,7 @@ export type ErrorCode =
   | 'ACCOUNT_NOT_ACTIVE' // 账号非 active 不可发布
   | 'PUBLISH_RATE_LIMITED' // 每账号每日发布上限（PB8）
   | 'PUBLISH_CONTEXT_BUSY' // 上下文创建失败（仅浏览器启动异常场景）
+  | 'PUBLISH_PLATFORM_NOT_MIGRATED' // 平台真实引擎未平移（PU3 待办），非 mock 模式下明确拒绝
   | 'PUBLISH_PLAN_NOT_FOUND'
   | 'PUBLISH_PLAN_NOT_CANCELLABLE'
   | 'PUBLISH_LOG_NOT_FOUND'
@@ -249,6 +250,8 @@ export const err = {
     new ApiError('PUBLISH_RATE_LIMITED', msg, 409, details),
   publishContextBusy: (msg = '发布浏览器上下文创建失败，请稍后重试', details?: unknown) =>
     new ApiError('PUBLISH_CONTEXT_BUSY', msg, 503, details),
+  publishPlatformNotMigrated: (platform: string) =>
+    new ApiError('PUBLISH_PLATFORM_NOT_MIGRATED', `平台 ${platform} 的真实发布引擎尚未平移（PU3），当前仅支持抖音`, 501, { platform }),
   publishPlanNotFound: (msg = '发布计划不存在') => new ApiError('PUBLISH_PLAN_NOT_FOUND', msg, 404),
   publishPlanNotCancellable: (msg = '当前状态的发布计划不可取消', details?: unknown) =>
     new ApiError('PUBLISH_PLAN_NOT_CANCELLABLE', msg, 409, details),
