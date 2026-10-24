@@ -73,6 +73,18 @@ export const ROLE_RULES: Record<string, Role[]> = {
   'POST /api/video/cuts/:id/review/decision': REVIEWERS,
   'POST /api/cut/bgm': ADMINS,
   'DELETE /api/cut/bgm/:id': ADMINS,
+  // 素材库（任务书 A6 / Q6）：上传与管理仅管理员，读接口登录即可
+  'POST /api/fonts': ADMINS,
+  'PATCH /api/fonts/:id': ADMINS,
+  'DELETE /api/fonts/:id': ADMINS,
+  'POST /api/fonts/bootstrap': ADMINS,
+  'POST /api/material-packs': ADMINS,
+  'PATCH /api/material-packs/:id': ADMINS,
+  'DELETE /api/material-packs/:id': ADMINS,
+  'PATCH /api/material-packs/:id/items/:itemId': ADMINS,
+  'POST /api/material-keyword-groups': ADMINS,
+  'PATCH /api/material-keyword-groups/:id': ADMINS,
+  'DELETE /api/material-keyword-groups/:id': ADMINS,
 }
 
 /**

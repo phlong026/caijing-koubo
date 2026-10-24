@@ -13,6 +13,7 @@ import { registerExtractWorker } from './modules/benchmark/extract.js'
 import { registerCopyWorker } from './modules/copy/worker.js'
 import { resumeStubSubmissions } from './modules/copy/review.js'
 import { registerPersonaModule } from './modules/personas/index.js'
+import { bootstrapFonts } from './modules/material/fonts.js'
 import { registerPublishModule } from './modules/publish/index.js'
 import { checkFfmpeg } from './media/pipeline.js'
 import { ossStatus } from './integrations/aliyun-oss/client.js'
@@ -92,6 +93,8 @@ async function main(): Promise<void> {
   installGlobalHandlers()
   const db = await initDb()
   await runMigrations(db)
+  // 素材库 ML1/FR-F5：扫描 CUT_FONTS_DIR，手工放置的字体同步为未启用记录（幂等，失败不阻断启动）
+  await bootstrapFonts().catch((e) => logger.warn({ err: (e as Error).message }, 'material.font.bootstrap_failed'))
   // P0-1：令牌密钥自检（生产缺失直接拒绝启动）+ 首个管理员
   jwtSecret()
   await ensureBootstrapAdmin()

@@ -1019,6 +1019,26 @@ export const TABLES: TableDef[] = [
     comment: '按 copy 记忆的创作配置（FR-C4）',
   },
   {
+    name: 'font_item',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('file_name', 255), // 落盘文件名（CUT_FONTS_DIR 内，唯一）
+      vc('display_name', 128),
+      vc('file_hash', 64), // sha256，幂等与对账用
+      big('size_bytes', 0),
+      vc('license_type', 16, { def: 'other' }), // ofl|commercial|other（A7：other 需 note 才能启用）
+      vc('license_note', 500, { nullable: true }),
+      tint('enabled', 0), // ML2/PRD 7.8：上传默认未启用
+      vc('created_by', 64, { nullable: true }),
+      dt('created_at'),
+      dt('updated_at'),
+    ],
+    uniques: [['file_name']],
+    indexes: [{ name: 'idx_font_enabled', cols: ['enabled', 'file_name'] }],
+    comment: '字体资产（素材库 ML1；文件落 CUT_FONTS_DIR，剪辑 fontsdir 直接读目录）',
+  },
+  {
     name: 'material_pack',
     pk: 'id',
     cols: [
@@ -1028,11 +1048,12 @@ export const TABLES: TableDef[] = [
       vc('source_path', 512, { nullable: true }), // 目录或 zip 来源
       int('item_count', 0),
       tint('enabled', 1),
+      vc('license_note', 500, { nullable: true }), // 授权出处（可空，仅警示不阻断，Q5）
       vc('created_by', 64, { nullable: true }),
       dt('created_at'),
       dt('updated_at'),
     ],
-    comment: '素材包桩（所有权：素材库，§2.5 FR-S4）',
+    comment: '素材包（所有权：素材库，§2.5 FR-S4）',
   },
   {
     name: 'material_item',
