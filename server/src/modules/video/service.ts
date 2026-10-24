@@ -169,7 +169,23 @@ export async function putCopyConfig(copyId: string, input: CreateVideoJobInput, 
 /** GET /video/jobs（FR-X2 任务树） */
 export async function listJobsView(q: { copyId?: string; personaId?: string; phase?: string; ids?: string[]; page?: number; pageSize?: number; includeArchived?: boolean }) {
   const r = await listVideoJobs(q)
-  return { items: r.items.map(toJobSummary), total: r.total, page: r.page, pageSize: r.pageSize }
+  // 发布页「待安排」展示与预填的标题：取该视频所用文案版本的标题（即过审标题，发布以它判断是否「实质修改」）；
+  // vendorTitle 是飞影侧截断加短码的标题，不能当发布标题
+  const titles = new Map<string, string | null>()
+  const versionIds = [...new Set(r.items.map((j) => j.copyVersionId).filter(Boolean))]
+  if (versionIds.length) {
+    const rows = await getDb().all<{ id: string; title: string | null; copy_title: string | null }>(
+      `SELECT v.\`id\`, v.\`title\`, c.\`title\` AS copy_title FROM \`copy_version\` v JOIN \`copy\` c ON c.\`id\` = v.\`copy_id\` WHERE v.\`id\` IN (${versionIds.map(() => '?').join(',')})`,
+      versionIds,
+    )
+    for (const row of rows) titles.set(row.id, row.title ?? row.copy_title)
+  }
+  return {
+    items: r.items.map((j) => ({ ...toJobSummary(j), copyTitle: titles.get(j.copyVersionId) ?? null })),
+    total: r.total,
+    page: r.page,
+    pageSize: r.pageSize,
+  }
 }
 
 /** FR-X3：文案工坊 latestVideoJob（只读冗余，由查询派生） */

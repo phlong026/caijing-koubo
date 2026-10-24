@@ -22,7 +22,9 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
 const BASE = process.env.E2E_BASE || 'http://127.0.0.1:5173'
 const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'people-e2e-'))
 const FX = path.join(OUT, 'fx')
-const SHOTS = path.join(OUT, 'shots')
+const SHOTS = process.env.E2E_ARTIFACTS
+  ? path.resolve(process.env.E2E_ARTIFACTS, 'people-library')
+  : path.join(OUT, 'shots')
 fs.mkdirSync(FX, { recursive: true })
 fs.mkdirSync(SHOTS, { recursive: true })
 
@@ -122,6 +124,13 @@ page.on('response', (r) => {
     apiFailures.push(`${r.status()} ${r.request().method()} ${u.replace(BASE, '')}`)
 })
 
+/** 失败原因：首行 + Playwright 调用日志末尾几行（谁挡住了点击、元素是否可见 / 可用），CI 上看不到截图时靠它定位 */
+function failureText(e) {
+  const lines = String(e?.message ?? e).split('\n')
+  const log = lines.filter((l) => /^\s+- /.test(l)).slice(-4)
+  return [lines[0].slice(0, 300), ...log.map((l) => l.trim().slice(0, 300))].join('\n     ')
+}
+
 let pass = 0
 let fail = 0
 const fails = []
@@ -133,7 +142,7 @@ async function step(name, fn) {
   } catch (e) {
     fail++
     fails.push(name)
-    console.log(`  ❌ ${name}\n     ${String(e.message).split('\n')[0].slice(0, 300)}`)
+    console.log(`  ❌ ${name}\n     ${failureText(e)}`)
     await page.screenshot({ path: path.join(SHOTS, `fail-${fails.length}.png`), fullPage: true }).catch(() => {})
   }
 }
@@ -144,8 +153,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const detail = () => page.locator('.people-detail')
 const toast = (text) => page.locator('.arco-message', { hasText: text }).first()
 
+/**
+ * 切详情 Tab。字体较宽时（如 CI 的文泉驿）五个 Tab 放不下，Arco 会出现左右滚动箭头，
+ * 已滚到右侧时首个 Tab 被左箭头盖住——像用户一样先点箭头把它滚出来再点。
+ */
 async function tab(name) {
-  await detail().locator('.arco-tabs-tab', { hasText: name }).first().click()
+  const target = detail().locator('.arco-tabs-tab', { hasText: name }).first()
+  for (let i = 0; i < 6; i++) {
+    try {
+      await target.click({ timeout: 1500 })
+      await sleep(300)
+      return
+    } catch {
+      // 目标在左箭头左侧（或被它盖住）就往左滚，否则往右滚
+      const left = detail().locator('.arco-tabs-nav-button-left').first()
+      const [t, l] = await Promise.all([target.boundingBox(), left.boundingBox().catch(() => null)])
+      const side = l && t && t.x < l.x + l.width ? 'left' : 'right'
+      const arrow = detail().locator(`.arco-tabs-nav-button-${side}:not(.arco-tabs-nav-button-disabled)`).first()
+      if (await arrow.isVisible().catch(() => false)) await arrow.click().catch(() => {})
+    }
+  }
+  await target.click()
   await sleep(300)
 }
 
@@ -398,11 +426,14 @@ await step('版本历史抽屉可打开且含多个版本', async () => {
   const n = await drawer.getByText(/^v\d+$/).count()
   expect(n >= 2, `版本数 ${n}`)
   await page.keyboard.press('Escape')
+  // 等抽屉（含遮罩）真正关闭，否则下一步的点击可能落在正在淡出的遮罩上
+  await page.locator('.arco-drawer-mask:visible').waitFor({ state: 'detached', timeout: 6000 })
 })
 await step('账号绑定：保存 1 个账号；第 2 个共享账号合法', async () => {
   await tab('IP 定位')
   await detail().getByRole('button', { name: '管理', exact: true }).click()
-  const modal = page.locator('.arco-modal:visible').last()
+  const modal = page.locator('.arco-modal:visible', { hasText: '添加账号' }).last()
+  await modal.waitFor({ timeout: 8000 })
   await modal.getByRole('button', { name: '添加账号' }).click()
   await modal.getByLabel('第 1 个账号标识').fill(`acct-${Date.now()}`)
   await modal.getByLabel('第 1 个账号显示名').fill('主账号')

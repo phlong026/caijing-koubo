@@ -254,7 +254,7 @@ function mapGroup(r: Record<string, unknown>): KeywordGroupRow {
 }
 
 export async function listKeywordGroups() {
-  const rows = await getDb().all('SELECT * FROM `material_keyword_group` ORDER BY `sort` ASC, `created_at` ASC')
+  const rows = await getDb().all('SELECT * FROM `material_keyword_group` ORDER BY `sort` ASC, `id` ASC')
   return rows.map(mapGroup)
 }
 

@@ -29,3 +29,6 @@ frontend/dist/
 Thumbs.db
 .vscode/
 .idea/
+
+# 浏览器端到端截图（npm run e2e 设 E2E_ARTIFACTS 时）
+frontend/e2e-artifacts/

@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import PageHead from '@/components/PageHead.vue'
 import LineTag from '@/components/LineTag.vue'
 import { usePublishStore } from '@/stores/publish'
 import { useAuthStore } from '@/stores/auth'
-import { listVideoJobs } from '@/api/video'
+import { getVideoCopyContext, listVideoJobs } from '@/api/video'
 import {
   cancelPlan,
   confirmPlanReview,
@@ -73,7 +73,7 @@ async function loadJobs(): Promise<void> {
     jobs.value = r.items.map((j) => ({
       id: j.id,
       copyId: j.copyId,
-      title: j.vendorTitle || `基础视频 v${j.versionNo}（${j.copyId.slice(-6)}）`,
+      title: j.copyTitle || `基础视频 v${j.versionNo}（${j.copyId.slice(-6)}）`,
       line: j.line,
       versionNo: j.versionNo,
       durationMs: j.durationMs,
@@ -120,6 +120,13 @@ function selectJob(j: PublishableJob): void {
   form.title = j.title
   form.items = []
   form.scheduledAt = ''
+  // 预填当前过审文案标题：与它不一致才算「实质修改」需审核确认（FR-R2）。视频之后文案可能又过审了新版本，
+  // 以过审版为准；用户已改过标题则不覆盖
+  void getVideoCopyContext(j.copyId)
+    .then((ctx) => {
+      if (selectedJob.value?.id === j.id && form.title === j.title && ctx.copy.title) form.title = ctx.copy.title
+    })
+    .catch(() => undefined)
 }
 
 async function submitPlan(immediately: boolean): Promise<void> {
@@ -139,12 +146,14 @@ async function submitPlan(immediately: boolean): Promise<void> {
       })),
       scheduledAt: immediately ? null : form.scheduledAt ? new Date(form.scheduledAt).toISOString() : null,
     })
-    if (r.plan.reviewState === 'needs_review') {
+    // 需审核确认的计划不能立即发布（后端 409 REVIEW_REQUIRED），等审核确认后再在计划里发布
+    const needsReview = r.plan.reviewState === 'needs_review'
+    if (needsReview) {
       Message.warning('标题有实质修改，计划已创建并等待审核确认')
     } else {
+      if (immediately) await executePlanNow(r.plan.id)
       Message.success(immediately ? '已开始发布' : '发布计划已创建')
     }
-    if (immediately) await executePlanNow(r.plan.id)
     tab.value = 'plan'
     await loadPlans()
   } catch (e) {
@@ -281,6 +290,13 @@ const onCheckAccount = (a: PlatformAccount) =>
 
 const onDeleteAccount = (a: PlatformAccount) =>
   withReload(() => import('@/api/publish').then((m) => m.deleteAccount(a.id)), '已删除')
+
+// 切 Tab 即拉该 Tab 最新数据：刚发布完切到「发布记录」不必等 20 秒轮询
+watch(tab, (t) => {
+  if (t === 'plan') void loadPlans()
+  else if (t === 'log') void loadLogs()
+  else void loadJobs()
+})
 
 /* ── 生命周期 ── */
 async function refreshAll(): Promise<void> {
