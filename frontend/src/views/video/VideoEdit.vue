@@ -234,7 +234,30 @@
                   <span class="text-[13px] text-[var(--mw-text2)]">{{ draft!.subtitleStyle.backgroundOpacity }}</span>
                 </template>
               </div>
-              <div class="mw-subtle mt-2">一期内置开源字体（思源黑体）；多字体与上传列素材库范围。</div>
+              <div class="mw-form-row">
+                <div class="mw-form-label">字体</div>
+                <a-select
+                  v-model="draft!.subtitleStyle.fontName"
+                  :style="{ width: '220px' }"
+                  size="small"
+                  placeholder="选择字体"
+                  allow-search
+                >
+                  <a-option value="default" label="默认字体（素材库启用集首个）" />
+                  <a-option
+                    v-for="f in enabledFonts"
+                    :key="f.id"
+                    :value="fontValueOf(f.fileName)"
+                    :label="f.displayName"
+                  />
+                </a-select>
+                <span v-if="!enabledFonts.length" class="mw-subtle text-[12px]"
+                  >素材库暂无启用字体，将使用默认字体</span
+                >
+              </div>
+              <div class="mw-subtle mt-2">
+                字体来自素材库「字体库」Tab 的启用集；停用后此处即时移除，历史草稿渲染会回退默认字体。
+              </div>
             </div>
 
             <!-- BGM -->
@@ -457,6 +480,7 @@ import { Message } from '@arco-design/web-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { cutApi, fmtMs, CUT_STATUS_LABELS, CUT_REVIEW_LABELS, type CutSegment, type BgmItem } from '@/api/cut'
 import { listVideoJobs, type JobSummary } from '@/api/video'
+import { listFonts, type EnabledFont } from '@/api/material'
 import { useCutStore } from '@/stores/cut'
 
 /**
@@ -479,6 +503,14 @@ const durationMs = ref(0)
 const seekSec = ref(0)
 const bgmList = ref<BgmItem[]>([])
 const videoEl = ref<HTMLVideoElement | null>(null)
+/** 素材库启用集（ML4 / FR-F4）：剪辑字体下拉只列启用中的字体，默认值恒为 default */
+const enabledFonts = ref<EnabledFont[]>([])
+
+/** 字幕样式存的是字体名（= 文件名去扩展名），与 ASS Style 口径一致 */
+function fontValueOf(fileName: string): string {
+  const i = fileName.lastIndexOf('.')
+  return i < 0 ? fileName : fileName.slice(0, i)
+}
 
 const videoJobId = computed(() => String(route.query.videoJobId ?? ''))
 const currentCutId = computed(() => store.activeCut?.cut.id ?? undefined)
@@ -752,7 +784,19 @@ function cutStatusText(v: { status: keyof typeof CUT_STATUS_LABELS; reviewStatus
   return v.reviewStatus !== 'none' ? `${s} · ${CUT_REVIEW_LABELS[v.reviewStatus as keyof typeof CUT_REVIEW_LABELS]}` : s
 }
 
-onMounted(loadAll)
+/** 字体启用集单独拉取：失败不影响剪辑页其余能力（AC-R1 模块独立） */
+async function loadFonts(): Promise<void> {
+  try {
+    enabledFonts.value = (await listFonts()).enabled
+  } catch {
+    enabledFonts.value = []
+  }
+}
+
+onMounted(() => {
+  void loadAll()
+  void loadFonts()
+})
 // 空态选择任务（router.replace 改 query）后立即加载配置
 watch(videoJobId, (v) => {
   if (v) void loadAll()

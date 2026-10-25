@@ -22,6 +22,7 @@ import {
   latestApprovedCutByCopy,
 } from './repo.js'
 import { validateStyle } from './subtitle.js'
+import { isFontNameAllowed } from '../material/fonts.js'
 import { getBgm } from './bgm-store.js'
 import { enqueueCutRender } from './worker.js'
 import type { BreatheParams, CutConfigInput, CutSegment, FinalVideoPayload, SubtitleStyle, VideoCut } from './types.js'
@@ -33,6 +34,22 @@ import type { BreatheParams, CutConfigInput, CutSegment, FinalVideoPayload, Subt
 
 function toDbTime(v: string | null): string | null {
   return v
+}
+
+/**
+ * ML4 / FR-F4：字幕字体须在素材库启用集内（∪ {default}）。
+ * 素材域故障时**放行**——剪辑保存不得被素材库拖垮（AC-R1 模块独立装配）；
+ * 渲染侧 `resolveFontFileByName` 仍会回退 default 并 warn，不会渲染出错。
+ */
+async function assertFontSelectable(fontName: string): Promise<void> {
+  let allowed: boolean
+  try {
+    allowed = await isFontNameAllowed(fontName)
+  } catch (e) {
+    logger.warn({ err: (e as Error).message, fontName }, 'cut.font_validation_skipped')
+    return
+  }
+  if (!allowed) throw err.cutStyleInvalid(`字体「${fontName}」未启用或已停用，请到素材库启用后再选择`)
 }
 
 export interface CutConfigView {
@@ -179,6 +196,8 @@ export async function saveCutConfig(videoJobId: string, input: CutConfigInput, o
   }
 
   const style = input.subtitleStyle ? validateStyle(input.subtitleStyle) : current.subtitleStyle
+  // 仅当本次提交显式带了字幕样式才校验，避免历史草稿因字体下架而无法保存其它字段
+  if (input.subtitleStyle) await assertFontSelectable(style.fontName)
   const subtitleEnabled = input.subtitleEnabled ?? current.subtitleEnabled
   const bgmEnabled = input.bgmEnabled ?? current.bgmEnabled
   const bgmId = input.bgmId !== undefined ? input.bgmId : current.bgmId

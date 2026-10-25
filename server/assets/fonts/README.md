@@ -1,5 +1,13 @@
 # 字体目录（剪辑模块字幕渲染 fontsdir）
 
-放置 OFL / 可商用授权字体文件（.otf / .ttf / .ttc），推荐思源黑体（SourceHanSansSC-Regular.otf）。
-首个文件（文件名排序）作为 default 字体用于 ASS 字幕与风险尾页 drawtext。
+**自素材库一期起，本目录由「素材库 → 字体库」Tab 管理**（上传 / 启用 / 删除），不再手工拷文件进来：
+
+- 上传：`POST /api/fonts`（管理员），校验 `.otf/.ttf/.ttc`、≤ 30MB、magic bytes，落盘到本目录，**默认未启用**；
+- 启用：授权类型 `ofl` / `commercial` 可直接启用；`other` 必须先填授权出处（字幕烧录属商用场景）；
+- default 字体 = **启用集中文件名排序首个**；无启用字体时保持历史行为（目录中文件名排序首个）；
+- 停用即时生效：剪辑页字体下拉移除，历史草稿渲染时回退 default 并打 `cut.font_unavailable_fallback_default` warn。
+
+手工放置的存量文件仍会被**服务启动扫描**接管：同步为未启用记录（幂等），需到素材库手动启用；
+同名文件被手工替换时按 sha256 对账更新，文件被手工删除时清脏记录并 warn。
+
 目录为空或环境缺 libass 时，渲染引擎自动降级 mock（字幕直过、尾页纯黑）。
