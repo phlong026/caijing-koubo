@@ -157,6 +157,28 @@ try {
     assert.equal((await getSubmission(s.subId))?.externalStatus, 'approved')
   })
 
+  await test('通过且返回风险话术（决策 D4）：取稿以校对台话术为准；未配置字段名时回退模板话术', async () => {
+    const { config } = await import('../src/config.js')
+    const s = await seedSent()
+    config.jiaoduitai.riskField = 'risk_tip'
+    try {
+      setRemote(s.reviewNo, {
+        status: 'approved',
+        content_text: `${s.title}\n\n债市进入震荡期。\n\n历史业绩不代表未来。`,
+        risk_tip: '校对台话术：基金有风险，投资须谨慎。',
+      })
+      await syncSubmission(s.subId)
+      assert.equal((await getApprovedCopy(s.copyId)).riskHint, '校对台话术：基金有风险，投资须谨慎。')
+    } finally {
+      config.jiaoduitai.riskField = ''
+    }
+    const s2 = await seedSent()
+    setRemote(s2.reviewNo, { status: 'approved', content_text: `${s2.title}\n\n正文。`, risk_tip: '未配置字段名时不应采用' })
+    await syncSubmission(s2.subId)
+    const fallback = (await getApprovedCopy(s2.copyId)).riskHint
+    assert.ok(fallback && fallback !== '未配置字段名时不应采用')
+  })
+
   await test('通过且文案未改：直接通过提交版本，不新增版本', async () => {
     const s = await seedSent()
     const plain = [

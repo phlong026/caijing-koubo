@@ -193,8 +193,15 @@ export interface GateResult {
   at: string | null
 }
 
+/** 文案审核方式：校对台 / 审核桩（本地联调）/ 审核员在审核工作台人工裁决 */
+export type ReviewMode = 'jiaoduitai' | 'stub' | 'manual'
+
 export interface Submission {
   isStub?: boolean
+  /** 这张单的审核去向（详情接口返回） */
+  channel?: ReviewMode
+  /** 校对台审核单号（已送校对台时） */
+  externalReviewNo?: string | null
   id: string
   copyId: string
   copyVersionId: string
@@ -311,6 +318,8 @@ export interface CopyOptions {
     gates: Record<string, string>
     origins: Record<string, string>
   }
+  /** 当前审核方式 */
+  review?: { mode: ReviewMode }
   personas: Array<PersonaBrief & { enabled: boolean }>
 }
 
@@ -570,7 +579,10 @@ export const copyApi = {
   },
   /** 人工复核队列（P1-7，仅审核员 / 管理员） */
   reviewQueue(scope: 'pending' | 'decided' = 'pending', line?: CopyLine) {
-    return apiGet<{ items: ReviewQueueItem[]; stubEnabled: boolean }>('/review/queue', { scope, line })
+    return apiGet<{ items: ReviewQueueItem[]; stubEnabled: boolean; mode: ReviewMode }>('/review/queue', {
+      scope,
+      line,
+    })
   },
   /** 审核单原始记录（关卡结果、追加话术） */
   submissionDetail(submissionId: string) {

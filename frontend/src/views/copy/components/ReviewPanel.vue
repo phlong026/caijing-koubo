@@ -8,6 +8,14 @@
     </div>
 
     <p v-if="review?.isStub" class="mw-subtle mb-3">当前为模拟审核，结果仅供测试，尚未完成人工审核。</p>
+    <!-- 审核去向（决策 D3 / D4）：校对台审核或审核员人工裁决 -->
+    <p v-else-if="inReview && review?.channel === 'jiaoduitai'" class="mw-subtle mb-3">
+      已送校对台审核<template v-if="review.externalReviewNo">（审核单 {{ review.externalReviewNo }}）</template
+      >，结果自动同步；校对台不支持撤回。
+    </p>
+    <p v-else-if="inReview && review?.channel === 'manual'" class="mw-subtle mb-3">
+      等待审核员在「审核工作台」裁决（自动审核关卡尚未接入）。
+    </p>
     <!-- 三关进度 -->
     <div v-if="review" class="space-y-1.5 mb-3">
       <div v-for="(g, gi) in review.gates" :key="gi" class="gate-row">
@@ -79,7 +87,11 @@ const copy = computed(() => store.copy)
 const review = computed(() => store.detail?.review ?? null)
 
 const WITHDRAWABLE = ['submitted', 'gate1', 'gate2', 'gate3']
-const canWithdraw = computed(() => !!review.value && WITHDRAWABLE.includes(review.value.status))
+// 校对台没有撤回接口，已送校对台的单不显示撤回（后端同样会拒绝）
+const canWithdraw = computed(
+  () => !!review.value && WITHDRAWABLE.includes(review.value.status) && review.value.channel !== 'jiaoduitai',
+)
+const inReview = computed(() => copy.value?.status === 'in_review')
 const withdrawing = ref(false)
 
 const statusText = computed(() => {

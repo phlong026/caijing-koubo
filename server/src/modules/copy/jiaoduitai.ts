@@ -44,6 +44,16 @@ export function toSubmitText(title: string | null | undefined, sections: Section
   return toPlainText(title, cleaned).replace(MULTI_BLANK, '\n\n').trim()
 }
 
+/**
+ * 校对台返回的风险提示话术（决策 D4）。字段名由 JIAODUITAI_RISK_FIELD 指定（预留，v1.1 文档尚无），
+ * 未配置或取不到时返回 null，由取稿处回退模板话术。
+ */
+export function extractRiskText(body: unknown, field: string): string | null {
+  if (!field || !body || typeof body !== 'object') return null
+  const v = (body as Record<string, unknown>)[field]
+  return typeof v === 'string' && v.trim() ? v.trim() : null
+}
+
 /** 校对台审核通过后返回的文案（查询接口 content_text 字段） */
 export function extractReviewedText(body: unknown): string | null {
   if (!body || typeof body !== 'object') return null

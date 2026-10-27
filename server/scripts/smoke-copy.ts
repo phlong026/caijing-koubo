@@ -539,6 +539,64 @@ if (!genOnly) {
     }
   }
 
+  // 决策 D2 / §9.8 场景 4：审核桩第 2 关退回（带原因）→ 可见原因与关卡 → 重提从第 1 关重新开始
+  const sc4 = await createManual(kosId, uniq('第2关退回'), '用于验证自动审核关卡直接退回。')
+  if (sc4) {
+    const g = await req(
+      'POST',
+      `/copy/${sc4.copyId}/generate`,
+      { templateId: 'ctpl_education', styleId: 'csty_kos_edu', durationTier: 'short', count: 1 },
+      { 'Idempotency-Key': `smoke-sc4-${stamp}` },
+    )
+    const gen = g.data?.generationId ? await waitGen(g.data.generationId) : null
+    const d = gen?.drafts?.[0]
+    const cur = d ? await req('GET', `/copy/${sc4.copyId}/drafts/${d.id}`) : null
+    const rev = cur?.data?.draft?.rev ?? cur?.data?.rev
+    const sub = d
+      ? await req('POST', `/copy/${sc4.copyId}/submit`, {
+          draftId: d.id,
+          rev,
+          stubRejectAt: 'gate2',
+          stubRejectReason: '第 2 关：数据缺少出处',
+        })
+      : null
+    let detail: any = null
+    for (let i = 0; i < 40; i++) {
+      await sleep(250)
+      detail = (await req('GET', `/copy/${sc4.copyId}`)).data
+      if (detail?.copy?.status === 'rejected') break
+    }
+    const gates = (detail?.review?.gates ?? []).map((x: any) => `${x.gate}:${x.result}`)
+    check(
+      '第 2 关直接退回：文案 rejected、关卡与原因可见',
+      !!sub?.ok &&
+        detail?.copy?.status === 'rejected' &&
+        detail?.review?.rejectedGate === 'gate2' &&
+        String(detail?.review?.rejectReason ?? '').includes('数据缺少出处') &&
+        gates.join(',') === 'gate1:pass,gate2:fail',
+      { submit: sub?.error ?? sub?.status, status: detail?.copy?.status, rejectedGate: detail?.review?.rejectedGate, gates },
+    )
+    // 重提：新审核单从第 1 关开始，正常走到待人工复核
+    const cur2 = d ? await req('GET', `/copy/${sc4.copyId}/drafts/${d.id}`) : null
+    const re = d
+      ? await req('POST', `/copy/${sc4.copyId}/submit`, { draftId: d.id, rev: cur2?.data?.draft?.rev ?? cur2?.data?.rev })
+      : null
+    let st = ''
+    let reGates: string[] = []
+    for (let i = 0; i < 40 && st !== 'pending_manual'; i++) {
+      await sleep(250)
+      const r = (await req('GET', `/review/submissions/${re?.data?.submissionId}`)).data
+      st = r?.status
+      reGates = (r?.gateResults ?? []).map((x: any) => `${x.gate}:${x.result}`)
+    }
+    check(
+      '退回后重提：新审核单从第 1 关重新走到待人工复核',
+      !!re?.ok && re?.data?.submissionId !== sub?.data?.submissionId && st === 'pending_manual' &&
+        reGates.join(',') === 'gate1:pass,gate2:pass,gate3:pass',
+      { resubmit: re?.error ?? re?.status, status: st, gates: reGates },
+    )
+  }
+
   // 分配人物：不存在的人物 id 被拒绝，不写入悬空 persona_id
   const cand = (await req('GET', '/topics?status=candidate&pageSize=1')).data?.items?.[0]
   if (cand) {

@@ -2,7 +2,7 @@ import { getDb, type Db } from '../../db/index.js'
 import { newId, jenc, toInt } from '../../lib/util.js'
 import { toDb, utcNow } from '../../lib/time.js'
 import { err } from '../../errors.js'
-import { config } from '../../config.js'
+import { config, hasJiaoduitai } from '../../config.js'
 import { logger } from '../../log.js'
 import { createDraftsFromTopics, createInitialDrafts } from '../copy-contract/service.js'
 import {
@@ -262,6 +262,8 @@ export interface CopyDetail {
     copyId: string
     copyVersionId: string
     isStub: boolean
+    channel: 'stub' | 'jiaoduitai' | 'manual'
+    externalReviewNo: string | null
     versionNo: number
     status: string
     statusLabel: string
@@ -380,6 +382,13 @@ export async function getCopyDetail(copyId: string): Promise<CopyDetail> {
           copyId: submission.copyId,
           copyVersionId: submission.copyVersionId,
           isStub: submission.isStub,
+          // 这张单的审核去向：桩单 / 已送校对台（或校对台已接入、等待补送）/ 人工复核
+          channel: submission.isStub
+            ? 'stub'
+            : submission.externalReviewNo || hasJiaoduitai()
+              ? 'jiaoduitai'
+              : 'manual',
+          externalReviewNo: submission.externalReviewNo,
           versionNo: versions.find((v) => v.id === submission.copyVersionId)?.versionNo ?? 0,
           status: submission.status,
           statusLabel: SUBMISSION_STATUS_LABELS[submission.status] ?? submission.status,
