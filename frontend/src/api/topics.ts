@@ -20,6 +20,10 @@ export interface Topic {
   methodName: string | null
   /** 按哪个人物的人设生成 */
   originPersonaId: string | null
+  /** 生成时启发式打分 0~100（辅助挑选；旧数据为 0/空不展示） */
+  score: number | null
+  /** 打分依据明细 */
+  scoreReasons: string[] | null
   newsTitle: string | null
   sentAt: string | null
   createdBy: string | null
@@ -68,6 +72,8 @@ export interface TopicQuery {
   status?: TopicStatus | string
   source?: TopicSource
   batchId?: string
+  /** sort=score：按生成评分降序（辅助人工挑选） */
+  sort?: 'score'
   page?: number
   pageSize?: number
 }

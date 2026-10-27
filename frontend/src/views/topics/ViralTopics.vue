@@ -182,6 +182,12 @@
             ><a-option value="pending">全部待送</a-option><a-option value="candidate">待分配</a-option
             ><a-option value="assigned">已分配</a-option></a-select
           >
+          <a-checkbox
+            :model-value="topics.sortByScore"
+            aria-label="按评分排序候选选题"
+            @change="(v: any) => topics.setSortByScore(!!v)"
+            >按评分</a-checkbox
+          >
           <a-button type="text" :loading="topics.loading" aria-label="刷新候选选题" @click="reloadCandidates"
             ><template #icon><icon-refresh /></template
           ></a-button>
@@ -219,12 +225,18 @@
                     ><template #icon><icon-archive /></template
                   ></a-button>
                 </div>
-                <div v-if="c.methodName || c.direction" class="topics-direction">
+                <div v-if="c.methodName || c.direction || c.score" class="topics-direction">
                   <template v-if="c.methodName"
                     ><span>方法</span><span class="mw-tag mw-tag-blue">{{ c.methodName }}</span></template
                   >
                   <template v-if="c.direction"
                     ><span>方向</span><span class="mw-tag mw-tag-gray">{{ c.direction }}</span></template
+                  >
+                  <template v-if="c.score"
+                    ><span>评分</span
+                    ><a-tooltip :content="(c.scoreReasons ?? []).join('；') || '启发式打分，供排序参考'"
+                      ><span class="mw-tag mw-tag-green cursor-help">{{ c.score }} 分</span></a-tooltip
+                    ></template
                   >
                 </div>
                 <p v-if="c.hook" class="topics-hook">钩子：{{ c.hook }}</p>
