@@ -84,6 +84,7 @@ async function main(): Promise<void> {
   const tplList: any[] = Array.isArray(templates.data) ? templates.data : []
   check('存在选题模板', tplList.length > 0, { count: tplList.length })
   const tpl = tplList[0]
+  check('每个选题方法都关联文案模板', tplList.every((t) => !!t.copyTemplateId), tplList.map((t) => [t.name, t.copyTemplateId]))
 
   const news = await req('GET', '/news?page=1&pageSize=3')
   const newsItems: any[] = news.data?.items ?? []
@@ -132,6 +133,36 @@ async function main(): Promise<void> {
     '候选字段完整（title/direction/hook）',
     !!t0.title && !!t0.direction && !!t0.hook,
     { title: t0.title, direction: t0.direction, hasHook: !!t0.hook },
+  )
+
+  check('选题记录生成时用的方法与人物', t0.methodId === tpl.id && t0.originPersonaId === enabledPersona.id && !!t0.methodName, {
+    methodId: t0.methodId,
+    expected: tpl.id,
+    origin: t0.originPersonaId,
+    methodName: t0.methodName,
+  })
+
+  console.log('\n=== 1.1 按人物配置自动分配选题方法 ===')
+  const bad = await req('POST', '/topics/generate', {
+    newsIds: [newsItems[0].id],
+    templateId: 'tpl_not_exist',
+    personaIds: [enabledPersona.id],
+    countPer: 1,
+  })
+  check('不存在的选题方法返回 400', bad.status === 400, bad.raw)
+  const auto = await req('POST', '/topics/generate', {
+    newsIds: [newsItems[0].id],
+    templateId: 'auto',
+    personaIds: [enabledPersona.id],
+    countPer: 1,
+  })
+  const autoBatch = auto.data?.batchId ? await waitBatch(auto.data.batchId) : null
+  check('自动分配批次完成', autoBatch?.status === 'done', autoBatch)
+  const autoTopics = await req('GET', `/topics?batchId=${auto.data?.batchId}&pageSize=5`)
+  check(
+    '自动分配的选题也记录了方法',
+    (autoTopics.data?.items ?? []).length > 0 && (autoTopics.data?.items ?? []).every((t: any) => !!t.methodId),
+    autoTopics.data?.items?.map((t: any) => t.methodId),
   )
 
   console.log('\n=== 2. 人物校验（本轮修复回归）===')
@@ -187,6 +218,17 @@ async function main(): Promise<void> {
     )
     check('copy 回链选题', d?.topicId === t0.id, { topicId: d?.topicId, expected: t0.id })
     check('详情带出人物档案（非空）', !!detail.data?.persona, { persona: detail.data?.persona?.id })
+    check(
+      '内容模板随选题方法带出',
+      d?.settings?.templateId === tpl.copyTemplateId && d?.settings?.inherited?.methodFrom === 'topic',
+      { settings: d?.settings, expected: tpl.copyTemplateId },
+    )
+
+    const opts = await req('GET', `/copy/options?personaId=${enabledPersona.id}`)
+    check('选项接口返回人物可用模板', Array.isArray(opts.data?.methodTemplateIds) && opts.data.methodTemplateIds.length > 0, opts.data?.methodTemplateIds)
+    const styleId = d?.settings?.styleId ?? opts.data?.styles?.[0]?.id
+    const preview = await req('POST', `/copy/${copyIds[0]}/prompt-preview`, { templateId: d?.settings?.templateId, styleId })
+    check('提示词包含选题要求（角度进入文案）', preview.status === 200 && String(preview.data?.user ?? '').includes('【选题要求】'), preview.raw?.error)
   }
 
   console.log('\n=== 4. 归档 ===')

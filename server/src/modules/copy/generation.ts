@@ -30,6 +30,8 @@ import {
   toPlainText,
 } from './text.js'
 import { assemblePrompt, assembleVariantPrompt, parseDraftJson, parseVariantJson } from './prompt.js'
+import { listTemplates as listTopicMethods } from '../topics/repo.js'
+import { inheritedMethod } from '../topics/methods.js'
 import {
   tierOf,
   wordRangeOf,
@@ -276,6 +278,7 @@ export async function assembleForCopy(
       factualBackground: ip.factualBackground,
       sampleScript: ip.sampleScript,
     },
+    topic: await topicAngle(copy, persona),
     template: { name: template.name, prompt: template.prompt, structureHint: template.structureHint },
     style: { name: style.name, prompt: style.prompt },
     durationTier: opts.durationTier,
@@ -283,6 +286,23 @@ export async function assembleForCopy(
     instructions: opts.instructions,
     source: { ...(await buildSourceBlock(copy)), ...((copy.settings?.sourceReview as any)?.correctedText ? { sourceText: String((copy.settings!.sourceReview as any).correctedText) } : {}) },
   })
+}
+
+/**
+ * 选题角度：只有资讯 / 对标来源的选题带角度。
+ * 手动来源的 topic.hook 存的是运营填写的关键词（见 buildSourceBlock），不能当开场注入。
+ */
+async function topicAngle(copy: CopyRow, persona: PersonaRow): Promise<Parameters<typeof assemblePrompt>[0]['topic']> {
+  if (!copy.topicId || (copy.source !== 'news' && copy.source !== 'benchmark')) return null
+  const t = await getDb().get<{ title: string; direction: string | null; hook: string | null; rationale: string | null; method_id: string | null }>(
+    'SELECT `title`, `direction`, `hook`, `rationale`, `method_id` FROM `topic` WHERE `id` = ?',
+    [copy.topicId],
+  )
+  if (!t) return null
+  // 选题方法该人物没开启（改派场景）时不写方法名，避免把人物不做的方法带进文案
+  const inherited = inheritedMethod(t.method_id, { line: persona.line, contentMix: persona.ipProfile.contentMix }, await listTopicMethods())
+  const method = inherited.from === 'topic' ? inherited.method?.name ?? null : null
+  return { title: copy.title ?? t.title, method, direction: t.direction, hook: t.hook, rationale: t.rationale }
 }
 
 /** 按来源组装来源块（FR-G3 四种模式） */

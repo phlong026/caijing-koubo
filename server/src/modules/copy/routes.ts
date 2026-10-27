@@ -45,6 +45,8 @@ import {
   switchCurrentDraft,
 } from './service.js'
 import { acceptGeneration, acceptVariant, applyVariant, assembleForCopy, validateDuration } from './generation.js'
+import { listTemplates as listTopicMethods } from '../topics/repo.js'
+import { copyTemplateFor, personaMethods } from '../topics/methods.js'
 import {
   assertReviewStubEnabled,
   getApprovedCopy,
@@ -148,8 +150,16 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
 
     const templates = await listTemplates(true)
     const styles = await listStyles(line, true)
+    // 该人物开启的选题方法对应的模板：前端下拉只列这些，减少无关选项
+    // 只保留已启用的模板；交集为空时返回 null，前端回落全部模板
+    const enabledIds = new Set(templates.map((t) => t.id))
+    const matched = persona
+      ? [...new Set(personaMethods({ line: persona.line, contentMix: persona.ipProfile.contentMix }, await listTopicMethods()).items.map((x) => copyTemplateFor(x.method)))].filter((id) => enabledIds.has(id))
+      : []
+    const methodTemplateIds = matched.length ? matched : null
 
     return ok({
+      methodTemplateIds,
       durationTiers: DURATION_TIERS.map((t) => ({
         key: t.key,
         name: t.name,

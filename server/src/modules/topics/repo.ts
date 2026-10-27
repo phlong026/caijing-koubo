@@ -18,6 +18,11 @@ export interface TopicRow {
   personaIds: string[]
   status: TopicStatus
   batchId: string | null
+  /** 生成时用的选题方法 */
+  methodId: string | null
+  methodName: string | null
+  /** 按哪个人物的人设生成；分配给其他人物时前端提示 */
+  originPersonaId: string | null
   newsTitle: string | null
   sentAt: string | null
   createdBy: string | null
@@ -36,6 +41,9 @@ function mapTopic(r: Record<string, any>): TopicRow {
     personaIds: jdec<string[]>(r.persona_ids, []),
     status: r.status,
     batchId: r.batch_id ?? null,
+    methodId: r.method_id ?? null,
+    methodName: r.method_name ?? null,
+    originPersonaId: r.origin_persona_id ?? null,
     newsTitle: r.news_title ?? null,
     sentAt: fromDb(r.sent_at),
     createdBy: r.created_by ?? null,
@@ -68,8 +76,9 @@ export function assertTransition(current: TopicStatus, next: TopicStatus, source
 
 export async function getTopic(id: string, db = getDb()): Promise<TopicRow | null> {
   const r = await db.get<Record<string, any>>(
-    `SELECT t.*, n.\`title\` AS news_title
+    `SELECT t.*, n.\`title\` AS news_title, m.\`name\` AS method_name
      FROM \`topic\` t LEFT JOIN \`news_item\` n ON n.\`id\` = t.\`source_id\`
+     LEFT JOIN \`topic_prompt_template\` m ON m.\`id\` = t.\`method_id\`
      WHERE t.\`id\` = ?`,
     [id],
   )
@@ -80,8 +89,9 @@ export async function getTopicsByIds(ids: string[], db = getDb()): Promise<Topic
   if (!ids.length) return []
   const ph = ids.map(() => '?').join(', ')
   const rows = await db.all<Record<string, any>>(
-    `SELECT t.*, n.\`title\` AS news_title
+    `SELECT t.*, n.\`title\` AS news_title, m.\`name\` AS method_name
      FROM \`topic\` t LEFT JOIN \`news_item\` n ON n.\`id\` = t.\`source_id\`
+     LEFT JOIN \`topic_prompt_template\` m ON m.\`id\` = t.\`method_id\`
      WHERE t.\`id\` IN (${ph})`,
     ids,
   )
@@ -116,8 +126,9 @@ export async function listTopics(q: Record<string, unknown>): Promise<PageResult
   const total =
     (await db.get<{ c: number }>(`SELECT COUNT(*) AS c FROM \`topic\` t ${whereSql}`, params))?.c ?? 0
   const rows = await db.all<Record<string, any>>(
-    `SELECT t.*, n.\`title\` AS news_title
+    `SELECT t.*, n.\`title\` AS news_title, m.\`name\` AS method_name
      FROM \`topic\` t LEFT JOIN \`news_item\` n ON n.\`id\` = t.\`source_id\`
+     LEFT JOIN \`topic_prompt_template\` m ON m.\`id\` = t.\`method_id\`
      ${whereSql} ORDER BY t.\`created_at\` DESC LIMIT ? OFFSET ?`,
     [...params, p.limit, p.offset],
   )
@@ -134,6 +145,8 @@ export interface CreateTopicInput {
   personaIds?: string[]
   status?: TopicStatus
   batchId?: string | null
+  methodId?: string | null
+  originPersonaId?: string | null
   createdBy?: string | null
 }
 
@@ -147,8 +160,8 @@ export async function createTopic(input: CreateTopicInput, db = getDb()): Promis
     throw err.invalidState('非 benchmark 来源选题必须经 assigned 后由送入接口置为 sent')
   }
   await db.run(
-    `INSERT INTO \`topic\` (\`id\`, \`source\`, \`source_id\`, \`title\`, \`direction\`, \`hook\`, \`rationale\`, \`persona_ids\`, \`status\`, \`batch_id\`, \`created_by\`, \`created_at\`)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO \`topic\` (\`id\`, \`source\`, \`source_id\`, \`title\`, \`direction\`, \`hook\`, \`rationale\`, \`persona_ids\`, \`status\`, \`batch_id\`, \`method_id\`, \`origin_persona_id\`, \`created_by\`, \`created_at\`)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       input.source,
@@ -160,6 +173,8 @@ export async function createTopic(input: CreateTopicInput, db = getDb()): Promis
       jenc(input.personaIds ?? []),
       status,
       input.batchId ?? null,
+      input.methodId ?? null,
+      input.originPersonaId ?? null,
       input.createdBy ?? null,
       toDb(utcNow()),
     ],
@@ -294,6 +309,8 @@ export interface TemplateRow {
   content: string
   isDefault: boolean
   builtin: string | null
+  /** 对应的文案工坊内容模板 */
+  copyTemplateId: string | null
   createdBy: string | null
   updatedAt: string | null
 }
@@ -305,21 +322,20 @@ function mapTemplate(r: Record<string, any>): TemplateRow {
     content: r.content,
     isDefault: !!r.is_default,
     builtin: r.builtin ?? null,
+    copyTemplateId: r.copy_template_id ?? null,
     createdBy: r.created_by ?? null,
     updatedAt: fromDb(r.updated_at),
   }
 }
 
-export async function listTemplates(): Promise<TemplateRow[]> {
-  const db = getDb()
+export async function listTemplates(db = getDb()): Promise<TemplateRow[]> {
   const rows = await db.all<Record<string, any>>(
     'SELECT * FROM `topic_prompt_template` ORDER BY `is_default` DESC, `name`',
   )
   return rows.map(mapTemplate)
 }
 
-export async function getTemplate(id: string): Promise<TemplateRow | null> {
-  const db = getDb()
+export async function getTemplate(id: string, db = getDb()): Promise<TemplateRow | null> {
   const r = await db.get<Record<string, any>>('SELECT * FROM `topic_prompt_template` WHERE `id` = ?', [id])
   return r ? mapTemplate(r) : null
 }
@@ -342,17 +358,19 @@ export async function createTemplate(input: {
   name: string
   content: string
   isDefault?: boolean
+  copyTemplateId: string
   createdBy?: string | null
 }, db = getDb()): Promise<TemplateRow> {
   const id = newId('tpl')
   await db.run(
-    `INSERT INTO \`topic_prompt_template\` (\`id\`, \`name\`, \`content\`, \`is_default\`, \`created_by\`, \`created_at\`, \`updated_at\`)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO \`topic_prompt_template\` (\`id\`, \`name\`, \`content\`, \`is_default\`, \`copy_template_id\`, \`created_by\`, \`created_at\`, \`updated_at\`)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       String(input.name).slice(0, 128),
       input.content,
       input.isDefault ? 1 : 0,
+      input.copyTemplateId,
       input.createdBy ?? null,
       toDb(utcNow()),
       toDb(utcNow()),
@@ -364,17 +382,18 @@ export async function createTemplate(input: {
 
 export async function updateTemplate(
   id: string,
-  patch: { name?: string; content?: string; isDefault?: boolean },
+  patch: { name?: string; content?: string; isDefault?: boolean; copyTemplateId?: string },
   db = getDb(),
 ): Promise<TemplateRow> {
-  const t = await getTemplate(id)
+  const t = await getTemplate(id, db)
   if (!t) throw err.notFound('模板不存在')
   await db.run(
-    'UPDATE `topic_prompt_template` SET `name` = ?, `content` = ?, `is_default` = ?, `updated_at` = ? WHERE `id` = ?',
+    'UPDATE `topic_prompt_template` SET `name` = ?, `content` = ?, `is_default` = ?, `copy_template_id` = ?, `updated_at` = ? WHERE `id` = ?',
     [
       patch.name ?? t.name,
       patch.content ?? t.content,
       patch.isDefault === undefined ? (t.isDefault ? 1 : 0) : patch.isDefault ? 1 : 0,
+      patch.copyTemplateId ?? t.copyTemplateId,
       toDb(utcNow()),
       id,
     ],
