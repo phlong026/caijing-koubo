@@ -22,7 +22,8 @@ export interface MethodMixItem {
 export interface PersonaMethods {
   /** 人物是否勾选过选题方法（false = 使用默认可用范围） */
   configured: boolean
-  items: Array<{ method: MethodLite; weight: number }>
+  /** weight 用于轮转（未填按 1）；ratio 是人物真实填写的比例（合并后），仅用于回显 */
+  items: Array<{ method: MethodLite; weight: number; ratio?: number }>
 }
 
 /** 内置选题方法 → 内置文案模板 */
@@ -73,11 +74,15 @@ export function personaMethods(
     const method = mix.methodId ? all.find((m) => m.id === mix.methodId) : matchMethodByLabel(mix.label, all)
     if (!method) continue
     // 非法比例（手工改库的 NaN / 0）按 1 处理，避免轮转取到 -1 下标
-    const weight = Number.isFinite(mix.ratio) && mix.ratio! > 0 ? mix.ratio! : 1
+    const valid = Number.isFinite(mix.ratio) && mix.ratio! > 0
+    const weight = valid ? mix.ratio! : 1
+    const ratio = valid ? mix.ratio : undefined
     const same = items.find((x) => x.method.id === method.id)
-    // 两个旧标签指向同一方法（如「知识科普」+「投教科普」）时合并，比例累加
-    if (same) same.weight += weight
-    else items.push({ method, weight })
+    // 两个旧标签指向同一方法（如「知识科普」+「投教科普」）时合并，权重与回显比例都累加
+    if (same) {
+      same.weight += weight
+      if (ratio !== undefined) same.ratio = (same.ratio ?? 0) + ratio
+    } else items.push({ method, weight, ...(ratio === undefined ? {} : { ratio }) })
   }
   if (items.length) return { configured: true, items }
 

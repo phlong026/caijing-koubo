@@ -18,7 +18,7 @@ import {
 } from './repo.js'
 import { startGeneration } from './service.js'
 import { getTemplate as getCopyTemplate } from '../copy/repo.js'
-import { DEFAULT_COPY_TEMPLATE_ID, matchMethodByLabel, personaMethods, unmatchedMixLabels } from './methods.js'
+import { DEFAULT_COPY_TEMPLATE_ID, personaMethods, unmatchedMixLabels } from './methods.js'
 import { getPersonasByIds } from '../personas/repo.js'
 
 /** 选题方法对应的文案模板必须存在且启用，否则送入文案工坊时带不出模板 */
@@ -123,11 +123,8 @@ export function registerTopicRoutes(app: FastifyInstance): void {
       const r = personaMethods({ line: p.line, contentMix: mix }, methods)
       out[p.id] = {
         configured: r.configured,
-        items: r.items.map((x) => ({
-          methodId: x.method.id,
-          // 只回显人物真实填写的比例；未填为 null（weight 的默认 1 不回显）
-          ratio: r.configured ? (mix.find((m) => (m.methodId ?? matchMethodByLabel(m.label, methods)?.id) === x.method.id)?.ratio ?? null) : null,
-        })),
+        // 只回显人物真实填写的比例（多个旧标签指向同一方法时已合并）；未填为 null
+        items: r.items.map((x) => ({ methodId: x.method.id, ratio: x.ratio ?? null })),
         unmatched: unmatchedMixLabels(mix, methods),
       }
     }

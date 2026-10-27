@@ -82,6 +82,16 @@ describe('personaMethods（人物可用的选题方法）', () => {
     ])
   })
 
+  it('回显用的比例同样合并；都没填比例时为 undefined（不回显默认权重 1）', () => {
+    const merged = personaMethods(
+      { line: 'kos', contentMix: [{ label: '投教科普', methodId: 'tpl_seed_education', ratio: 40 }, { label: '知识科普', ratio: 30 }, { label: '热点评论', ratio: 30 }] },
+      ALL,
+    )
+    expect(merged.items.map((x) => x.ratio)).toEqual([70, 30])
+    const noRatio = personaMethods({ line: 'kos', contentMix: [{ label: '投教科普' }, { label: '知识科普' }] }, ALL)
+    expect(noRatio.items.map((x) => x.ratio)).toEqual([undefined])
+  })
+
   it('非法比例（手工改库造成的 NaN / 0）按 1 处理，不让轮转出错', () => {
     const r = personaMethods({ line: 'kos', contentMix: [{ label: '投教科普', methodId: 'tpl_seed_education', ratio: Number.NaN }] }, ALL)
     expect(r.items[0]!.weight).toBe(1)
