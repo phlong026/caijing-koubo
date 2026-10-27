@@ -288,6 +288,8 @@ export interface StyleOption {
 }
 
 export interface CopyOptions {
+  /** 当前人物开启的选题方法对应的内容模板；没传人物时为 null */
+  methodTemplateIds?: string[] | null
   durationTiers: DurationTierOption[]
   templates: TemplateOption[]
   styles: StyleOption[]

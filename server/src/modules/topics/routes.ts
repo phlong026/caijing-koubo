@@ -17,6 +17,16 @@ import {
   updateTemplate,
 } from './repo.js'
 import { startGeneration } from './service.js'
+import { getTemplate as getCopyTemplate } from '../copy/repo.js'
+import { DEFAULT_COPY_TEMPLATE_ID, personaMethods, unmatchedMixLabels } from './methods.js'
+import { getPersonasByIds } from '../personas/repo.js'
+
+/** 选题方法对应的文案模板必须存在且启用，否则送入文案工坊时带不出模板 */
+async function assertCopyTemplate(id: string): Promise<string> {
+  const t = await getCopyTemplate(id)
+  if (!t || !t.enabled) throw err.badRequest('对应的文案模板不存在或已停用，请重新选择', { copyTemplateId: id })
+  return id
+}
 
 export function registerTopicRoutes(app: FastifyInstance): void {
   /** FR-N4 生成候选（异步任务，前端可离开页面） */
@@ -99,16 +109,39 @@ export function registerTopicRoutes(app: FastifyInstance): void {
     return ok(res)
   })
 
+  /**
+   * 人物开启的选题方法（选题页下拉、人物页勾选回显共用，规则只在后端 methods.ts 一处）。
+   * configured=false 表示人物没勾选，items 为按生产线给的默认可用范围。
+   */
+  app.get('/topics/persona-methods', async (req) => {
+    const raw = String((req.query as { personaIds?: string } | undefined)?.personaIds ?? '')
+    const ids = [...new Set(raw.split(',').map((x) => x.trim()).filter(Boolean))].slice(0, 50)
+    const [personas, methods] = await Promise.all([getPersonasByIds(ids), listTemplates()])
+    const out: Record<string, { configured: boolean; items: Array<{ methodId: string; ratio: number | null }>; unmatched: string[] }> = {}
+    for (const p of personas) {
+      const mix = p.ipProfile.contentMix ?? []
+      const r = personaMethods({ line: p.line, contentMix: mix }, methods)
+      out[p.id] = {
+        configured: r.configured,
+        // 只回显人物真实填写的比例（多个旧标签指向同一方法时已合并）；未填为 null
+        items: r.items.map((x) => ({ methodId: x.method.id, ratio: x.ratio ?? null })),
+        unmatched: unmatchedMixLabels(mix, methods),
+      }
+    }
+    return ok(out)
+  })
+
   /* ── FR-C2 提示词模板 CRUD ─────────────────────────────────────── */
   app.get('/topic-templates', async () => ok(await listTemplates()))
 
   app.post('/topic-templates', async (req, reply) => {
-    const body = (req.body ?? {}) as { name?: string; content?: string; isDefault?: boolean }
+    const body = (req.body ?? {}) as { name?: string; content?: string; isDefault?: boolean; copyTemplateId?: string }
     if (!body.name || !body.content) throw err.badRequest('名称与内容必填')
     const t = await createTemplate({
       name: body.name,
       content: body.content,
       isDefault: !!body.isDefault,
+      copyTemplateId: await assertCopyTemplate(body.copyTemplateId || DEFAULT_COPY_TEMPLATE_ID),
       createdBy: req.operator,
     })
     await recordOperation({
@@ -123,7 +156,8 @@ export function registerTopicRoutes(app: FastifyInstance): void {
 
   app.put('/topic-templates/:id', async (req) => {
     const { id } = req.params as { id: string }
-    const body = (req.body ?? {}) as { name?: string; content?: string; isDefault?: boolean }
+    const body = (req.body ?? {}) as { name?: string; content?: string; isDefault?: boolean; copyTemplateId?: string }
+    if (body.copyTemplateId !== undefined) await assertCopyTemplate(String(body.copyTemplateId))
     const t = await updateTemplate(id, body)
     await recordOperation({
       operator: req.operator,

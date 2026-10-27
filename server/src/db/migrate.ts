@@ -8,6 +8,7 @@ import { toDb, utcNow } from '../lib/time.js'
 import { seedCopyWorkshop, seedPersonaExtensions } from './seed-copy.js'
 import { seedVideoModule } from './seed-video.js'
 import { migratePublishAccounts } from './seed-publish.js'
+import { BUILTIN_COPY_TEMPLATE, DEFAULT_COPY_TEMPLATE_ID } from '../modules/topics/methods.js'
 
 export interface Migration {
   version: string
@@ -225,9 +226,7 @@ async function seedBaseData(db: Db): Promise<void> {
     })
   }
 
-  // 2) 提示词种子模板（P2-7：内置基础合规约束）
-  const compliance =
-    '\n\n【合规约束】不得承诺收益或保本；不得使用绝对化表述（稳赚、必涨、最高）；不得给出个股或具体产品的买卖建议；风险提示必须保留。'
+  // 2) 选题方法种子。人物档案、表达风格与合规约束由 topics/service.ts 固定追加，正文里不再重复
   const templates: Array<{ id: string; name: string; builtin: string; content: string; def: number }> = [
     {
       id: 'tpl_seed_market',
@@ -235,8 +234,7 @@ async function seedBaseData(db: Db): Promise<void> {
       builtin: 'market',
       def: 1,
       content:
-        '你是{role}。请基于下方资讯，为{target_audience}生成口播选题。\n要求：先给结论再给依据；每条包含 title / direction / hook / rationale 四个字段；hook 为一句话开场，口语可播；rationale 说明为什么这个角度现在值得讲。\n表达风格：{expression_style}\n禁用表达：{forbidden_claims}' +
-        compliance,
+        '你是{role}。请基于下方资讯，为{target_audience}生成口播选题。\n要求：先给结论再给依据；每条包含 title / direction / hook / rationale 四个字段；hook 为一句话开场，口语可播；rationale 说明为什么这个角度现在值得讲。'
     },
     {
       id: 'tpl_seed_education',
@@ -244,8 +242,7 @@ async function seedBaseData(db: Db): Promise<void> {
       builtin: 'education',
       def: 0,
       content:
-        '你是{role}，做投资者教育内容。请基于下方资讯，生成面向{target_audience}的科普型口播选题。\n要求：从一个常见误解切入，讲清规则与边界；每条包含 title / direction / hook / rationale。\n表达风格：{expression_style}\n禁用表达：{forbidden_claims}' +
-        compliance,
+        '你是{role}，做投资者教育内容。请基于下方资讯，生成面向{target_audience}的科普型口播选题。\n要求：从一个常见误解切入，讲清规则与边界；每条包含 title / direction / hook / rationale。'
     },
     {
       id: 'tpl_seed_product',
@@ -253,8 +250,7 @@ async function seedBaseData(db: Db): Promise<void> {
       builtin: 'product',
       def: 0,
       content:
-        '你是{role}。请基于下方资讯，生成与产品类型讲解相关的口播选题（只讲品类与选择逻辑，不做具体产品推荐）。\n要求：先讲适用人群与风险，再讲选择维度；每条包含 title / direction / hook / rationale。\n表达风格：{expression_style}\n禁用表达：{forbidden_claims}' +
-        compliance,
+        '你是{role}。请基于下方资讯，生成与产品类型讲解相关的口播选题（只讲品类与选择逻辑，不做具体产品推荐）。\n要求：先讲适用人群与风险，再讲选择维度；每条包含 title / direction / hook / rationale。'
     },
     {
       id: 'tpl_seed_comment',
@@ -262,8 +258,7 @@ async function seedBaseData(db: Db): Promise<void> {
       builtin: 'comment',
       def: 0,
       content:
-        '你是{role}。请基于下方热点资讯，生成观点型口播选题。\n要求：观点鲜明但不越界，给出两条以上支撑理由；每条包含 title / direction / hook / rationale。\n表达风格：{expression_style}\n禁用表达：{forbidden_claims}' +
-        compliance,
+        '你是{role}。请基于下方热点资讯，生成观点型口播选题。\n要求：观点鲜明但不越界，给出两条以上支撑理由；每条包含 title / direction / hook / rationale。'
     },
   ]
   for (const t of templates) {
@@ -275,12 +270,13 @@ async function seedBaseData(db: Db): Promise<void> {
         content: t.content,
         is_default: t.def,
         builtin: t.builtin,
+        copy_template_id: BUILTIN_COPY_TEMPLATE[t.builtin] ?? DEFAULT_COPY_TEMPLATE_ID,
         created_by: 'system',
         created_at: now,
         updated_at: now,
       },
       uniqueCols: ['id'],
-      updateCols: ['name', 'content', 'updated_at'],
+      updateCols: ['name', 'content', 'copy_template_id', 'updated_at'],
     })
   }
 
@@ -319,6 +315,23 @@ async function seedBaseData(db: Db): Promise<void> {
       ])
     }
   }
+}
+
+/**
+ * 选题方法关联文案模板（已装库回填，新装库由 002 种子直接写入）。
+ * 只填空值：不覆盖运营已改过的关联，也不改动方法正文（老库内置方法里重复的人物 / 合规段落无害，保留）。
+ */
+const backfillTopicMethodTemplates: Migration['up'] = async (db) => {
+  for (const [builtin, templateId] of Object.entries(BUILTIN_COPY_TEMPLATE)) {
+    await db.run(
+      'UPDATE `topic_prompt_template` SET `copy_template_id` = ? WHERE `builtin` = ? AND `copy_template_id` IS NULL',
+      [templateId, builtin],
+    )
+  }
+  // 运营自建的方法回落市场解读型，可在方法编辑里改
+  await db.run('UPDATE `topic_prompt_template` SET `copy_template_id` = ? WHERE `copy_template_id` IS NULL', [
+    DEFAULT_COPY_TEMPLATE_ID,
+  ])
 }
 
 /** copy 扩展列补全（幂等，已有库安全） */
@@ -444,6 +457,11 @@ export const migrations: Migration[] = [
     version: '008_publish_account_backfill',
     name: '发布管理：存量人物绑定回填 platform_account_id（M4 迁移，AC-0.2）',
     up: migratePublishAccounts,
+  },
+  {
+    version: '009_topic_method_copy_template',
+    name: '选题方法：关联文案模板回填（选题方法统一）',
+    up: backfillTopicMethodTemplates,
   },
 ]
 

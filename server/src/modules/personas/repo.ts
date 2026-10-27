@@ -23,7 +23,9 @@ export interface IpProfile {
   /** 人物库新增（FR-I1）：内容方向 */
   contentDirections?: string[]
   /** 人物库新增（FR-I1）：内容配比 */
-  contentMix?: Array<{ label: string; ratio?: number }>
+  contentMix?: Array<{ label: string; ratio?: number; methodId?: string }>
+  /** 默认表达风格（copy_style.id，同生产线）；文案工坊据此带出风格 */
+  defaultStyleId?: string
 }
 
 export interface Persona {
@@ -84,9 +86,11 @@ export function readProfile(raw: unknown): IpProfile {
     contentMix: Array.isArray(mix)
       ? mix.map((x: any) => ({
           label: String(x?.label ?? ''),
+          ...(x?.methodId || x?.method_id ? { methodId: String(x.methodId ?? x.method_id) } : {}),
           ...(x?.ratio !== undefined && x?.ratio !== null ? { ratio: Number(x.ratio) } : {}),
         }))
       : [],
+    defaultStyleId: pick('defaultStyleId', 'default_style_id') || undefined,
   }
 }
 
@@ -203,6 +207,7 @@ export async function createPersona(input: CreatePersonaInput): Promise<Persona>
   const now = toDb(utcNow())
   const id = newId('ps')
   const profile = input.ipProfile !== undefined ? normalizeProfileInput(input.ipProfile) : { ...EMPTY_PROFILE }
+  await assertProfileRefs(profile, line, db)
   try {
     await db.run(
       `INSERT INTO \`persona\`
@@ -356,6 +361,37 @@ async function assertBindingModeSwitchable(current: Persona, next: BindingMode, 
   }
 }
 
+/**
+ * 档案里引用的选题方法与默认风格必须真实存在：
+ * 风格还要启用且与人物同一生产线（文案工坊风格按线过滤，跨线会在生成时被拒）。
+ * 直接查表，不引用 topics / copy 模块，避免模块循环依赖。
+ */
+async function assertProfileRefs(profile: IpProfile, line: string, db: Db, previous?: IpProfile): Promise<void> {
+  // 只校验这次新增 / 改动的引用：之前已保存的方法或风格后来被删 / 停用，不能挡住其它字段的保存
+  const kept = new Set((previous?.contentMix ?? []).map((x) => x.methodId).filter(Boolean))
+  const methodIds = [
+    ...new Set((profile.contentMix ?? []).map((x) => x.methodId).filter((x): x is string => !!x && !kept.has(x))),
+  ]
+  if (methodIds.length) {
+    const rows = await db.all<{ id: string }>(
+      `SELECT \`id\` FROM \`topic_prompt_template\` WHERE \`id\` IN (${methodIds.map(() => '?').join(', ')})`,
+      methodIds,
+    )
+    const missing = methodIds.filter((id) => !rows.some((r) => r.id === id))
+    if (missing.length) throw err.badRequest('选题方法不存在，请刷新后重新勾选', { missing })
+  }
+  if (profile.defaultStyleId && profile.defaultStyleId !== previous?.defaultStyleId) {
+    const style = await db.get<{ line: string; enabled: number }>(
+      'SELECT `line`, `enabled` FROM `copy_style` WHERE `id` = ?',
+      [profile.defaultStyleId],
+    )
+    if (!style || !Number(style.enabled)) throw err.badRequest('默认表达风格不存在或已停用', { styleId: profile.defaultStyleId })
+    if (style.line !== line) {
+      throw err.badRequest('默认表达风格与人物所属生产线不一致', { styleId: profile.defaultStyleId, styleLine: style.line, line })
+    }
+  }
+}
+
 /** 保存 IP 定位（FR-I5）：hash 未变不升 revision；变化则 revision+1 并由调用方产生版本 */
 export async function saveProfile(
   id: string,
@@ -374,6 +410,7 @@ export async function saveProfile(
     })
   }
   const profile = normalizeProfileInput(rawProfile)
+  await assertProfileRefs(profile, current.line, db, current.ipProfile)
   const hash = profileHash(profile)
   const oldHash = profileHash(current.ipProfile)
   const changed = hash !== oldHash

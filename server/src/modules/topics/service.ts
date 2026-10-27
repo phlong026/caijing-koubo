@@ -10,12 +10,17 @@ import {
   getBatch,
   getDefaultTemplate,
   getTemplate,
+  listTemplates,
   type TemplateRow,
 } from './repo.js'
+import { personaMethods, pickMethod } from './methods.js'
 import { logger } from '../../log.js'
 import { err } from '../../errors.js'
 import { clamp, jdec } from '../../lib/util.js'
 import { recordOperation } from '../audit/repo.js'
+
+/** 选题方法取值：'auto' = 按每个人物配置的选题方法自动分配 */
+export const AUTO_METHOD = 'auto'
 
 export const MAX_BATCH_TOPICS = 100 // P2-7：单批总量上限
 
@@ -71,6 +76,8 @@ export function personaBlock(p: Persona): string {
     `- 目标受众：${ip.targetAudience || '未填写'}`,
     `- 表达风格：${ip.expressionStyle || '未填写'}`,
   ]
+  // 内容方向 = 话题范围：选题应落在这些话题里
+  if (ip.contentDirections?.length) lines.push(`- 内容方向（选题应落在这些话题内）：${ip.contentDirections.join('、')}`)
   return lines.join('\n')
 }
 
@@ -139,6 +146,10 @@ export async function startGeneration(input: GenerateInput): Promise<{ batchId: 
   if (!newsIds.length) throw err.badRequest('请至少选择 1 条资讯')
   if (!personaIds.length) throw err.badRequest('请至少选择 1 个人物')
 
+  if (input.templateId && input.templateId !== AUTO_METHOD && !(await getTemplate(input.templateId))) {
+    throw err.badRequest('选题方法不存在，请刷新后重新选择', { templateId: input.templateId })
+  }
+
   const expected = newsIds.length * personaIds.length * countPer // P2-7 统一语义：资讯×人物×数量
   if (expected > MAX_BATCH_TOPICS) {
     throw err.badRequest(`本批将生成 ${expected} 条，超过单批上限 ${MAX_BATCH_TOPICS} 条，请减少资讯/人物或生成数量`)
@@ -171,11 +182,26 @@ export async function runGeneration(batchId: string): Promise<void> {
     logger.info({ batchId, status: batch.status }, 'topic.batch_skip_done')
     return
   }
-  const newsList = await getNewsByIds(batch.newsIds)
+  // 按批次里的资讯顺序排：自动分配方法按序号轮转，重试时必须得到同一顺序
+  const newsList = (await getNewsByIds(batch.newsIds)).sort((a, b) => batch.newsIds.indexOf(a.id) - batch.newsIds.indexOf(b.id))
   const personaList = await getPersonasByIds(batch.personaIds)
-  const template: TemplateRow | null = batch.templateId
-    ? await getTemplate(batch.templateId)
-    : await getDefaultTemplate()
+  const methods = await listTemplates()
+  const defaultTemplate = await getDefaultTemplate()
+  const chosen: TemplateRow | null =
+    batch.templateId && batch.templateId !== AUTO_METHOD ? await getTemplate(batch.templateId) : null
+
+  /**
+   * 每个「资讯 × 人物」组合用哪个选题方法（结果只取决于序号，队列重试时不变）：
+   * - 指定了方法且该人物可用 → 用指定方法；
+   * - 自动，或指定方法该人物没开启（如素人未勾选产品推荐）→ 按人物配置分配；
+   * - 都没有 → 默认方法。
+   */
+  const methodFor = (persona: Persona, newsIndex: number): TemplateRow | null => {
+    const available = personaMethods({ line: persona.line, contentMix: persona.ipProfile.contentMix }, methods)
+    if (chosen && available.items.some((x) => x.method.id === chosen.id)) return chosen
+    const picked = pickMethod(available, newsIndex)
+    return methods.find((m) => m.id === picked?.id) ?? defaultTemplate
+  }
 
   if (!newsList.length || !personaList.length) {
     await finishBatch(batchId, 'failed', '资讯或人物不存在')
@@ -194,8 +220,9 @@ export async function runGeneration(batchId: string): Promise<void> {
   const errors: string[] = []
   let cost = 0
 
-  for (const news of newsList) {
+  for (const [newsIndex, news] of newsList.entries()) {
     for (const persona of personaList) {
+      const template = methodFor(persona, newsIndex)
       const previous = pairRows(existing, news.id, persona.id)
       const remaining = Math.max(0, batch.countPer - previous.length)
       if (!remaining) {
@@ -228,6 +255,7 @@ export async function runGeneration(batchId: string): Promise<void> {
             newsId: news.id,
             personaId: persona.id,
             personaRole: persona.ipProfile.role,
+            methodId: template?.id ?? null,
             forbiddenClaims: persona.ipProfile.forbiddenClaims,
             promptSnapshot: messages[1].content.slice(0, 800),
           },
@@ -256,6 +284,7 @@ export async function runGeneration(batchId: string): Promise<void> {
               source: 'news', sourceId: news.id, title: t.title,
               direction: t.direction, hook: t.hook, rationale: t.rationale,
               personaIds: [persona.id], status: 'assigned', batchId,
+              methodId: template?.id ?? null, originPersonaId: persona.id,
               createdBy: batch.createdBy,
             }, tx)
             titles.add(t.title.trim())
