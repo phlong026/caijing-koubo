@@ -1,0 +1,21 @@
+{
+  "name": "matrix-workshop-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "矩阵工场 · 财经口播智能体桌面版（Electron 壳）",
+  "main": "main.mjs",
+  "type": "module",
+  "scripts": {
+    "fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs",
+    "fetch:ffmpeg:mac": "node scripts/fetch-ffmpeg.mjs mac-arm64",
+    "fetch:ffmpeg:win": "node scripts/fetch-ffmpeg.mjs win-x64",
+    "start": "electron .",
+    "pkg:deps": "node scripts/sync-server-deps.mjs",
+    "dist:mac": "electron-builder --mac --arm64",
+    "dist:win": "electron-builder --win --x64"
+  },
+  "devDependencies": {
+    "electron": "^35.7.5",
+    "electron-builder": "^25.1.8"
+  }
+}

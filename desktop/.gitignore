@@ -1,0 +1,5 @@
+node_modules/
+release/
+.build/
+# ffmpeg 二进制不入库（打包机 npm run fetch:ffmpeg 下载）
+resources/

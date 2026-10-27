@@ -192,7 +192,7 @@ async function writeDemoVideo(destPath: string, seconds: number): Promise<void> 
   const dur = String(seconds)
   const { spawn } = await import('node:child_process')
   await new Promise<void>((resolve, reject) => {
-    const p = spawn('ffmpeg', [
+    const p = spawn(config.ffmpegPath, [
       '-y',
       '-v',
       'error',

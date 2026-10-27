@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { config } from '../config.js'
 import path from 'node:path'
 import { ensureTempDir, checkFfmpeg } from './pipeline.js'
 
@@ -102,7 +103,7 @@ export async function normalizeAudioToMp3(srcPath: string, destName: string): Pr
   await ensureTempDir()
   const dest = path.join(path.dirname(srcPath), destName)
   const { code, stderr } = await run(
-    'ffmpeg',
+    config.ffmpegPath,
     ['-y', '-i', srcPath, '-vn', '-ac', '1', '-ar', '44100', '-b:a', '128k', '-f', 'mp3', dest],
     FFMPEG_TIMEOUT_MS,
   )
@@ -117,7 +118,7 @@ export async function transcodeCompatVideo(srcPath: string, destName: string): P
   await ensureTempDir()
   const dest = path.join(path.dirname(srcPath), destName)
   const { code, stderr } = await run(
-    'ffmpeg',
+    config.ffmpegPath,
     [
       '-y',
       '-i',
@@ -150,7 +151,7 @@ export async function extractCoverFrame(srcPath: string, destName: string, durat
   const dest = path.join(path.dirname(srcPath), destName)
   const at = durationMs && durationMs > 2000 ? 1 : 0.2
   const { code, stderr } = await run(
-    'ffmpeg',
+    config.ffmpegPath,
     ['-y', '-ss', String(at), '-i', srcPath, '-frames:v', '1', '-q:v', '3', dest],
     FFMPEG_TIMEOUT_MS,
   )
@@ -165,7 +166,7 @@ export async function makeThumb(srcPath: string, destName: string, width = 320):
   await ensureTempDir()
   const dest = path.join(path.dirname(srcPath), destName)
   const { code, stderr } = await run(
-    'ffmpeg',
+    config.ffmpegPath,
     ['-y', '-i', srcPath, '-vf', `scale=${width}:-2`, '-frames:v', '1', dest],
     FFMPEG_TIMEOUT_MS,
   )
@@ -409,7 +410,7 @@ export async function normalizeGeneratedVideo(
 
   // 全量解码校验：probe 只读元数据，发现不了截断包与解码错误
   const decode = await run(
-    'ffmpeg',
+    config.ffmpegPath,
     ['-v', 'error', '-nostdin', '-xerror', '-threads', '2', '-protocol_whitelist', 'file,pipe', '-i', transformed ? destPath : srcPath, '-map', '0:v:0', '-map', '0:a?', '-f', 'null', '-'],
     NORMALIZE_TIMEOUT_MS,
   )
