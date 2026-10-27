@@ -8,7 +8,6 @@
           <template v-if="personaName"> · {{ personaName }}</template>
           <template v-if="copy.lineLabel"> · {{ copy.lineLabel }}</template>
         </span>
-        <span v-else>选择素材，开始创作口播文案</span>
       </template>
       <template #actions>
         <a-button v-if="copy" :aria-pressed="workspace.focusWriting" @click="toggleWritingFocus"
@@ -36,7 +35,6 @@
     <div v-else-if="store.notFound" class="mw-card py-20 text-center">
       <icon-exclamation-circle style="font-size: 44px; color: #d5dce7" />
       <div class="text-[15px] font-medium text-[#3c4a63] mt-3">文案不存在或已被删除</div>
-      <div class="mw-subtle mt-1.5">可能链接已失效，或该文案已被归档</div>
       <a-button type="primary" class="mt-5" @click="listVisible = true">打开文案列表</a-button>
     </div>
     <div v-else-if="store.error && !copy" class="mw-card py-20 text-center">
@@ -69,10 +67,7 @@
             >
           </div>
           <div id="copy-source-content" v-show="!collapsed.source" class="flow-card">
-            <SourcePanel @created="onSourcesCreated" @source-mode="(mode) => (sourceMode = mode)" />
-            <div v-if="sourceMode === 'topics'" class="flow-next">
-              <a-button @click="goToStep('settings')">下一步：设置创作要求 <icon-arrow-down /></a-button>
-            </div>
+            <SourcePanel @created="onSourcesCreated" />
           </div>
         </div>
       </section>
@@ -81,14 +76,8 @@
         <div class="flow-step-body">
           <div class="flow-step-heading">
             <h2 id="copy-settings-heading" tabindex="-1">设置创作要求</h2>
-            <span class="flow-state">{{
-              store.settingsSaving
-                ? '保存中'
-                : store.settingsError
-                  ? '保存失败'
-                  : store.settingsDirty
-                    ? '有改动'
-                    : '已保存'
+            <span v-if="store.settingsSaving || store.settingsError" class="flow-state">{{
+              store.settingsSaving ? '保存中' : '保存失败'
             }}</span
             ><a-button
               type="text"
@@ -101,9 +90,6 @@
           </div>
           <div id="copy-settings-content" v-show="!collapsed.settings" class="flow-card">
             <SettingsPanel @preview="onPreviewPrompt" />
-            <div class="flow-next">
-              <a-button type="text" @click="goToStep('write')">编辑已有文案 <icon-arrow-down /></a-button>
-            </div>
           </div>
         </div>
       </section>
@@ -130,9 +116,6 @@
               @variant="onVariant"
             />
           </div>
-          <div class="flow-next">
-            <a-button @click="goToStep('review')">下一步：检查与审核 <icon-arrow-down /></a-button>
-          </div>
         </div>
       </section>
       <section id="copy-step-review" class="flow-step" aria-labelledby="copy-review-heading">
@@ -145,25 +128,7 @@
             <span class="flow-state" :class="{ complete: copy.status === 'approved' }">{{ reviewStatusLabel }}</span>
           </div>
           <ReviewPanel v-if="showReview" />
-          <div class="flow-card flow-submit">
-            <div>
-              <strong>{{
-                copy.status === 'approved'
-                  ? '文案已通过审核'
-                  : copy.status === 'in_review'
-                    ? '文案正在审核中'
-                    : '检查文案，提交审核'
-              }}</strong>
-              <p>
-                {{
-                  copy.status === 'approved'
-                    ? '可查看通过稿，准备制作视频。'
-                    : copy.status === 'in_review'
-                      ? '审核完成后可在此查看结果。'
-                      : '提交前将检查字数、时长、用词和定稿内容。'
-                }}
-              </p>
-            </div>
+          <div v-if="hasReviewAction" class="flow-submit">
             <a-button
               v-if="copy.status === 'draft' || copy.status === 'rejected'"
               type="primary"
@@ -172,10 +137,7 @@
               >检查并提交审核</a-button
             >
             <a-button
-              v-else-if="
-                copy.status === 'in_review' &&
-                ['submitted', 'gate1', 'gate2', 'gate3'].includes(store.detail?.review?.status ?? '')
-              "
+              v-else-if="canWithdraw"
               @click="onWithdraw"
               >撤回提交</a-button
             >
@@ -216,7 +178,7 @@
               >
               · {{ store.creativeSettings.count }} 篇
             </p>
-            <p>{{ store.creativeSettings.instructions || '按所选人物、模板和风格创作' }}</p>
+            <p v-if="store.creativeSettings.instructions">{{ store.creativeSettings.instructions }}</p>
             <p class="mw-subtle">使用素材：{{ store.copy?.settings?.sourceReview ? '已保存的校对稿' : '原始素材' }}</p>
           </div>
         </div>
@@ -252,7 +214,6 @@ const store = useCopyStore()
 const draftEditorRef = ref<InstanceType<typeof DraftEditor> | null>(null)
 const workspace = useWorkspaceStore()
 const collapsed = reactive({ source: false, settings: false })
-const sourceMode = ref('topics')
 type FlowStep = 'source' | 'settings' | 'write' | 'review'
 function goToStep(step: FlowStep) {
   if (step === 'source' || step === 'settings') collapsed[step] = false
@@ -305,6 +266,15 @@ watch(
 )
 /** 人物名取自详情顶层 `persona`（copy 自身没有 persona 字段） */
 const personaName = computed(() => store.detail?.persona?.name ?? '')
+const canWithdraw = computed(
+  () =>
+    copy.value?.status === 'in_review' &&
+    ['submitted', 'gate1', 'gate2', 'gate3'].includes(store.detail?.review?.status ?? ''),
+)
+const hasReviewAction = computed(
+  () =>
+    ['draft', 'rejected', 'approved'].includes(copy.value?.status ?? '') || canWithdraw.value || canGoPublish.value,
+)
 const showReview = computed(
   () => !!store.detail?.review || ['in_review', 'approved', 'rejected'].includes(copy.value?.status ?? ''),
 )
@@ -463,15 +433,24 @@ async function onSaveDraft(): Promise<void> {
   }
 }
 
-async function onWithdraw(): Promise<void> {
-  if (!copy.value) return
-  try {
-    await copyApi.withdraw(copy.value.id)
-    await store.load(copy.value.id)
-    Message.success('已撤回提交，可继续编辑')
-  } catch (e) {
-    Message.error((e as Error).message)
-  }
+function onWithdraw(): void {
+  const id = copy.value?.id
+  if (!id) return
+  Modal.confirm({
+    title: '撤回提交？',
+    content: '撤回后需重新提交审核。',
+    okText: '撤回',
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        await copyApi.withdraw(id)
+        await store.load(id)
+        Message.success('已撤回')
+      } catch (e) {
+        Message.error((e as Error).message)
+      }
+    },
+  })
 }
 
 function onGoVideo(): void {
@@ -503,7 +482,7 @@ function onVariant(sectionIndex: number): void {
 /* ── 提交 ── */
 
 function onSubmitted(_submissionId: string): void {
-  Message.info('审核进行中，可稍后刷新查看结果')
+  Message.success('已提交审核')
 }
 
 /* ── 提示词预览 ── */
@@ -673,27 +652,12 @@ async function onPreviewPrompt(settings: CreativeSettings): Promise<void> {
   border-radius: 8px;
   background: #fff;
 }
-.flow-next {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 18px;
-}
 .flow-submit {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 20px;
+  justify-content: flex-end;
+  gap: 12px;
   flex-wrap: wrap;
-}
-.flow-submit strong {
-  font-size: 15px;
-  font-weight: 500;
-}
-.flow-submit p {
-  font-size: 13px;
-  color: var(--mw-text3);
-  margin-top: 8px;
-  line-height: 1.8;
 }
 :global(.copy-flow-page .copy-settings) {
   height: auto;

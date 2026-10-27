@@ -42,7 +42,6 @@
 
     <!-- 结果 -->
     <div v-if="variants.length" class="mt-4 space-y-2.5">
-      <div class="mw-subtle">选择一种替换，或另存为新稿（原段落保持不变）</div>
       <div v-for="v in variants" :key="v.id" class="variant-card">
         <div class="flex items-center gap-2 mb-1.5">
           <a-tag size="small" color="arcoblue">{{ kindLabel(v.kind) }}</a-tag>
@@ -57,7 +56,6 @@
       </div>
     </div>
 
-    <div v-else-if="!loading" class="mt-4 mw-subtle text-center py-2">还没有变体，选好改法后点击生成</div>
   </a-modal>
 </template>
 

@@ -41,8 +41,8 @@
           ><span v-if="d.isFinal" class="mw-tag mw-tag-gray">定稿</span>
         </div>
         <div class="candidate-direction">{{ d.name }}</div>
-        <h3>{{ d.title || '尚未填写标题' }}</h3>
-        <p>{{ d.sections[0]?.text || '空白稿，可打开后开始编辑' }}</p>
+        <h3>{{ d.title || '未命名' }}</h3>
+        <p>{{ d.sections[0]?.text }}</p>
         <div class="candidate-card-bottom">
           <span>{{ bodyCount(d) }} 字 · 约 {{ seconds(d) }} 秒</span
           ><a-button
@@ -65,7 +65,6 @@
           <a-button type="primary" @click="adopt(d.id)">采用并编辑这篇</a-button>
         </article>
       </div>
-      <p class="mw-subtle mt-4">展示最近保存的内容</p>
     </a-modal>
   </section>
 </template>
