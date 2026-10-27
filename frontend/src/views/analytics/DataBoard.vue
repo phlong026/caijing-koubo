@@ -22,10 +22,6 @@
         <a-select :style="{ width: '110px' }" default-value="全部平台" />
         <div class="flex-1"></div>
         <span class="mw-subtle whitespace-nowrap">2026.10.06 – 10.12 · 北京时间</span>
-        <span class="mw-subtle whitespace-nowrap">最近回步：10月12日 09:30（演示）</span>
-        <span class="mw-subtle whitespace-nowrap flex items-center gap-1"
-          ><icon-info-circle :size="13" />平台回采能力待验证</span
-        >
       </div>
 
       <!-- 指标卡 -->
@@ -36,7 +32,7 @@
           class="mw-card p-5 flex items-center justify-between transition-shadow hover:shadow-[var(--mw-shadow-md)]"
         >
           <div>
-            <div class="mw-subtle">{{ m.name }}<span class="ml-0.5">（演示）</span></div>
+            <div class="mw-subtle">{{ m.name }}</div>
             <div class="text-[32px] font-bold leading-[1.2] mt-1.5 tracking-tight">{{ m.value }}</div>
           </div>
           <div
@@ -47,15 +43,12 @@
           </div>
         </div>
       </div>
-      <div class="mw-subtle -mt-3 mb-4">统计来自示例发布记录；生产任务量不等于成功发布量。</div>
 
       <!-- 趋势 + 生产线表现 -->
       <div class="grid grid-cols-[1.9fr_1fr] gap-5 mb-5">
         <div class="mw-card p-5">
           <div class="flex items-center gap-4">
-            <div class="text-[15px] font-semibold">
-              播放趋势指数 <span class="mw-subtle font-normal">（演示）</span>
-            </div>
+            <div class="text-[15px] font-semibold">播放趋势指数</div>
             <div class="flex items-center gap-3 ml-auto">
               <span
                 v-for="s in trend.series"
@@ -106,7 +99,7 @@
           </svg>
         </div>
         <div class="mw-card p-5">
-          <div class="text-[15px] font-semibold">各生产线表现 <span class="mw-subtle font-normal">（演示）</span></div>
+          <div class="text-[15px] font-semibold">各生产线表现</div>
           <div class="mt-4 flex flex-col gap-4">
             <div v-for="s in linePerf" :key="s.name" class="flex items-center gap-3">
               <span class="w-9 h-9 rounded-full flex items-center justify-center" :style="{ background: s.bg }">
@@ -193,9 +186,7 @@
 
     <!-- ============ 特征沉淀 ============ -->
     <div v-else-if="tab === 'feature'" class="mw-card p-5">
-      <div class="text-[15px] font-semibold mb-3">
-        爆款特征沉淀 <span class="mw-subtle font-normal">（演示）· 系统自动归因，待运营确认后作为生成偏好</span>
-      </div>
+      <div class="text-[15px] font-semibold mb-3">爆款特征沉淀</div>
       <div
         class="grid grid-cols-[3fr_1.2fr_1.2fr_1fr] text-[12px] text-[var(--mw-text3)] pb-2 border-b border-[var(--mw-border)]"
       >
@@ -220,9 +211,7 @@
 
     <!-- ============ 选题反馈 ============ -->
     <div v-else class="mw-card p-5">
-      <div class="text-[15px] font-semibold mb-3">
-        反哺选题库 <span class="mw-subtle font-normal">（演示）· 运营确认后进入资讯候选池</span>
-      </div>
+      <div class="text-[15px] font-semibold mb-3">反哺选题库</div>
       <div
         v-for="s in feedbacks"
         :key="s.id"
@@ -240,7 +229,6 @@
         </div>
       </div>
     </div>
-    <div class="mw-corner-note">原型预览 · 演示数据</div>
   </div>
 </template>
 
@@ -300,21 +288,21 @@ const feedbacks = [
   {
     id: 'f1',
     title: '问题式开场在本组样例中互动较高',
-    basis: '近 7 天 32 条爆款的钩子归因（示例）',
+    basis: '近 7 天 32 条爆款的钩子归因',
     status: '待确认',
     cls: 'mw-tag-yellow',
   },
   {
     id: 'f2',
     title: '45-60 秒时长区间的完播率最优',
-    basis: 'T+7 完播率对比（示例）',
+    basis: 'T+7 完播率对比',
     status: '已加入选题库',
     cls: 'mw-tag-green',
   },
   {
     id: 'f3',
     title: '素人矩阵：概念澄清类选题跑量更稳',
-    basis: '素人线 T+1 播放对比（示例）',
+    basis: '素人线 T+1 播放对比',
     status: '待确认',
     cls: 'mw-tag-yellow',
   },
