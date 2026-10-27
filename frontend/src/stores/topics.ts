@@ -13,6 +13,7 @@ import {
   type Topic,
   type TopicBatch,
   type TopicTemplate,
+  type TopicTemplatePayload,
   type TopicQuery,
 } from '@/api/topics'
 
@@ -114,7 +115,7 @@ export const useTopicStore = defineStore('topics', () => {
     }
   }
 
-  async function saveTemplate(payload: { id?: string; name: string; content: string; isDefault?: boolean }) {
+  async function saveTemplate(payload: { id?: string } & TopicTemplatePayload) {
     if (payload.id) {
       const { id, ...rest } = payload
       await updateTopicTemplate(id, rest)

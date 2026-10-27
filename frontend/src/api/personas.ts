@@ -18,7 +18,10 @@ export interface IpProfile {
   factualBackground?: string
   sampleScript?: string
   contentDirections?: string[]
-  contentMix?: Array<{ label: string; ratio?: number }>
+  /** 选题方法配比：methodId 引用选题方法；旧数据只有 label */
+  contentMix?: Array<{ label: string; ratio?: number; methodId?: string }>
+  /** 默认表达风格（同生产线的文案风格） */
+  defaultStyleId?: string
 }
 
 /** 列表项（GET /personas，FR-X1：默认仅 usable） */
