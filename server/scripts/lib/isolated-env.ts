@@ -108,7 +108,7 @@ export async function bootIsolated(opts: IsolatedEnvOptions = {}): Promise<Isola
 
   const { initDb, closeAll } = await import('../../src/db/index.js')
   const { runMigrations } = await import('../../src/db/migrate.js')
-  const { redis, setQueueBackend, closeQueues, queueStats } = await import('../../src/queue/index.js')
+  const { getRedis, setQueueBackend, closeQueues, queueStats } = await import('../../src/queue/index.js')
   const { providers } = await import('../../src/modules/news/providers.js')
   const { fetchAndStore } = await import('../../src/modules/news/service.js')
   const { registerNewsJobs } = await import('../../src/modules/news/jobs.js')
@@ -123,7 +123,7 @@ export async function bootIsolated(opts: IsolatedEnvOptions = {}): Promise<Isola
   const { ensureBootstrapAdmin } = await import('../../src/modules/auth/repo.js')
 
   if (!real) {
-    redis.disconnect()
+    getRedis().disconnect()
     setQueueBackend('memory')
   } else {
     setQueueBackend('redis')
@@ -159,12 +159,12 @@ export async function bootIsolated(opts: IsolatedEnvOptions = {}): Promise<Isola
     if (real) {
       let cursor = '0'
       do {
-        const [next, keys] = await redis.scan(cursor, 'MATCH', `${redisPrefix}:*`, 'COUNT', 500)
+        const [next, keys] = await getRedis().scan(cursor, 'MATCH', `${redisPrefix}:*`, 'COUNT', 500)
         cursor = next
-        if (keys.length) await redis.del(...keys)
+        if (keys.length) await getRedis().del(...keys)
       } while (cursor !== '0')
     }
-    redis.disconnect()
+    getRedis().disconnect()
     await closeAll()
     await emu?.close()
     if (real) {

@@ -41,6 +41,18 @@ export const config = {
   host: str('HOST', '127.0.0.1'),
   logLevel: str('LOG_LEVEL', 'info'),
 
+  /* ── 桌面版 / 嵌入式运行（desktop-entry.ts 注入，见 desktop/ 壳工程） ── */
+  /** 1 = 桌面模式：由 Electron 壳拉起，DATA_DIR/DB/LOG_FILE 等由宿主注入 */
+  desktopMode: process.env.DESKTOP_MODE === '1',
+  /** auto = 探测 Redis（原行为）；memory = 强制进程内队列（桌面版，跳过探测） */
+  queueBackend: str('QUEUE_BACKEND', 'auto') as 'auto' | 'memory',
+  /** 静态资源目录（frontend/dist）：配置后由 Fastify 直接服务前端，单端口同源无 CORS */
+  staticDir: str('STATIC_DIR', ''),
+  /** 日志文件（桌面模式由宿主指向 userData/logs）：配置后日志双写文件 */
+  logFile: str('LOG_FILE', ''),
+  /** ffmpeg 可执行文件路径：默认走 PATH；桌面版由壳指向随包分发的带 libass 构建 */
+  ffmpegPath: str('FFMPEG_PATH', 'ffmpeg'),
+
   db: {
     // auto：优先 MySQL，连不上则退回内置 sqlite（仅用于本地开发验证）
     driver: str('DB_DRIVER', 'auto') as 'auto' | 'mysql' | 'sqlite',

@@ -30,7 +30,7 @@ const { config } = await import('../src/config.js')
 const { scanAuthExpiry, uploadAuthorization } = await import('../src/modules/personas/authorizations.js')
 const db = await initDb()
 // 用进程内队列：不能把任务投进本机 Redis（会被正在运行的开发实例消费）
-const { setQueueBackend, closeQueues, redis } = await import('../src/queue/index.js')
+const { setQueueBackend, closeQueues, getRedis } = await import('../src/queue/index.js')
 setQueueBackend('memory')
 
 let passed = 0
@@ -300,7 +300,7 @@ try {
   console.log(`${passed} persona regression groups passed`)
 } finally {
   await closeQueues().catch(() => undefined)
-  redis.disconnect()
+  getRedis().disconnect()
   await closeAll()
   rmSync(temp, { recursive: true, force: true })
 }

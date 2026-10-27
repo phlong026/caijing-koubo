@@ -33,7 +33,7 @@ let envCache: MediaEnv | null = null
 async function listFilters(): Promise<Set<string>> {
   const names = new Set<string>()
   await new Promise<void>((resolve) => {
-    execFile('ffmpeg', ['-hide_banner', '-filters'], { windowsHide: true }, (e, stdout) => {
+    execFile(config.ffmpegPath, ['-hide_banner', '-filters'], { windowsHide: true }, (e, stdout) => {
       if (e) return resolve()
       for (const line of String(stdout).split('\n')) {
         const m = line.match(/^\s*[. ]{3}\s+(\S+)\s+/)
@@ -131,7 +131,7 @@ export function runFfmpeg(args: string[], timeoutMs = config.cut.stepTimeoutMs, 
 }
 
 function spawnFfmpeg(args: string[]) {
-  return spawn('ffmpeg', ['-y', '-v', 'error', '-nostdin', ...args], { windowsHide: true })
+  return spawn(config.ffmpegPath, ['-y', '-v', 'error', '-nostdin', ...args], { windowsHide: true })
 }
 
 /** 字体目录（存在性惰性创建，供部署初始化提示） */

@@ -3,7 +3,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import axios from 'axios'
-import { paths } from '../config.js'
+import { config, paths } from '../config.js'
 import { logger } from '../log.js'
 
 /** D9：server 运行环境须具备 ffmpeg 与可写临时目录 */
@@ -18,7 +18,7 @@ let ffmpegOk = false
 export async function checkFfmpeg(): Promise<{ ok: boolean; version?: string; error?: string }> {
   if (ffmpegChecked) return { ok: ffmpegOk, version: ffmpegOk ? 'cached' : undefined }
   return new Promise((resolve) => {
-    const p = spawn('ffmpeg', ['-version'])
+    const p = spawn(config.ffmpegPath, ['-version'])
     let out = ''
     p.stdout.on('data', (d) => (out += String(d)))
     p.on('error', (e) => {
@@ -65,7 +65,7 @@ export async function extractAudio(videoPath: string, outName: string): Promise<
   await ensureTempDir()
   const dest = path.join(paths.tempDir, outName)
   await new Promise<void>((resolve, reject) => {
-    const p = spawn('ffmpeg', [
+    const p = spawn(config.ffmpegPath, [
       '-y',
       '-i',
       videoPath,
