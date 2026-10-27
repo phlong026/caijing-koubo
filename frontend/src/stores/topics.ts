@@ -52,6 +52,8 @@ export const useTopicStore = defineStore('topics', () => {
   const filter = ref<CandidateFilter>('pending')
   /** 只看某一批次（生成完成后自动指向该批，可取消） */
   const batchFilter = ref<string | null>(null)
+  /** 按生成评分排序（辅助人工挑选，sort=score） */
+  const sortByScore = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
 
@@ -86,6 +88,7 @@ export const useTopicStore = defineStore('topics', () => {
       const res = await getTopics({
         status: FILTER_STATUS[filter.value],
         batchId: batchFilter.value ?? undefined,
+        sort: sortByScore.value ? 'score' : undefined,
         page: page.value,
         pageSize: pageSize.value,
         ...query,
@@ -262,6 +265,12 @@ export const useTopicStore = defineStore('topics', () => {
     void load()
   }
 
+  function setSortByScore(v: boolean): void {
+    sortByScore.value = v
+    page.value = 1
+    void load()
+  }
+
   return {
     items,
     total,
@@ -269,6 +278,7 @@ export const useTopicStore = defineStore('topics', () => {
     pageSize,
     filter,
     batchFilter,
+    sortByScore,
     loading,
     error,
     batchId,
@@ -294,6 +304,7 @@ export const useTopicStore = defineStore('topics', () => {
     archive,
     setFilter,
     clearBatchFilter,
+    setSortByScore,
     setPage,
     resumeBatch,
   }

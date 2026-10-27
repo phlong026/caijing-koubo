@@ -125,12 +125,6 @@ async function main(): Promise<void> {
     },
     'env.check',
   )
-  if (config.copyLlm.baseUrl && config.copyLlm.apiKey && !config.copyLlm.complianceApproved) {
-    logger.warn(
-      'copy_llm.disabled：已配置 COPY_LLM_*（第三方模型中转），但 COPY_LLM_COMPLIANCE_APPROVED=false，' +
-        '文案生成已回退百炼（决策 D1 默认走中转，确认是有意停用）。',
-    )
-  }
   if (config.copy.reviewStubEnabled) {
     logger.warn(
       'review.stub_enabled：已开启审核桩（REVIEW_STUB_ENABLED=true），仅限本地联调 / smoke（决策 D3：测试与生产不开）；' +

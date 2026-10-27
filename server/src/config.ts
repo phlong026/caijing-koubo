@@ -231,14 +231,14 @@ export const config = {
   },
 
   /**
-   * 文案二创专用模型（与百炼并行、互不覆盖）。
-   * 三个必填项（BASE_URL / API_KEY / MODEL）齐备时启用，否则自动回退百炼 DASHSCOPE_*。
+   * 文案二创专用模型（Claude 等，经第三方中转；与百炼 ASR 并行、互不回退）。
+   * 只需配置 API_KEY 即启用；BASE_URL / MODEL 已内置默认值，界面与 .env 均可覆盖。
    * 适用于 Claude 原生协议或任何 OpenAI 兼容中转。
    */
   copyLlm: {
-    baseUrl: str('COPY_LLM_BASE_URL', ''),
+    baseUrl: str('COPY_LLM_BASE_URL', 'https://ccg-cli.online/v1'),
     apiKey: str('COPY_LLM_API_KEY', ''),
-    model: str('COPY_LLM_MODEL', ''),
+    model: str('COPY_LLM_MODEL', 'claude-opus-5.5'),
     /** auto | anthropic | openai：auto 时按 baseurl + 模型名猜，猜错会自动换协议重试一次 */
     protocol: str('COPY_LLM_PROTOCOL', 'auto') as 'auto' | 'anthropic' | 'openai',
     anthropicVersion: str('COPY_LLM_ANTHROPIC_VERSION', '2023-06-01'),
@@ -248,12 +248,6 @@ export const config = {
     unitPrice: num('COPY_LLM_UNIT_PRICE', 0),
     inputPricePer1k: num('COPY_LLM_INPUT_PRICE_PER_1K', 0),
     outputPricePer1k: num('COPY_LLM_OUTPUT_PRICE_PER_1K', 0),
-    /**
-     * P0-4 合规闸门：COPY_LLM_* 指向第三方中转（如 ccg-cli.online）时，文案与人物档案会发往该服务。
-     * 决策 D1（2026-10-27）：文案二创采用第三方中转的 Claude 模型，百炼只负责语音转文案 →
-     * 所有环境缺省开启；需要临时停用中转时显式设为 false，文案生成回退百炼。
-     */
-    complianceApproved: bool('COPY_LLM_COMPLIANCE_APPROVED', true),
   },
 
   /**
@@ -481,9 +475,9 @@ export function hasTikHub(): boolean {
 export function hasDashScope(): boolean {
   return !!config.dashscope.apiKey
 }
-/** 文案二创是否启用专用模型：BASE_URL 与 API_KEY 齐备，且（生产环境）已通过合规批准 */
+/** 文案二创是否启用专用模型：API_KEY 已配置（BASE_URL / MODEL 有内置默认值） */
 export function hasCopyLlm(): boolean {
-  return !!(config.copyLlm.baseUrl && config.copyLlm.apiKey && config.copyLlm.complianceApproved)
+  return !!config.copyLlm.apiKey
 }
 export function hasOss(): boolean {
   return !!(config.oss.bucket && config.oss.accessKeyId && config.oss.accessKeySecret)

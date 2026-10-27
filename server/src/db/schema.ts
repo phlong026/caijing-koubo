@@ -112,6 +112,8 @@ export const TABLES: TableDef[] = [
       vc('batch_id', 40, { nullable: true }),
       vc('method_id', 40, { nullable: true }), // 生成时用的选题方法（送入文案工坊时带出对应文案模板）
       vc('origin_persona_id', 40, { nullable: true }), // 按哪个人物的人设生成（改派提示用）
+      int('score', 0), // 生成时启发式打分 0~100（辅助人工挑选；旧数据为 0，前端不展示）
+      { name: 'score_reasons', type: 'json', nullable: true }, // 打分依据明细（string[]）
       dt('sent_at'),
       vc('created_by', 64, { nullable: true }),
       dt('created_at'),

@@ -26,16 +26,17 @@ describe('设置清单（catalog）', () => {
     expect(bad).toEqual([])
   })
 
-  it('group 引用都在 SETTING_GROUPS 里；deploy 组全部 readonly', () => {
+  it('group 引用都在 SETTING_GROUPS 里', () => {
     const groupKeys = new Set(SETTING_GROUPS.map((g) => g.key))
     expect(SETTING_DEFS.every((d) => groupKeys.has(d.group))).toBe(true)
-    const deploy = SETTING_DEFS.filter((d) => d.group === 'deploy')
-    expect(deploy.length).toBeGreaterThan(0)
-    expect(deploy.every((d) => d.readonly)).toBe(true)
   })
 
-  it('readonly 项不可写：不参与热应用（保存侧由 service 拒绝）', () => {
-    expect(SETTING_DEFS.filter((d) => d.readonly && d.group !== 'deploy')).toEqual([])
+  it('清单只保留必填项：无只读/部署项，无调优类参数', () => {
+    // 部署级（DB/Redis/端口/JWT）与调优项（超时/并发/单价/周期/路径）一律走 .env，不进界面
+    expect(SETTING_DEFS.filter((d) => d.readonly).map((d) => d.key)).toEqual([])
+    const banned = /TIMEOUT|_PRICE|INTERVAL|CONCURRENCY|_PATH_|_PREFIX|_TTL|RATE_PER|MOCK|STUB|SEED|AUTH_/
+    expect(SETTING_DEFS.filter((d) => banned.test(d.key)).map((d) => d.key)).toEqual([])
+    expect(SETTING_DEFS.length).toBeLessThanOrEqual(20)
   })
 })
 
