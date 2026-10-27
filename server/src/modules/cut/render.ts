@@ -7,6 +7,7 @@ import { normalizeGeneratedVideo, extractCoverFrame, probeMedia } from '../../me
 import { runFfmpeg, resolveCutEngine, detectMediaEnv } from './engine.js'
 import { buildAss, buildSubtitleFilter } from './subtitle.js'
 import { buildKeepSegments, parseSilences, remapTimeline, silencedetectArgs, segmentCutArgs, concatList } from './breathe.js'
+import { resolveFontFileByName } from '../material/fonts.js'
 import type { CutStage, KeepSpan } from './types.js'
 import type { TimelineItem } from '../video/types.js'
 import type { VideoCut } from './types.js'
@@ -217,11 +218,18 @@ export async function renderCut(
   }
   if (await hooks.isCancelled()) throw new CancelledError()
 
+  // ML4：按字幕样式 fontName 选字体文件；停用 / 丢失时回退 default 并 warn（§3.2 即时生效矩阵）
+  const selectedFont = await resolveFontFileByName(cut.subtitleStyle.fontName)
+  if (!selectedFont && cut.subtitleStyle.fontName && cut.subtitleStyle.fontName !== 'default') {
+    logger.warn({ cutId: cut.id, fontName: cut.subtitleStyle.fontName }, 'cut.font_unavailable_fallback_default')
+  }
+  const fontFile = selectedFont ?? env.fontFile
+
   // 2 subtitle（mock 降级：直过）
   if (cut.subtitleEnabled) {
     await hooks.onStage('subtitle', 20)
-    if (!mock && env.fontFile) {
-      current = await runSubtitle(cut, current, workDir, timeline, env.fontFile)
+    if (!mock && fontFile) {
+      current = await runSubtitle(cut, current, workDir, timeline, fontFile)
     } else {
       logger.info({ cutId: cut.id }, 'cut.subtitle_skipped_mock_engine')
     }
@@ -238,7 +246,7 @@ export async function renderCut(
   // 4 tail（mock 降级纯黑）
   if (cut.riskTailEnabled && cut.riskTailText) {
     await hooks.onStage('tail', 75)
-    current = await runTail(cut, current, workDir, mock, env.fontFile)
+    current = await runTail(cut, current, workDir, mock, fontFile)
   }
   if (await hooks.isCancelled()) throw new CancelledError()
 

@@ -76,6 +76,7 @@ export type ErrorCode =
   | 'ACCOUNT_NOT_ACTIVE' // 账号非 active 不可发布
   | 'PUBLISH_RATE_LIMITED' // 每账号每日发布上限（PB8）
   | 'PUBLISH_CONTEXT_BUSY' // 上下文创建失败（仅浏览器启动异常场景）
+  | 'PUBLISH_PLATFORM_NOT_MIGRATED' // 平台真实引擎未平移（PU3 待办），非 mock 模式下明确拒绝
   | 'PUBLISH_PLAN_NOT_FOUND'
   | 'PUBLISH_PLAN_NOT_CANCELLABLE'
   | 'PUBLISH_LOG_NOT_FOUND'
@@ -99,6 +100,13 @@ export type ErrorCode =
   | 'FINAL_NOT_READY' // 成片不满足发布取用条件（FR-X1：未渲染/未过审/已实质修改）
   // ── 任务中心（任务书 §6.2）──
   | 'TASK_NOT_FOUND' // copy 不存在或已归档（只读聚合视图，不建任务主表）
+  // ── 素材库（任务书 §6）──
+  | 'FONT_NOT_FOUND'
+  | 'FONT_IN_USE' // 被成片字幕样式引用，不可删（FR-F3）
+  | 'FONT_LICENSE_REQUIRED' // other 授权未填出处，不允许启用（A7）
+  | 'FONT_FORMAT_INVALID' // 非 otf/ttf/ttc / 超 30MB / magic bytes 不符（ML3）
+  | 'MATERIAL_PACK_IN_USE' // 被启用中的关键词组引用，不可删（FR-P3）
+  | 'MATERIAL_ITEM_NOT_FOUND'
 
 export class ApiError extends Error {
   readonly code: ErrorCode
@@ -249,6 +257,8 @@ export const err = {
     new ApiError('PUBLISH_RATE_LIMITED', msg, 409, details),
   publishContextBusy: (msg = '发布浏览器上下文创建失败，请稍后重试', details?: unknown) =>
     new ApiError('PUBLISH_CONTEXT_BUSY', msg, 503, details),
+  publishPlatformNotMigrated: (platform: string) =>
+    new ApiError('PUBLISH_PLATFORM_NOT_MIGRATED', `平台 ${platform} 的真实发布引擎尚未平移（PU3），当前仅支持抖音`, 501, { platform }),
   publishPlanNotFound: (msg = '发布计划不存在') => new ApiError('PUBLISH_PLAN_NOT_FOUND', msg, 404),
   publishPlanNotCancellable: (msg = '当前状态的发布计划不可取消', details?: unknown) =>
     new ApiError('PUBLISH_PLAN_NOT_CANCELLABLE', msg, 409, details),
@@ -285,6 +295,16 @@ export const err = {
   /* ── 任务中心（§6.2）─────────────────────────────────────────── */
   /** 任务锚点是 copy：不存在或已归档都视为任务不可见 */
   taskNotFound: (msg = '任务不存在或已归档', details?: unknown) => new ApiError('TASK_NOT_FOUND', msg, 404, details),
+
+  /* ── 素材库（§6）──────────────────────────────────────────────── */
+  fontNotFound: (msg = '字体不存在', details?: unknown) => new ApiError('FONT_NOT_FOUND', msg, 404, details),
+  fontInUse: (msg = '字体已被成片字幕样式引用，不可删除', details?: unknown) => new ApiError('FONT_IN_USE', msg, 409, details),
+  fontLicenseRequired: (msg = '授权类型为 other 时须填写授权出处说明后才能启用', details?: unknown) =>
+    new ApiError('FONT_LICENSE_REQUIRED', msg, 409, details),
+  fontFormatInvalid: (msg = '字体文件不合规', details?: unknown) => new ApiError('FONT_FORMAT_INVALID', msg, 400, details),
+  materialPackInUse: (msg = '素材包已被启用中的关键词组引用，请先解除引用或停用该组', details?: unknown) =>
+    new ApiError('MATERIAL_PACK_IN_USE', msg, 409, details),
+  materialItemNotFound: (msg = '素材条目不存在', details?: unknown) => new ApiError('MATERIAL_ITEM_NOT_FOUND', msg, 404, details),
 }
 
 export function isApiError(e: unknown): e is ApiError {

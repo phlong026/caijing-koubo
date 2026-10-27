@@ -1,10 +1,11 @@
 import { getDb, type Db } from '../../db/index.js'
-import { newId, jdec } from '../../lib/util.js'
+import { newId, jdec, jenc } from '../../lib/util.js'
 import { toDb, utcNow } from '../../lib/time.js'
 import { err } from '../../errors.js'
-import { getTopicsByIds, markSent, type TopicRow } from '../topics/repo.js'
+import { getTopicsByIds, listTemplates, markSent, type TopicRow } from '../topics/repo.js'
+import { copyTemplateFor, inheritedMethod } from '../topics/methods.js'
 import { logger } from '../../log.js'
-import { assertPersonasUsable } from '../personas/repo.js'
+import { assertPersonasUsable, readProfile } from '../personas/repo.js'
 
 export interface CreateDraftsArgs {
   topicIds: string[]
@@ -63,6 +64,7 @@ export async function createDraftsFromTopics(args: CreateDraftsArgs): Promise<Cr
 
   const copyIds: string[] = []
   const skipped: string[] = []
+  const methods = await listTemplates(db)
 
   for (const topic of topics) {
     if (topic.status === 'sent' && !args.alreadySent) {
@@ -93,11 +95,15 @@ export async function createDraftsFromTopics(args: CreateDraftsArgs): Promise<Cr
       const id = newId('copy')
       // line 由人物所属线派生写入：风格按线过滤（Q4）与列表按线筛选都依赖它。
       // copy-contract 不感知 persona 模块的领域细节，这里只取一个字段，保持契约稳定。
-      const line =
-        (await db.get<{ line: string | null }>('SELECT `line` FROM `persona` WHERE `id` = ?', [personaId]))?.line ?? null
+      const personaRow = await db.get<{ line: string | null; ip_profile: unknown }>(
+        'SELECT `line`, `ip_profile` FROM `persona` WHERE `id` = ?',
+        [personaId],
+      )
+      const line = personaRow?.line ?? null
+      const settings = await defaultCopySettings(topic, line, readProfile(jdec<unknown>(personaRow?.ip_profile, null)), methods, db)
       await db.run(
-        `INSERT INTO \`copy\` (\`id\`, \`topic_id\`, \`persona_id\`, \`source\`, \`status\`, \`title\`, \`source_text\`, \`source_ref_type\`, \`source_ref_id\`, \`extract_cache_id\`, \`line\`, \`created_by\`, \`created_at\`)
-         VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO \`copy\` (\`id\`, \`topic_id\`, \`persona_id\`, \`source\`, \`status\`, \`title\`, \`source_text\`, \`source_ref_type\`, \`source_ref_id\`, \`extract_cache_id\`, \`line\`, \`settings\`, \`created_by\`, \`created_at\`)
+         VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           topic.id,
@@ -109,6 +115,7 @@ export async function createDraftsFromTopics(args: CreateDraftsArgs): Promise<Cr
           refId,
           extractCacheId,
           line,
+          jenc(settings),
           args.operator ?? topic.createdBy ?? null,
           now,
         ],
@@ -126,6 +133,46 @@ export async function createDraftsFromTopics(args: CreateDraftsArgs): Promise<Cr
   //  - MySQL 另一连接 → 看不到未提交的 copy，requireCopy 报 not found 被吞成 warn（对标送入没有初始稿）。
   // 改为只返回 copyIds，由调用方在事务提交后统一调用 createInitialDrafts(copyIds)。
   return { created: copyIds.length, copyIds, skipped }
+}
+
+/**
+ * 文案工坊的初始创作要求：内容模板跟随选题方法，表达风格跟随人物默认风格。
+ * - 选题没有方法（对标 / 手动 / 文章 / 老数据），或该人物没开启选题的方法 → 用人物的主选题方法；
+ * - 模板或风格已停用、风格跨生产线 → 不写该项，前端回落列表第一个（与改造前一致）。
+ */
+async function defaultCopySettings(
+  topic: TopicRow,
+  line: string | null,
+  profile: ReturnType<typeof readProfile>,
+  methods: Awaited<ReturnType<typeof listTemplates>>,
+  db: Db,
+): Promise<CopyDefaults> {
+  const { method, from } = inheritedMethod(topic.methodId, { line: line ?? '', contentMix: profile.contentMix }, methods)
+  const out: CopyDefaults = {}
+  const inherited: NonNullable<CopyDefaults['inherited']> = { methodName: method?.name ?? null, methodFrom: from }
+  const templateId = copyTemplateFor(method)
+  const tpl = await db.get<{ enabled: number }>('SELECT `enabled` FROM `copy_template` WHERE `id` = ?', [templateId])
+  if (tpl && Number(tpl.enabled)) out.templateId = inherited.templateId = templateId
+  if (profile.defaultStyleId) {
+    const style = await db.get<{ line: string; enabled: number }>('SELECT `line`, `enabled` FROM `copy_style` WHERE `id` = ?', [
+      profile.defaultStyleId,
+    ])
+    if (style && Number(style.enabled) && style.line === line) out.styleId = inherited.styleId = profile.defaultStyleId
+  }
+  out.inherited = inherited
+  return out
+}
+
+/** 写入 copy.settings 的初始创作要求；inherited 记录来源，前端据此显示「随选题方法 / 人物默认 / 已修改」 */
+interface CopyDefaults {
+  templateId?: string
+  styleId?: string
+  inherited?: {
+    templateId?: string
+    styleId?: string
+    methodName: string | null
+    methodFrom: 'topic' | 'persona'
+  }
 }
 
 /**

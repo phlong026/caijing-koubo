@@ -710,6 +710,10 @@ async function onPreviewPrompt(settings: CreativeSettings): Promise<void> {
 :global(.copy-flow-page .copy-settings-fields > .gen-panel) {
   grid-column: 1 / -1;
 }
+:global(.copy-flow-page .copy-settings-fields > .copy-inherit-summary) {
+  grid-column: 1 / -1;
+  margin: 0;
+}
 :global(.copy-flow-page .copy-settings .mw-form-row) {
   display: block;
   margin: 0;

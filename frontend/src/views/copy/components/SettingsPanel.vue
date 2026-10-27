@@ -25,7 +25,21 @@
         />
       </div>
 
-      <div class="mw-form-row items-start">
+      <!-- 内容模板与表达风格：默认随选题方法与人物带出，收起成一行，需要时再展开修改 -->
+      <div class="copy-inherit-summary">
+        <div class="flex-1 min-w-0">
+          <div>
+            <span class="mw-subtle">内容模板</span> <b>{{ currentTemplate?.name || '未选择' }}</b>
+            <span v-if="templateOrigin" class="mw-subtle"> · {{ templateOrigin }}</span>
+          </div>
+          <div>
+            <span class="mw-subtle">表达风格</span> <b>{{ currentStyle?.name || '未选择' }}</b>
+            <span v-if="styleOrigin" class="mw-subtle"> · {{ styleOrigin }}</span>
+          </div>
+        </div>
+        <a-link v-if="!readonly" @click="showAdvanced = !showAdvanced">{{ showAdvanced ? '收起' : '修改' }}</a-link>
+      </div>
+      <div v-if="showAdvanced" class="mw-form-row items-start">
         <label class="mw-form-label pt-1" for="copy-template">内容模板</label>
         <div class="flex-1 min-w-0">
           <a-select
@@ -38,6 +52,9 @@
             <a-option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</a-option>
           </a-select>
           <p v-if="currentTemplate" class="mw-subtle mt-2 leading-relaxed">{{ currentTemplate.description }}</p>
+          <a-link v-if="narrowed" @click="showAllTemplates = !showAllTemplates">{{
+            showAllTemplates ? '只看该人物的选题方法' : '显示全部模板'
+          }}</a-link>
           <details v-if="currentTemplate?.structureHint" class="copy-structure">
             <summary>查看文案结构</summary>
             <p>{{ currentTemplate.structureHint }}</p>
@@ -46,7 +63,7 @@
       </div>
 
       <!-- 风格 -->
-      <div class="mw-form-row items-start">
+      <div v-if="showAdvanced" class="mw-form-row items-start">
         <span class="mw-form-label pt-1">表达风格</span>
         <div class="flex-1">
           <a-select v-model="model.styleId" :disabled="readonly" placeholder="选择风格" class="w-full">
@@ -168,7 +185,10 @@
         <span>{{ store.settingsError }}</span
         ><a-link @click="store.saveCreativeSettings()">重试</a-link>
       </div>
-      <div v-if="model.count > 1" class="mw-subtle">按误区、场景、问答等不同方向生成 {{ model.count }} 篇</div>
+      <div v-if="model.count > 1" class="mw-subtle">
+        <template v-if="hasTopicAngle">保持选题角度，按不同开场方式生成 {{ model.count }} 篇</template>
+        <template v-else>按误区、场景、问答等不同方向生成 {{ model.count }} 篇</template>
+      </div>
       <a-button type="primary" long :loading="store.generating" :disabled="!canGenerate" @click="onGenerate"
         ><template #icon><icon-edit /></template>生成文案</a-button
       >
@@ -182,7 +202,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
 import type { CreativeSettings } from '@/api/copy'
@@ -192,7 +212,16 @@ const store = useCopyStore()
 
 const readonly = computed(() => !store.canEdit)
 
-const templates = computed(() => store.options?.templates ?? [])
+/** 只列该人物开启的选题方法对应的模板（当前已选的始终保留），减少无关选项 */
+const showAllTemplates = ref(false)
+/** 后端已与启用模板取交集，为空时返回 null → 列全部 */
+const narrowed = computed(() => !!store.options?.methodTemplateIds?.length)
+const templates = computed(() => {
+  const all = store.options?.templates ?? []
+  const allowed = store.options?.methodTemplateIds
+  if (!allowed?.length || showAllTemplates.value) return all
+  return all.filter((t) => allowed.includes(t.id) || t.id === model.templateId)
+})
 const styles = computed(() => store.availableStyles)
 const durationTiers = computed(() => store.options?.durationTiers ?? [])
 const limits = computed(
@@ -213,6 +242,32 @@ const limits = computed(
 const model = store.creativeSettings
 
 const currentTemplate = computed(() => templates.value.find((t) => t.id === model.templateId) ?? null)
+const currentStyle = computed(() => styles.value.find((s) => s.id === model.styleId) ?? null)
+const showAdvanced = ref(false)
+
+/** 建文案时记录的继承来源（copy-contract 写入 settings.inherited） */
+const inherited = computed(
+  () =>
+    (store.detail?.copy.settings?.inherited ?? null) as {
+      templateId?: string
+      styleId?: string
+      methodName: string | null
+      methodFrom: 'topic' | 'persona'
+    } | null,
+)
+const templateOrigin = computed(() => {
+  const i = inherited.value
+  if (!i?.templateId) return ''
+  if (i.templateId !== model.templateId) return '已修改，与选题方法不一致'
+  return i.methodFrom === 'topic' ? `随选题方法「${i.methodName ?? ''}」` : `随人物选题方法「${i.methodName ?? ''}」`
+})
+const styleOrigin = computed(() => {
+  const i = inherited.value
+  if (!i?.styleId) return ''
+  return i.styleId === model.styleId ? '人物默认' : '已修改，与人物默认不同'
+})
+/** 资讯选题带角度：多份时只换开场方式（与后端 candidates.ts 一致） */
+const hasTopicAngle = computed(() => store.detail?.copy.source === 'news' && !!store.detail?.copy.topicId)
 
 /**
  * a-input-number 的 v-model 不接受 null，这里做一层代理：
@@ -359,6 +414,17 @@ async function onGenerate(): Promise<void> {
 </script>
 
 <style scoped>
+.copy-inherit-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--mw-border);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.8;
+}
 .tpl-chip {
   text-align: left;
   padding: 7px 12px;

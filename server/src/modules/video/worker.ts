@@ -35,6 +35,10 @@ export function registerVideoWorker(): void {
     },
     { concurrency: config.video.workerConcurrency },
   )
+  // sweep 定时器只入队，消费在这里（缺失会让任务永远停在 waiting——发布模块同模式）
+  registerWorker(QUEUE_NAMES.videoPollSweep, async () => {
+    await runVideoSweep().catch((e) => logger.warn({ err: (e as Error).message }, 'video.sweep_failed'))
+  })
 }
 
 export async function scheduleVideoPollSweep(): Promise<void> {

@@ -13,7 +13,7 @@ export type CopyLine = 'manager' | 'kos' | 'persona'
 export type CopyStatus = 'draft' | 'in_review' | 'approved' | 'rejected' | 'archived'
 export type CopyDerivedStatus = 'pending_write' | 'writing' | 'in_review' | 'rejected' | 'approved' | 'revising'
 export type DurationTier = 'short' | 'medium' | 'long' | 'custom'
-export type VersionOrigin = 'ai_generate' | 'manual_save' | 'restore' | 'submit'
+export type VersionOrigin = 'ai_generate' | 'manual_save' | 'restore' | 'submit' | 'review'
 export type DraftOrigin = 'ai' | 'manual'
 export type SubmissionStatus =
   'submitted' | 'gate1' | 'gate2' | 'gate3' | 'pending_manual' | 'approved' | 'rejected' | 'withdrawn'
@@ -288,6 +288,8 @@ export interface StyleOption {
 }
 
 export interface CopyOptions {
+  /** 当前人物开启的选题方法对应的内容模板；没传人物时为 null */
+  methodTemplateIds?: string[] | null
   durationTiers: DurationTierOption[]
   templates: TemplateOption[]
   styles: StyleOption[]

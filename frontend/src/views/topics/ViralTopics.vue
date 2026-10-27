@@ -146,20 +146,22 @@
                   ><a-button type="text" size="mini" aria-label="管理选题方法"><icon-more /></a-button
                   ><template #content
                     ><a-doption @click="openTemplate()">新增方法</a-doption
-                    ><a-doption :disabled="!templateId" @click="openTemplate(currentTemplate)"
+                    ><a-doption :disabled="!currentTemplate" @click="openTemplate(currentTemplate)"
                       >编辑当前方法</a-doption
                     ></template
                   ></a-dropdown
                 >
               </div>
-              <a-select v-model="templateId" placeholder="默认提示词" aria-label="选题方法" allow-clear
-                ><a-option v-for="t in topics.templates" :key="t.id" :value="t.id">{{ t.name }}</a-option></a-select
+              <a-select v-model="templateId" aria-label="选题方法"
+                ><a-option :value="AUTO_METHOD">按人物配置（推荐）</a-option
+                ><a-option v-for="t in availableMethods" :key="t.id" :value="t.id">{{ t.name }}</a-option></a-select
               >
             </div>
             <a-button type="outline" :loading="topics.generating" @click="onGenerate"
               ><template #icon><icon-file /></template>生成候选选题</a-button
             >
           </div>
+          <p v-if="methodNote" class="topics-dock-note">{{ methodNote }}</p>
           <p class="topics-dock-note">
             本批合计 {{ batchExpected }} 条选题 · 仅点击后生成<template v-if="news.lastRefresh">
               · 上次采集新增 {{ news.lastRefresh.inserted }} 条</template
@@ -217,8 +219,13 @@
                     ><template #icon><icon-archive /></template
                   ></a-button>
                 </div>
-                <div v-if="c.direction" class="topics-direction">
-                  <span>方向</span><span class="mw-tag mw-tag-gray">{{ c.direction }}</span>
+                <div v-if="c.methodName || c.direction" class="topics-direction">
+                  <template v-if="c.methodName"
+                    ><span>方法</span><span class="mw-tag mw-tag-blue">{{ c.methodName }}</span></template
+                  >
+                  <template v-if="c.direction"
+                    ><span>方向</span><span class="mw-tag mw-tag-gray">{{ c.direction }}</span></template
+                  >
                 </div>
                 <p v-if="c.hook" class="topics-hook">钩子：{{ c.hook }}</p>
                 <div class="topics-persona">
@@ -235,6 +242,9 @@
                   >
                 </div>
                 <p v-if="!currentPersonas(c).length" class="topics-assignment-note">分配人物后可送入文案工坊</p>
+                <p v-else-if="reassignedFrom(c)" class="topics-assignment-note">
+                  按「{{ reassignedFrom(c) }}」的人设生成，分配给其他人物时角度可能不贴合
+                </p>
                 <p v-else-if="c.status === 'candidate'" class="topics-assignment-note">
                   已预填目标人物，送入时按此分配
                 </p>
@@ -666,7 +676,7 @@
     <!-- ============ 弹窗：提示词模板 ============ -->
     <a-modal
       v-model:visible="tplModal.visible"
-      :title="tplModal.id ? '编辑提示词模板' : '新增提示词模板'"
+      :title="tplModal.id ? '编辑选题方法' : '新增选题方法'"
       width="680px"
       :mask-closable="false"
     >
@@ -686,6 +696,11 @@
               {'{'}forbidden_claims{'}'} {'{'}name{'}'}。资讯内容会自动追加在提示词之后。
             </span>
           </template>
+        </a-form-item>
+        <a-form-item label="对应文案模板" required>
+          <a-select v-model="tplModal.copyTemplateId" placeholder="送入文案工坊时自动带出">
+            <a-option v-for="t in copyTemplates" :key="t.id" :value="t.id">{{ t.name }}</a-option>
+          </a-select>
         </a-form-item>
         <a-form-item>
           <a-checkbox v-model="tplModal.isDefault">设为默认</a-checkbox>
@@ -740,7 +755,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Message, Modal } from '@arco-design/web-vue'
 import BenchmarkVideoCard from './BenchmarkVideoCard.vue'
@@ -750,7 +765,8 @@ import { getResearchOverview, type ResearchOverview } from '@/api/benchmark'
 import { ApiError } from '@/api/client'
 import { getNewsDetail, type NewsItem } from '@/api/news'
 import type { Account, AccountPreview, BenchVideo, ExtractStatus, VideoScript } from '@/api/benchmark'
-import type { TopicTemplate } from '@/api/topics'
+import { AUTO_METHOD, getPersonaMethods, type PersonaMethods, type Topic, type TopicTemplate } from '@/api/topics'
+import { copyApi, type TemplateOption } from '@/api/copy'
 import { CAT_CLASS, useNewsStore } from '@/stores/news'
 import { useTopicStore, type CandidateFilter } from '@/stores/topics'
 import { usePersonaStore } from '@/stores/personas'
@@ -801,9 +817,53 @@ function onDetailSend(v: BenchVideo) {
 /* ── 资讯 → 选题 ─────────────────────────── */
 const targetPersonas = ref<string[]>([])
 const genCount = ref(3)
-const templateId = ref<string | undefined>(undefined)
+const templateId = ref<string>(AUTO_METHOD)
 
 const currentTemplate = computed(() => topics.templates.find((t) => t.id === templateId.value))
+
+/** 已选人物开启的选题方法：下拉只列这些，选了人物就不用再从全部方法里挑 */
+const personaMethodMap = ref<Record<string, PersonaMethods>>({})
+watch(
+  targetPersonas,
+  async (ids) => {
+    if (!ids.length) return
+    try {
+      personaMethodMap.value = { ...personaMethodMap.value, ...(await getPersonaMethods(ids)) }
+    } catch (e) {
+      Message.error(errOf(e))
+    }
+  },
+  { immediate: true },
+)
+const methodIdsOf = (personaId: string) => personaMethodMap.value[personaId]?.items.map((x) => x.methodId) ?? []
+const availableMethods = computed(() => {
+  // 还有人物的配置没加载完时先列全部，避免把已选的方法误判为不可用而重置
+  if (!targetPersonas.value.length || targetPersonas.value.some((id) => !personaMethodMap.value[id])) {
+    return topics.templates
+  }
+  const ids = new Set(targetPersonas.value.flatMap(methodIdsOf))
+  return topics.templates.filter((t) => ids.has(t.id))
+})
+// 换了人物后，原先指定的方法不在范围内就回到「按人物配置」
+watch(availableMethods, (list) => {
+  if (templateId.value !== AUTO_METHOD && !list.some((t) => t.id === templateId.value)) templateId.value = AUTO_METHOD
+})
+const personaName = (id: string) => personas.items.find((p) => p.id === id)?.name ?? '该人物'
+const methodNote = computed(() => {
+  if (templateId.value === AUTO_METHOD) return targetPersonas.value.length ? '每个人物按自己勾选的选题方法生成' : ''
+  const lacking = targetPersonas.value.filter(
+    (id) => personaMethodMap.value[id] && !methodIdsOf(id).includes(templateId.value),
+  )
+  return lacking.length
+    ? `「${currentTemplate.value?.name ?? ''}」不在 ${lacking.map(personaName).join('、')} 的选题方法里，这些人物按自己的配置生成`
+    : ''
+})
+
+/** 选题分配给了生成时以外的人物 → 返回生成人物的名字，用于提示 */
+function reassignedFrom(c: Topic): string {
+  if (!c.originPersonaId) return ''
+  return currentPersonas(c).some((id) => id !== c.originPersonaId) ? personaName(c.originPersonaId) : ''
+}
 const batchExpected = computed(
   () => Math.max(news.selectedIds.length, 1) * Math.max(targetPersonas.value.length, 1) * genCount.value,
 )
@@ -935,10 +995,19 @@ const tplModal = reactive({
   name: '',
   content: '',
   isDefault: false,
+  copyTemplateId: '',
   submitting: false,
 })
+const copyTemplates = ref<TemplateOption[]>([])
 
 function openTemplate(t?: TopicTemplate) {
+  if (!copyTemplates.value.length) {
+    copyApi
+      .options()
+      .then((o) => (copyTemplates.value = o.templates))
+      .catch((e) => Message.error(errOf(e)))
+  }
+  tplModal.copyTemplateId = t?.copyTemplateId ?? 'ctpl_market'
   tplModal.id = t?.id
   tplModal.name = t?.name ?? ''
   tplModal.content = t?.content ?? ''
@@ -955,8 +1024,9 @@ async function onSaveTemplate() {
       name: tplModal.name.trim(),
       content: tplModal.content,
       isDefault: tplModal.isDefault,
+      copyTemplateId: tplModal.copyTemplateId,
     })
-    Message.success('模板已保存')
+    Message.success('选题方法已保存')
     tplModal.visible = false
   } catch (e) {
     Message.error(errOf(e))

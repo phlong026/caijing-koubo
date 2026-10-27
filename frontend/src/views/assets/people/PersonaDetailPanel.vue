@@ -3,7 +3,6 @@
     <div class="flex items-center gap-2 flex-wrap">
       <span class="text-[18px] font-bold">{{ persona.name }}</span>
       <LineTag :line="persona.line" />
-      <span v-if="persona.isStub" class="mw-tag mw-tag-gray">示例</span>
       <span class="flex-1" />
       <a-switch
         :model-value="persona.enabled"

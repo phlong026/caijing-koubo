@@ -12,19 +12,6 @@ import { runPrecheck } from './precheck.js'
 import { createVideoJob, type CreateVideoJobInput } from './create.js'
 import { getJobDetail, getCopyContext, listJobsView, putCopyConfig } from './service.js'
 import { refreshJob, cancelJob, resumeJob, retryDownload, queryOriginal, bindRemoteTaskId, confirmResubmit, realignJob, archiveJob } from './actions.js'
-import {
-  listMaterialPacks,
-  getMaterialPack,
-  listMaterialItems,
-  importMaterialPack,
-  importMaterialPackFromBuffer,
-  patchMaterialPack,
-  deleteMaterialPack,
-  listKeywordGroups,
-  createKeywordGroup,
-  patchKeywordGroup,
-  deleteKeywordGroup,
-} from './material.js'
 
 /**
  * 视频创作模块路由（任务书 §6.1 / §6.2）。
@@ -253,97 +240,6 @@ async function registerVideoRoutes(app: FastifyInstance): Promise<void> {
   })
   jobAction('realign', (id, req) => realignJob(id, operatorOf(req)))
   jobAction('archive', (id, req) => archiveJob(id, operatorOf(req)))
-
-  /* ── 素材桩（§6.2；素材库就绪后下线写接口）── */
-
-  app.get('/material-packs', async () => ok(await listMaterialPacks()))
-  app.get('/material-packs/:id', async (req) => {
-    const { id } = req.params as { id: string }
-    return ok(await getMaterialPack(id))
-  })
-  app.get('/material-packs/:id/items', async (req) => {
-    const { id } = req.params as { id: string }
-    await getMaterialPack(id)
-    return ok(await listMaterialItems(id))
-  })
-  app.post('/material-packs', async (req) => {
-    const ctype = String(req.headers['content-type'] ?? '')
-    if (ctype.includes('multipart/form-data')) {
-      const fileParts: Array<{ filename: string; data: Buffer }> = []
-      const parts = (req as unknown as { parts: () => AsyncIterable<Record<string, unknown>> }).parts
-      const fields: Record<string, string> = {}
-      for await (const part of parts.call(req)) {
-        if (part.type === 'file') {
-          const buf = await (part.toBuffer as () => Promise<Buffer>)()
-          fileParts.push({ filename: String(part.filename ?? 'file'), data: buf })
-        } else {
-          fields[String(part.fieldname)] = String(part.value ?? '')
-        }
-      }
-      return ok(await importMaterialPackFromBuffer({ name: fields.name || '素材包', line: fields.line || null, files: fileParts }, operatorOf(req)))
-    }
-    const body = (req.body ?? {}) as { name?: string; line?: string; sourcePath?: string }
-    if (!body.sourcePath) throw err.badRequest('缺少 sourcePath（服务器目录或 zip 路径），或以 multipart 上传文件')
-    return ok(await importMaterialPack({ name: body.name || '素材包', line: body.line ?? null, sourcePath: body.sourcePath }, operatorOf(req)))
-  })
-  app.patch('/material-packs/:id', async (req) => {
-    const { id } = req.params as { id: string }
-    const body = (req.body ?? {}) as { name?: string; enabled?: boolean; line?: string | null }
-    return ok(await patchMaterialPack(id, body, operatorOf(req)))
-  })
-  app.delete('/material-packs/:id', async (req) => {
-    const { id } = req.params as { id: string }
-    await deleteMaterialPack(id)
-    return ok({ deleted: true })
-  })
-
-  app.get('/material-keyword-groups', async () => ok(await listKeywordGroups()))
-  app.post('/material-keyword-groups', async (req) => {
-    const body = (req.body ?? {}) as { name?: string; keywords?: string[]; packIds?: string[]; durationMinMs?: number; durationMaxMs?: number; selectionMode?: 'random' | 'sequential'; enabled?: boolean; sort?: number }
-    const name = String(body.name ?? '').trim()
-    const keywords = Array.isArray(body.keywords) ? body.keywords.map((k) => String(k).trim()).filter(Boolean) : []
-    if (!name || !keywords.length) throw err.badRequest('缺少组名或关键词')
-    return ok(
-      await createKeywordGroup(
-        {
-          name,
-          keywords,
-          packIds: Array.isArray(body.packIds) ? body.packIds.map(String) : undefined,
-          durationMinMs: body.durationMinMs !== undefined ? Number(body.durationMinMs) : undefined,
-          durationMaxMs: body.durationMaxMs !== undefined ? Number(body.durationMaxMs) : undefined,
-          selectionMode: body.selectionMode === 'sequential' ? 'sequential' : body.selectionMode === 'random' ? 'random' : undefined,
-          enabled: body.enabled,
-          sort: body.sort !== undefined ? Number(body.sort) : undefined,
-        },
-        operatorOf(req),
-      ),
-    )
-  })
-  app.patch('/material-keyword-groups/:id', async (req) => {
-    const { id } = req.params as { id: string }
-    const body = (req.body ?? {}) as Record<string, unknown>
-    return ok(
-      await patchKeywordGroup(
-        id,
-        {
-          ...(body.name !== undefined ? { name: String(body.name) } : {}),
-          ...(Array.isArray(body.keywords) ? { keywords: body.keywords.map(String) } : {}),
-          ...(Array.isArray(body.packIds) ? { packIds: body.packIds.map(String) } : {}),
-          ...(body.durationMinMs !== undefined ? { durationMinMs: Number(body.durationMinMs) } : {}),
-          ...(body.durationMaxMs !== undefined ? { durationMaxMs: Number(body.durationMaxMs) } : {}),
-          ...(body.selectionMode === 'random' || body.selectionMode === 'sequential' ? { selectionMode: body.selectionMode } : {}),
-          ...(body.enabled !== undefined ? { enabled: body.enabled === true || body.enabled === 1 } : {}),
-          ...(body.sort !== undefined ? { sort: Number(body.sort) } : {}),
-        },
-        operatorOf(req),
-      ),
-    )
-  })
-  app.delete('/material-keyword-groups/:id', async (req) => {
-    const { id } = req.params as { id: string }
-    await deleteKeywordGroup(id)
-    return ok({ deleted: true })
-  })
 
   /* ── /media/* 本地兜底回放（V12）── */
   app.get('/media/*', async (req, reply) => {

@@ -22,7 +22,7 @@
     "test:finstep": "tsx scripts/test-finstep.ts",
     "test:saturn:clean": "tsx scripts/test-saturn-clean.ts",
     "test:saturn": "tsx scripts/test-saturn.ts",
-    "check": "npm run typecheck && npm run test:unit && npm run check:sql-columns && npm run check:mysql-ddl && npm run check:mysql-ddl:self && npm run test:hifly:protocol && npm run test:persona:policy && npm run test:oss && npm run test:finstep:clean && npm run test:saturn:clean && npm run test:review && npm run test:personas && npm run test:persona:hash",
+    "check": "npm run typecheck && npm run test:unit && npm run check:sql-columns && npm run check:mysql-ddl && npm run check:mysql-ddl:self && npm run test:hifly:protocol && npm run test:persona:policy && npm run test:oss && npm run test:finstep:clean && npm run test:saturn:clean && npm run test:review && npm run test:jiaoduitai && npm run test:personas && npm run test:persona:hash",
     "smoke:topics": "tsx scripts/smoke-topics.ts",
     "smoke:all": "tsx scripts/run-smoke-all.ts",
     "fix:topic-status": "tsx scripts/fix-topic-status.ts",
@@ -33,6 +33,7 @@
     "test:oss": "node --import tsx scripts/test-oss.ts",
     "test:oss:real": "node --import tsx scripts/test-oss.ts --real",
     "test:review": "node --import tsx scripts/test-review-regressions.ts",
+    "test:jiaoduitai": "node --import tsx scripts/test-jiaoduitai.ts",
     "test:persona:hash": "node --import tsx scripts/test-persona-snapshot.ts",
     "test:personas": "node --import tsx scripts/test-persona-regressions.ts",
     "test:integration": "node --import tsx scripts/test-integration.ts",
@@ -40,8 +41,10 @@
     "smoke:video": "tsx scripts/smoke-video.ts",
     "smoke:publish": "tsx scripts/smoke-publish.ts",
     "smoke:cut": "tsx scripts/smoke-cut.ts",
+    "smoke:chain": "tsx scripts/smoke-chain.ts",
     "check:media-env": "tsx scripts/check-media-env.ts",
-    "test:video:align": "tsx scripts/test-video-align.ts"
+    "test:video:align": "tsx scripts/test-video-align.ts",
+    "smoke:material": "tsx scripts/smoke-material.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
@@ -61,6 +64,7 @@
   "devDependencies": {
     "@types/node": "^22.9.0",
     "node-sql-parser": "^5.4.0",
+    "playwright": "1.49.1",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vitest": "^3.2.7"

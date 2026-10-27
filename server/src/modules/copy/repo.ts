@@ -912,6 +912,9 @@ export interface SubmissionRow {
   reason: string | null
   decidedBy: string | null
   isStub: boolean
+  /** 校对台审核单号；未送出或未接入校对台时为 null */
+  externalReviewNo: string | null
+  externalStatus: string | null
   createdAt: string | null
   updatedAt: string | null
 }
@@ -928,6 +931,8 @@ export function mapSubmission(r: Row): SubmissionRow {
     reason: r.reason ?? null,
     decidedBy: r.decided_by ?? null,
     isStub: !!r.is_stub,
+    externalReviewNo: r.external_review_no ?? null,
+    externalStatus: r.external_status ?? null,
     createdAt: fromDb(r.created_at),
     updatedAt: fromDb(r.updated_at),
   }

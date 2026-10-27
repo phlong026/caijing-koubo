@@ -6,7 +6,8 @@ import PageHead from '@/components/PageHead.vue'
 import LineTag from '@/components/LineTag.vue'
 import { usePublishStore } from '@/stores/publish'
 import { useAuthStore } from '@/stores/auth'
-import { getVideoCopyContext, listVideoJobs } from '@/api/video'
+import { listVideoJobs } from '@/api/video'
+import { copyApi } from '@/api/copy'
 import {
   cancelPlan,
   confirmPlanReview,
@@ -90,7 +91,8 @@ const form = reactive({
   title: '',
   description: '',
   tags: '',
-  scheduledAt: '',
+  // Arco DatePicker 的 modelValue 不接受 ''（非法值会让弹层状态异常），留空用 undefined
+  scheduledAt: undefined as string | undefined,
   items: [] as Array<{ platform: Platform; accountId: string }>,
 })
 
@@ -117,14 +119,14 @@ const isPicked = (platform: Platform, accountId: string): boolean =>
 
 function selectJob(j: PublishableJob): void {
   selectedJob.value = j
+  // 默认标题取文案过审版本标题（与后端实质修改 hash 基准同源）；vendorTitle 是飞影诊断标识，用它会导致每单都触发复审
   form.title = j.title
   form.items = []
-  form.scheduledAt = ''
-  // 预填当前过审文案标题：与它不一致才算「实质修改」需审核确认（FR-R2）。视频之后文案可能又过审了新版本，
-  // 以过审版为准；用户已改过标题则不覆盖
-  void getVideoCopyContext(j.copyId)
-    .then((ctx) => {
-      if (selectedJob.value?.id === j.id && form.title === j.title && ctx.copy.title) form.title = ctx.copy.title
+  form.scheduledAt = undefined
+  void copyApi
+    .approved(j.copyId)
+    .then((r) => {
+      if (selectedJob.value?.id === j.id && r.title) form.title = r.title
     })
     .catch(() => undefined)
 }

@@ -23,7 +23,7 @@ export const newsList: NewsItem[] = [
   {
     id: 'n1',
     cat: '基金',
-    source: '内部投资资料（示例）',
+    source: '内部投资资料',
     time: '09:20',
     title: '定投科普：先理解规则，再谈长期坚持',
     excerpt: '定期投入并不意味着没有风险。理解定投方式、费用与适用边界。',
@@ -31,7 +31,7 @@ export const newsList: NewsItem[] = [
   {
     id: 'n2',
     cat: '市场',
-    source: '编辑整理（示例）',
+    source: '编辑整理',
     time: '09:05',
     title: '市场波动时，如何认识自己的风险承受能力',
     excerpt: '市场存在波动是常态，了解自身风险承受能力，有助于选择更适合的投资方式和产品类型。',
@@ -39,7 +39,7 @@ export const newsList: NewsItem[] = [
   {
     id: 'n3',
     cat: '行业',
-    source: '投教资料（示例）',
+    source: '投教资料',
     time: '08:40',
     title: '基金净值与份额：两个容易混淆的概念',
     excerpt: '基金净值反映单位份额的价值，份额数量与持有金额相关。理解二者区别，有助于更准确地看待账户变化。',
@@ -173,7 +173,7 @@ export const publishContents = [
     line: 'kos' as Line,
     form: '数字人口播 · 1080P · 9:16 · 01:00',
     versions: ['文案 v3', '成片 v2'],
-    status: { text: '成片复审通过（演示）', cls: 'mw-tag-green' },
+    status: { text: '成片复审通过', cls: 'mw-tag-green' },
     note: '发布绑定文案 v3、成片 v2',
   },
   {

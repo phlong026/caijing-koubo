@@ -110,6 +110,8 @@ export const TABLES: TableDef[] = [
       { name: 'persona_ids', type: 'json', nullable: true },
       vc('status', 16, { def: 'candidate' }),
       vc('batch_id', 40, { nullable: true }),
+      vc('method_id', 40, { nullable: true }), // 生成时用的选题方法（送入文案工坊时带出对应文案模板）
+      vc('origin_persona_id', 40, { nullable: true }), // 按哪个人物的人设生成（改派提示用）
       dt('sent_at'),
       vc('created_by', 64, { nullable: true }),
       dt('created_at'),
@@ -151,6 +153,7 @@ export const TABLES: TableDef[] = [
       { name: 'content', type: 'text' },
       tint('is_default', 0),
       vc('builtin', 32, { nullable: true }),
+      vc('copy_template_id', 40, { nullable: true }), // 对应的文案工坊内容模板
       vc('created_by', 64, { nullable: true }),
       dt('created_at'),
       dt('updated_at'),
@@ -866,6 +869,8 @@ export const TABLES: TableDef[] = [
       { name: 'reason', type: 'text', nullable: true },
       vc('decided_by', 64, { nullable: true }),
       tint('is_stub', 1),
+      vc('external_review_no', 32, { nullable: true }), // 校对台审核单号（R+日期-时分秒）
+      vc('external_status', 24, { nullable: true }), // 校对台最新 status 原值
       dt('created_at'),
       dt('updated_at'),
     ],
@@ -1019,6 +1024,26 @@ export const TABLES: TableDef[] = [
     comment: '按 copy 记忆的创作配置（FR-C4）',
   },
   {
+    name: 'font_item',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('file_name', 255), // 落盘文件名（CUT_FONTS_DIR 内，唯一）
+      vc('display_name', 128),
+      vc('file_hash', 64), // sha256，幂等与对账用
+      big('size_bytes', 0),
+      vc('license_type', 16, { def: 'other' }), // ofl|commercial|other（A7：other 需 note 才能启用）
+      vc('license_note', 500, { nullable: true }),
+      tint('enabled', 0), // ML2/PRD 7.8：上传默认未启用
+      vc('created_by', 64, { nullable: true }),
+      dt('created_at'),
+      dt('updated_at'),
+    ],
+    uniques: [['file_name']],
+    indexes: [{ name: 'idx_font_enabled', cols: ['enabled', 'file_name'] }],
+    comment: '字体资产（素材库 ML1；文件落 CUT_FONTS_DIR，剪辑 fontsdir 直接读目录）',
+  },
+  {
     name: 'material_pack',
     pk: 'id',
     cols: [
@@ -1028,11 +1053,12 @@ export const TABLES: TableDef[] = [
       vc('source_path', 512, { nullable: true }), // 目录或 zip 来源
       int('item_count', 0),
       tint('enabled', 1),
+      vc('license_note', 500, { nullable: true }), // 授权出处（可空，仅警示不阻断，Q5）
       vc('created_by', 64, { nullable: true }),
       dt('created_at'),
       dt('updated_at'),
     ],
-    comment: '素材包桩（所有权：素材库，§2.5 FR-S4）',
+    comment: '素材包（所有权：素材库，§2.5 FR-S4）',
   },
   {
     name: 'material_item',
@@ -1294,6 +1320,17 @@ export const TABLES: TableDef[] = [
     ],
     indexes: [{ name: 'idx_bgm_enabled', cols: ['enabled'] }],
     comment: '轻量 BGM 库（EC6 过渡实现，素材库立项后迁移）',
+  },
+  {
+    name: 'app_setting',
+    pk: 'k',
+    cols: [
+      vc('k', 96),
+      { name: 'v', type: 'text', nullable: true },
+      vc('updated_by', 64, { nullable: true }),
+      dt('updated_at'),
+    ],
+    comment: '系统设置（用户中心保存的 .env 等价覆盖值，启动与保存时热应用到 config）',
   },
   {
     name: 'schema_migrations',

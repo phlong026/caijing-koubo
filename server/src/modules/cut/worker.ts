@@ -25,6 +25,10 @@ export function registerCutWorker(): void {
     },
     { concurrency: config.cut.workerConcurrency },
   )
+  // sweep 定时器只入队，消费在这里（缺失会让 queued 永远不被重投、rendering 超时无人兜底）
+  registerWorker(QUEUE_NAMES.videoCutSweep, async () => {
+    await runCutSweep().catch((e) => logger.warn({ err: (e as Error).message }, 'cut.sweep_failed'))
+  })
 }
 
 export async function enqueueCutRender(cutId: string): Promise<void> {

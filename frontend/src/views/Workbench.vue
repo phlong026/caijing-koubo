@@ -2,9 +2,6 @@
   <div class="mw-page workbench-page">
     <PageHead title="工作台">
       <template #sub>{{ todayText }} · 三条生产线并行运转中</template>
-      <template #actions>
-        <span class="mw-alert-banner"><icon-info-circle :size="14" />演示环境 · 平台回采与发布授权能力待验证</span>
-      </template>
     </PageHead>
 
     <!-- 今日概览 -->
@@ -84,7 +81,6 @@
         </div>
       </div>
     </div>
-    <div class="mw-corner-note">原型预览 · 演示数据</div>
   </div>
 </template>
 
