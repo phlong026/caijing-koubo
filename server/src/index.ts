@@ -125,10 +125,10 @@ async function main(): Promise<void> {
     },
     'env.check',
   )
-  if (config.copy.reviewStubEnabled && config.env === 'production') {
+  if (config.copy.reviewStubEnabled) {
     logger.warn(
-      'review.stub_enabled_in_production：生产环境开启了审核桩（REVIEW_STUB_ENABLED=true），' +
-        '审核员可通过 /review/submissions/:id/decision 跳过真实三关直接裁决，请确认这是有意为之。',
+      'review.stub_enabled：已开启审核桩（REVIEW_STUB_ENABLED=true），仅限本地联调 / smoke（决策 D3：测试与生产不开）；' +
+        '审核员可通过 /review/submissions/:id/decision 跳过真实三关直接裁决。',
     )
   }
 

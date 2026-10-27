@@ -119,6 +119,7 @@ import { useAuthStore } from '@/stores/auth'
 import type { Role } from '@/api/auth'
 import { useRouter } from 'vue-router'
 import { brand, applyBrand } from '@/config/brand'
+import { features } from '@/config/features'
 import { useBenchmarkStore } from '@/stores/benchmark'
 import { useWorkspaceStore } from '@/stores/workspace'
 import {
@@ -158,7 +159,10 @@ const navGroups = [
     label: '运营',
     items: [
       { label: '任务中心', path: '/tasks', icon: icon(IconCheckSquare) },
-      { label: '审核工作台', path: '/review', icon: icon(IconSafe), roles: ['reviewer', 'admin'] as Role[] },
+      // 审核工作台按功能开关下线（features.reviewWorkbench），恢复开关即重新出现在导航
+      ...(features.reviewWorkbench
+        ? [{ label: '审核工作台', path: '/review', icon: icon(IconSafe), roles: ['reviewer', 'admin'] as Role[] }]
+        : []),
       { label: '发布管理', path: '/publish', icon: icon(IconSend) },
       { label: '数据看板', path: '/analytics', icon: icon(IconBarChart) },
     ],

@@ -204,11 +204,12 @@ export const config = {
     generateItemConcurrency: num('COPY_GENERATE_ITEM_CONCURRENCY', 3),
     llmRetry: num('COPY_LLM_RETRY', 1),
     /**
-     * 审核桩开关（W1）：开启时提交后自动模拟三关并开放人工裁决接口，仅供审核模块就绪前联调。
-     * 桩裁决接口虽已限定审核员角色，但会跳过真实三关，
-     * 因此生产环境默认关闭；关闭后审核单停在「已提交」，等待真实审核模块回写结果。
+     * 审核桩开关（W1）：开启时提交后自动模拟三关并开放人工裁决接口，仅供本地联调 / smoke。
+     * 桩裁决接口虽已限定审核员角色，但会跳过真实三关。
+     * 决策 D3（2026-10-17）：测试期间不开审核桩 → 所有环境缺省关闭，需显式 REVIEW_STUB_ENABLED=true；
+     * 关闭后审核单停在「已提交」，等真实审核（校对台）回写结果。
      */
-    reviewStubEnabled: bool('REVIEW_STUB_ENABLED', str('NODE_ENV', 'development') !== 'production'),
+    reviewStubEnabled: bool('REVIEW_STUB_ENABLED', false),
     /** 审核桩：每关模拟耗时（毫秒），smoke 可调小 */
     reviewStubStepMs: num('REVIEW_STUB_STEP_MS', 300),
   },
@@ -221,6 +222,12 @@ export const config = {
     baseUrl: str('JIAODUITAI_BASE_URL', ''),
     timeoutMs: num('JIAODUITAI_TIMEOUT_MS', 15000),
     pollMs: num('JIAODUITAI_POLL_MS', 15000),
+    /**
+     * 决策 D4（2026-10-27）：风险提示话术以校对台返回的为准。校对台 v1.1 文档尚无独立的话术字段，
+     * 这里预留字段名：填写后从审核结果里取该字段作为追加话术（视频创作取稿优先使用），
+     * 未填写或结果里没有时仍用模板 riskHint 兜底。
+     */
+    riskField: str('JIAODUITAI_RISK_FIELD', ''),
   },
 
   /**
@@ -503,6 +510,14 @@ export function hasFinStep(): boolean {
 /** 校对台审核平台是否已接入（未配置时沿用审核桩 / 人工复核） */
 export function hasJiaoduitai(): boolean {
   return !!config.jiaoduitai.baseUrl
+}
+/**
+ * 文案审核当前由谁处理（新提交的单）：校对台 > 审核桩 > 人工复核。
+ * 与 submitForReview 的分流一致：校对台已接入时审核桩不推进新单；都没有时由审核员在审核工作台直接裁决。
+ */
+export function reviewMode(): 'jiaoduitai' | 'stub' | 'manual' {
+  if (hasJiaoduitai()) return 'jiaoduitai'
+  return config.copy.reviewStubEnabled ? 'stub' : 'manual'
 }
 /** 飞影 HiFly 是否已配置（无 Key 时 mock 兜底，人物库克隆链路仍可联调） */
 export function hasHifly(): boolean {

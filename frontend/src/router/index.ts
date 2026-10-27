@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import MainLayout from '@/layouts/MainLayout.vue'
 import { brand } from '@/config/brand'
+import { features } from '@/config/features'
 import { useAuthStore } from '@/stores/auth'
 import type { Role } from '@/api/auth'
 
@@ -71,10 +72,15 @@ const router = createRouter({
           meta: { title: '任务中心' },
         },
         {
+          // 审核工作台已按功能开关下线（features.reviewWorkbench）：关闭时仅保留重定向，页面不注册
           path: 'review',
-          name: 'review',
-          component: () => import('@/views/review/ReviewWorkbench.vue'),
-          meta: { title: '审核工作台', roles: ['reviewer', 'admin'] },
+          ...(features.reviewWorkbench
+            ? {
+                name: 'review',
+                component: () => import('@/views/review/ReviewWorkbench.vue'),
+                meta: { title: '审核工作台', roles: ['reviewer', 'admin'] },
+              }
+            : { redirect: '/workbench' }),
         },
         {
           path: 'publish',

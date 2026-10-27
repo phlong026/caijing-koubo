@@ -25,7 +25,18 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
       - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        # apt 源偶发极慢（实测一次 39 分钟烧穿 40 分钟任务预算被强杀）：步骤级超时 + 重试兜底
+        timeout-minutes: 10
+        run: |
+          for i in 1 2 3; do
+            if sudo apt-get update && sudo apt-get install -y ffmpeg; then
+              ffmpeg -version | head -1
+              exit 0
+            fi
+            echo "apt 安装第 $i 次失败，10 秒后重试"
+            sleep 10
+          done
+          exit 1
       - run: npm ci
       # 类型检查 + SQL 列名 + DDL 校验 + 协议 / 清洗 / 回归单测
       - run: npm run check
@@ -68,7 +79,18 @@ jobs:
             server/package-lock.json
             frontend/package-lock.json
       - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        # 同 server 任务：apt 源偶发极慢，步骤级超时 + 重试兜底
+        timeout-minutes: 10
+        run: |
+          for i in 1 2 3; do
+            if sudo apt-get update && sudo apt-get install -y ffmpeg; then
+              ffmpeg -version | head -1
+              exit 0
+            fi
+            echo "apt 安装第 $i 次失败，10 秒后重试"
+            sleep 10
+          done
+          exit 1
       - run: npm ci
         working-directory: server
       - run: npm ci

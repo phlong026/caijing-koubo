@@ -226,6 +226,7 @@ import { Message } from '@arco-design/web-vue'
 import PageHead from '@/components/PageHead.vue'
 import LineTag from '@/components/LineTag.vue'
 import ThumbBox from '@/components/ThumbBox.vue'
+import { features } from '@/config/features'
 import {
   getTaskDetail,
   listTasks,
@@ -359,8 +360,15 @@ function routeOfAction(action: string, copyId: string, refId?: string | null): s
     case 'revise_resubmit':
       return `/copy?id=${copyId}`
     case 'view_review':
+      // 审核工作台下线期间改跳文案工坊（「检查与审核」步骤可见审核状态），开关打开后恢复原跳转
+      return features.reviewWorkbench ? '/review' : `/copy?id=${copyId}`
     case 'view_cut_review':
-      return '/review'
+      // 成片复审下线期间改跳剪辑页（复审横幅可见状态）
+      return features.reviewWorkbench
+        ? '/review'
+        : refId
+          ? `/video/edit?videoJobId=${refId}`
+          : `/video/create?copyId=${copyId}`
     case 'continue_edit':
     case 'create_cut':
     case 'view_cut_progress':

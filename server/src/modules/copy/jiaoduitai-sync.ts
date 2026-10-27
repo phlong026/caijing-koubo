@@ -5,7 +5,7 @@ import { toDb, utcNow } from '../../lib/time.js'
 import { getReviewByNo, JiaoduitaiError, submitText, type ReviewByNo } from '../../integrations/jiaoduitai/client.js'
 import { getSubmission, getVersion, insertVersion, type GateResult, type SubmissionRow } from './repo.js'
 import { contentHash, countSectionsWords, toPlainText } from './text.js'
-import { extractReviewedText, mapExternalStatus, parseReviewedText, toSubmitText } from './jiaoduitai.js'
+import { extractReviewedText, extractRiskText, mapExternalStatus, parseReviewedText, toSubmitText } from './jiaoduitai.js'
 import { onReviewResult } from './review.js'
 
 /**
@@ -223,7 +223,14 @@ async function applyApproved(sub: SubmissionRow, r: ReviewByNo): Promise<void> {
 
   const ready = await ensurePendingManual(sub, '校对台审核结束')
   if (!ready) return
-  await onReviewResult({ submissionId: sub.id, result: 'approved', approvedVersionId, operator: OPERATOR })
+  await onReviewResult({
+    submissionId: sub.id,
+    result: 'approved',
+    approvedVersionId,
+    // D4：校对台返回了风险话术就以它为准（存为审核单的追加话术，取稿优先使用）
+    appendedRiskText: extractRiskText(r, config.jiaoduitai.riskField),
+    operator: OPERATOR,
+  })
   await markExternal(sub.id, 'approved')
   logger.info({ submissionId: sub.id, reviewNo: sub.externalReviewNo, approvedVersionId }, 'jiaoduitai.approved')
 }

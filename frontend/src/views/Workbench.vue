@@ -87,7 +87,11 @@
 <script setup lang="ts">
 import PageHead from '@/components/PageHead.vue'
 import ThumbBox from '@/components/ThumbBox.vue'
+import { features } from '@/config/features'
 import { IconFire, IconFile, IconPlayCircle, IconBarChart } from '@arco-design/web-vue/es/icon'
+
+// 审核工作台下线期间，审核相关入口统一落到任务中心（features.reviewWorkbench 打开后恢复原跳转）
+const reviewEntry = features.reviewWorkbench ? '/review' : '/tasks'
 
 const todayText = new Date().toLocaleDateString('zh-CN', {
   year: 'numeric',
@@ -111,7 +115,7 @@ const metrics = [
     tag: '审核链第3关后',
     cls: 'mw-tag-yellow',
     hint: '日均审核 20-30 条',
-    to: '/review',
+    to: reviewEntry,
   },
   { name: '待发布', value: '3', tag: '成片复审通过', cls: 'mw-tag-green', hint: '抖音 2 · 小红书 1', to: '/publish' },
   {
@@ -167,7 +171,7 @@ const todos = [
     desc: '文案生成 · 待人工审核 · 张经理 · 经理 IP',
     action: '去审核',
     cls: 'mw-tag-yellow',
-    to: '/review',
+    to: reviewEntry,
   },
   {
     title: '基金定投入门',
