@@ -130,9 +130,7 @@
           <strong>{{ extractionLabel }}</strong>
           <p v-if="extractError" role="alert" class="intake-error">{{ extractError }}</p>
           <a-button v-if="pollStopped" size="small" @click="resumePoll">继续查看进度</a-button>
-          <p v-if="video.extractStatus === 'uncertain'" class="intake-hint">
-            重新提取可能重复计费
-          </p>
+          <p v-if="video.extractStatus === 'uncertain'" class="intake-hint">重新提取可能重复计费</p>
           <a-button
             v-if="['failed', 'uncertain'].includes(video.extractStatus)"
             :loading="retrying"

@@ -55,7 +55,6 @@
         <div class="text-[13px] leading-[1.85] text-[#3c4a63] whitespace-pre-wrap">{{ v.text }}</div>
       </div>
     </div>
-
   </a-modal>
 </template>
 

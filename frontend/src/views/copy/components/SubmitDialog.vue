@@ -238,7 +238,7 @@ async function onSubmit(): Promise<void> {
       draftId: store.editor.draftId,
       rev: store.editor.rev,
     })
-    Message.success(`已提交审核（第 ${r.versionNo} 版），正在自动预检…`)
+    Message.success(`已提交审核（第 ${r.versionNo} 版）`)
     emit('update:visible', false)
     emit('submitted', r.submissionId)
     await store.load(store.copy.id)

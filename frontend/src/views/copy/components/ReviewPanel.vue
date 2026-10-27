@@ -75,7 +75,6 @@ const store = useCopyStore()
 const copy = computed(() => store.copy)
 const review = computed(() => store.detail?.review ?? null)
 
-
 const statusText = computed(() => {
   if (review.value) return review.value.statusLabel
   if (copy.value?.status === 'approved') return '已通过'

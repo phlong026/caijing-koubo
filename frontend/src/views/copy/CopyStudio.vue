@@ -136,11 +136,7 @@
               @click="submitVisible = true"
               >检查并提交审核</a-button
             >
-            <a-button
-              v-else-if="canWithdraw"
-              @click="onWithdraw"
-              >撤回提交</a-button
-            >
+            <a-button v-else-if="canWithdraw" @click="onWithdraw">撤回提交</a-button>
             <a-button v-else-if="copy.status === 'approved'" type="primary" @click="onGoVideo">去视频创作</a-button>
             <a-button v-if="canGoPublish" @click="onGoPublish">去发布</a-button>
           </div>
@@ -155,7 +151,7 @@
       @picked="(id) => router.replace({ query: { id } })"
     />
     <VersionDrawer v-model:visible="versionVisible" />
-    <SubmitDialog v-model:visible="submitVisible" @submitted="onSubmitted" @navigate="onPrecheckNavigate" />
+    <SubmitDialog v-model:visible="submitVisible" @navigate="onPrecheckNavigate" />
     <VariantPanel v-model:visible="variantVisible" :section-index="variantIndex" />
     <TemplateEditor v-model:visible="configVisible" />
 
@@ -272,8 +268,7 @@ const canWithdraw = computed(
     ['submitted', 'gate1', 'gate2', 'gate3'].includes(store.detail?.review?.status ?? ''),
 )
 const hasReviewAction = computed(
-  () =>
-    ['draft', 'rejected', 'approved'].includes(copy.value?.status ?? '') || canWithdraw.value || canGoPublish.value,
+  () => ['draft', 'rejected', 'approved'].includes(copy.value?.status ?? '') || canWithdraw.value || canGoPublish.value,
 )
 const showReview = computed(
   () => !!store.detail?.review || ['in_review', 'approved', 'rejected'].includes(copy.value?.status ?? ''),
@@ -480,10 +475,6 @@ function onVariant(sectionIndex: number): void {
 }
 
 /* ── 提交 ── */
-
-function onSubmitted(_submissionId: string): void {
-  Message.success('已提交审核')
-}
 
 /* ── 提示词预览 ── */
 

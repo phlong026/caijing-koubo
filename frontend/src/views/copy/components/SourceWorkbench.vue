@@ -70,9 +70,7 @@
             playUrl ? '从头回看' : '加载并播放原视频'
           }}</a-button>
           <p v-if="playError" class="source-error" role="alert">{{ playError }}</p>
-          <div class="source-reference-title">
-            原始文案
-          </div>
+          <div class="source-reference-title">原始文案</div>
           <div class="transcript-list">
             <template v-if="material?.sentences?.length"
               ><div v-for="(s, i) in material.sentences" :key="i" class="transcript-row">
@@ -90,8 +88,7 @@
           </div>
         </div>
         <div class="source-correction">
-          <label for="corrected-source"
-            ><strong>校对稿</strong></label
+          <label for="corrected-source"><strong>校对稿</strong></label
           ><a-textarea
             id="corrected-source"
             v-model="correctedText"
