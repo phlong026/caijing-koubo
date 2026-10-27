@@ -1322,6 +1322,17 @@ export const TABLES: TableDef[] = [
     comment: '轻量 BGM 库（EC6 过渡实现，素材库立项后迁移）',
   },
   {
+    name: 'app_setting',
+    pk: 'k',
+    cols: [
+      vc('k', 96),
+      { name: 'v', type: 'text', nullable: true },
+      vc('updated_by', 64, { nullable: true }),
+      dt('updated_at'),
+    ],
+    comment: '系统设置（用户中心保存的 .env 等价覆盖值，启动与保存时热应用到 config）',
+  },
+  {
     name: 'schema_migrations',
     pk: 'version',
     cols: [vc('version', 64), dt('applied_at')],
