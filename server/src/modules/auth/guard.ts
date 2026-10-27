@@ -99,6 +99,7 @@ export const RATE_RULES: Record<string, RateRule> = {
   'POST /api/copy/:id/drafts/:draftId/variants': { perMinute: 10 },
   'POST /api/copy/:id/prompt-preview': { perMinute: 30 },
   'POST /api/copy/:id/structure': { perMinute: 6 },
+  'POST /api/copy/:id/similarity': { perMinute: 120 },
   'POST /api/copy/llm/ping': { perMinute: 3 },
   'POST /api/topics/generate': { perMinute: 6 },
   'POST /api/benchmark/videos/:id/extract': { perMinute: 10 },

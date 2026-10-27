@@ -121,6 +121,9 @@
           />
         </div>
 
+        <!-- 原创度（对标来源）：与原文的相似度，重合片段可点击定位到正文 -->
+        <SimilarityBar :result="similarity" :items="similarityItems" @locate="focusHit" />
+
         <!-- 合规命中：点击定位到正文 -->
         <div v-if="hits.length" class="mt-2 flex flex-wrap gap-1.5">
           <a-tag
@@ -171,7 +174,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
-import { copyApi, type ComplianceHit, type Section } from '@/api/copy'
+import { copyApi, type ComplianceHit, type Section, type OriginalityResult } from '@/api/copy'
+import SimilarityBar, { type SimilarityItem } from './SimilarityBar.vue'
 
 const emit = defineEmits<{ (e: 'variant', sectionIndex: number): void }>()
 const store = useCopyStore()
@@ -197,7 +201,7 @@ defineExpose({ selectDraft: onSwitchDraft })
 function locateHit(e: Event) {
   focusHit((e as CustomEvent).detail as ComplianceHit)
 }
-function focusHit(h: ComplianceHit) {
+function focusHit(h: { sectionIndex: number; start: number; end: number }) {
   void nextTick(() => {
     if (h.sectionIndex < 0) {
       const el = document.querySelector<HTMLTextAreaElement>('#copy-draft-title textarea, textarea#copy-draft-title')
@@ -464,7 +468,68 @@ watch(
   },
 )
 
+/* ── 原创度：对标来源编辑时防抖请求与原文的相似度；重合片段取自当前文本 ── */
+const similarity = ref<OriginalityResult | null>(null)
+let simTimer: ReturnType<typeof setTimeout> | null = null
+let simSeq = 0
+
+async function runSimilarity(): Promise<void> {
+  const e = editor.value
+  const c = store.copy
+  if (!e || !c || c.source !== 'benchmark') {
+    similarity.value = null
+    return
+  }
+  const seq = ++simSeq
+  try {
+    // 与正文文本框同一口径：段落去首尾空白，位置才能对上文本框里的段落
+    const r = await copyApi.similarity(c.id, {
+      title: e.title,
+      sections: e.sections.map((s) => ({ text: s.text.trim() })),
+    })
+    // 切稿 / 继续输入后，较早发出的请求结果不再采用
+    if (seq === simSeq) {
+      similarity.value = r
+      // 候选稿卡片上的相似度随编辑同步，避免显示保存前的旧值
+      const card = store.drafts.find((d) => d.id === e.draftId)
+      if (card && r.applicable) card.similarity = r.similarity ?? null
+    }
+  } catch {
+    // 辅助能力，失败不打扰用户（提交前预检仍会查重）
+  }
+}
+
+watch(
+  () => [editor.value?.draftId, editor.value?.title, editor.value?.sections.map((s) => s.text.trim()).join('\u0001')],
+  () => {
+    if (simTimer) clearTimeout(simTimer)
+    simTimer = setTimeout(() => {
+      simTimer = null
+      void runSimilarity()
+    }, 800)
+  },
+  { immediate: true },
+)
+
+const similarityItems = computed<SimilarityItem[]>(() => {
+  const e = editor.value
+  const ranges = similarity.value?.ranges ?? []
+  if (!e || !similarity.value?.applicable) return []
+  return ranges.slice(0, 8).map((r) => {
+    const text = r.sectionIndex < 0 ? (e.title ?? '').trim() : (e.sections[r.sectionIndex]?.text.trim() ?? '')
+    const piece = text.slice(r.start, r.end)
+    return {
+      sectionIndex: r.sectionIndex,
+      start: r.start,
+      end: r.end,
+      where: r.sectionIndex < 0 ? '标题' : `第 ${r.sectionIndex + 1} 段`,
+      excerpt: piece.length > 18 ? `${piece.slice(0, 18)}…` : piece,
+    }
+  })
+})
+
 onBeforeUnmount(() => {
+  if (simTimer) clearTimeout(simTimer)
   if (liveTimer) clearTimeout(liveTimer)
 })
 

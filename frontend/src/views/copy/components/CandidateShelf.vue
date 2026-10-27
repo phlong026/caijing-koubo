@@ -26,7 +26,15 @@
             :disabled="!picked.includes(d.id) && picked.length >= 2"
             @change="toggle(d.id)"
             ><span class="mw-subtle">加入对比</span></a-checkbox
-          ><span v-if="d.hasSubmitted" class="mw-tag mw-tag-gray">提交过</span>
+          ><span class="candidate-tags"
+            ><span
+              v-if="typeof d.similarity === 'number'"
+              class="mw-tag"
+              :class="similarityClass(d.similarity)"
+              :title="`与对标原文的相似度，上限 ${Math.round(threshold * 100)}%`"
+              >相似 {{ Math.round(d.similarity * 100) }}%</span
+            ><span v-if="d.hasSubmitted" class="mw-tag mw-tag-gray">提交过</span></span
+          >
         </div>
         <div class="candidate-direction">{{ d.name }}</div>
         <h3>{{ d.title || '未命名' }}</h3>
@@ -76,6 +84,12 @@ function bodyCount(d: Draft) {
 }
 function seconds(d: Draft) {
   return (bodyCount(d) / (store.options?.limits.charsPerSec ?? 3.5)).toFixed(1)
+}
+const threshold = computed(() => store.options?.limits.similarityThreshold ?? 0.3)
+/** 超限：素人线红色（会被拦），其他线黄色（仅提示）；未超限绿色 */
+function similarityClass(v: number): string {
+  if (v <= threshold.value) return 'mw-tag-green'
+  return store.copy?.line === 'persona' ? 'mw-tag-red' : 'mw-tag-yellow'
 }
 function toggle(id: string) {
   picked.value = picked.value.includes(id) ? picked.value.filter((x) => x !== id) : [...picked.value, id].slice(0, 2)
@@ -149,6 +163,11 @@ watch(
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+.candidate-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .candidate-direction {
   font-size: 11px;

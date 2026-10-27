@@ -66,7 +66,7 @@ import { normalizeStructureUse } from './structure-core.js'
 import { getVersion, listVersions, getSubmission, getGeneration, listVariantsByGeneration, runningGeneration } from './repo.js'
 import { parseArticleBuffer, parsePastedText, saveArticle, validateFileMeta, writeTempFile } from './article.js'
 import { getArticle } from './repo.js'
-import { scanCompliance } from './text.js'
+import { createSimilarityScorer, scanCompliance, similarityRanges } from './text.js'
 import { getPersonaById } from './persona-bridge.js'
 import { toDb, utcNow } from '../../lib/time.js'
 import { newId } from '../../lib/util.js'
@@ -1151,6 +1151,24 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
       }
     }
     return ok({ hits: scanCompliance(sections, words, claims, body.title ?? null) })
+  })
+
+  /**
+   * 原创度：当前编辑内容与对标原文的相似度与重合片段（编辑时防抖实时调用，不落库）。
+   * 与预检查重同一口径（5-gram 包含率，标题 + 各段合并计算）；非对标来源 applicable=false。
+   */
+  app.post('/copy/:id/similarity', async (req) => {
+    const { id } = req.params as { id: string }
+    const copy = await requireCopy(id)
+    if (copy.source !== 'benchmark' || !copy.sourceText) return ok({ applicable: false })
+    const body = (req.body ?? {}) as { title?: unknown; sections?: unknown }
+    const title = String(body.title ?? '').slice(0, 200)
+    const sections = (Array.isArray(body.sections) ? body.sections : [])
+      .slice(0, 40)
+      .map((s, index) => ({ index, text: String((s as { text?: unknown })?.text ?? '').slice(0, 5000) }))
+    const score = createSimilarityScorer(copy.sourceText, copy.line)([title, ...sections.map((s) => s.text)].join('\n'))
+    const ranges = similarityRanges(copy.sourceText, [{ index: -1, text: title }, ...sections])
+    return ok({ applicable: true, line: copy.line, ...score, ranges })
   })
 
   /* ── 提示词预览（编辑器「查看提示词」，仅预览不落库）───────────── */
