@@ -234,6 +234,105 @@ export function computeSimilarity(
   }
 }
 
+/* ── 原创度（编辑时实时相似度，阶段 3）──────────────────────────────
+ * 与预检的查重同一口径（5-gram 包含率），但：
+ *  - 只算相似度、不算最长公共子串（那是 O(n×m)，不适合每次输入都跑）；
+ *  - 给出重合片段在稿内**原文位置**，让编辑区能点击定位到要重写的地方。
+ */
+
+export interface SimilarityScore {
+  similarity: number
+  threshold: number
+  /** 仅素人线超过阈值才算「被拦」；其他线只提示 */
+  blocked: boolean
+  n: number
+}
+
+/** 先对原文建一次 n-gram 集合，再对任意多份改写稿快速打分（候选稿列表一次算多份） */
+export function createSimilarityScorer(
+  original: string,
+  line: string | null | undefined,
+): (rewritten: string) => SimilarityScore {
+  const n = Math.max(2, config.copy.similarityN)
+  const threshold = config.copy.similarityThreshold
+  const sGrams = ngrams(normalizeForSimilarity(original), n)
+  return (rewritten) => {
+    const R = normalizeForSimilarity(rewritten)
+    if (R.length < n || !sGrams.size) return { similarity: 0, threshold, blocked: false, n }
+    const rGrams = ngrams(R, n)
+    let hit = 0
+    for (const g of rGrams) if (sGrams.has(g)) hit += 1
+    const similarity = rGrams.size ? hit / rGrams.size : 0
+    return { similarity: Math.round(similarity * 1000) / 1000, threshold, blocked: line === 'persona' && similarity > threshold, n }
+  }
+}
+
+/** 归一化文本，并记下每个保留字符在原文里的起止下标（与 normalizeForSimilarity 逐字符等价） */
+function normalizeWithMap(text: string): { norm: string; from: number[]; to: number[] } {
+  let norm = ''
+  const from: number[] = []
+  const to: number[] = []
+  let i = 0
+  for (const ch of String(text ?? '')) {
+    const len = ch.length
+    const code = ch.charCodeAt(0)
+    let c = code >= 0xff01 && code <= 0xff5e ? String.fromCharCode(code - 0xfee0) : ch === '\u3000' ? ' ' : ch
+    c = c.toLowerCase()
+    for (const k of c) {
+      if (/[\p{Script=Han}a-z0-9]/u.test(k)) {
+        norm += k
+        from.push(i)
+        to.push(i + len)
+      }
+    }
+    i += len
+  }
+  return { norm, from, to }
+}
+
+export interface SimilarRange {
+  /** -1 = 标题 */
+  sectionIndex: number
+  /** 在该段文本里的起止下标（半开区间） */
+  start: number
+  end: number
+}
+
+/**
+ * 改写稿里与原文重合（连续命中 n-gram）的区间，按段返回原文位置。
+ * 命中的 n-gram 覆盖到的字符连成一段；中间只隔标点的重合片段会连成一段。
+ */
+export function similarityRanges(
+  original: string,
+  segments: Array<{ index: number; text: string }>,
+  limit = 30,
+): SimilarRange[] {
+  const n = Math.max(2, config.copy.similarityN)
+  const sGrams = ngrams(normalizeForSimilarity(original), n)
+  const out: SimilarRange[] = []
+  if (!sGrams.size) return out
+  for (const seg of segments) {
+    const { norm, from, to } = normalizeWithMap(seg.text)
+    if (norm.length < n) continue
+    const covered = new Uint8Array(norm.length)
+    for (let i = 0; i + n <= norm.length; i++) {
+      if (sGrams.has(norm.slice(i, i + n))) covered.fill(1, i, i + n)
+    }
+    for (let i = 0; i < norm.length; ) {
+      if (!covered[i]) {
+        i += 1
+        continue
+      }
+      let j = i
+      while (j + 1 < norm.length && covered[j + 1]) j += 1
+      out.push({ sectionIndex: seg.index, start: from[i]!, end: to[j]! })
+      i = j + 1
+      if (out.length >= limit) return out
+    }
+  }
+  return out
+}
+
 /* ── 合规扫描（FR-R1 / AC-R1）────────────────────────────────────── */
 
 export interface ComplianceWordRow {

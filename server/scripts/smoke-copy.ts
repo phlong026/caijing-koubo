@@ -384,6 +384,27 @@ if (!genOnly) {
             { sim: bk.similarity, threshold: bk.threshold, blocked: bk.blocked },
           )
         }
+        // 阶段 3：原创度——编辑时实时相似度、重合片段位置、候选稿相似度
+        const liveCopy = await req('POST', `/copy/${benchCopyId}/similarity`, { title: '查重基准稿', sections: [{ label: '开场', text: srcText }] })
+        check(
+          '原创度：照搬原文相似度高并给出重合片段位置',
+          liveCopy.ok === true && liveCopy.data?.applicable === true && liveCopy.data?.similarity > 0.9 && (liveCopy.data?.ranges ?? []).length >= 1,
+          { sim: liveCopy.data?.similarity, ranges: liveCopy.data?.ranges?.length },
+        )
+        const r0 = liveCopy.data?.ranges?.find((r: any) => r.sectionIndex === 0)
+        check('原创度：重合区间落在该段文本范围内', !!r0 && r0.start >= 0 && r0.end <= srcText.length && r0.end > r0.start, r0)
+        const liveFresh = await req('POST', `/copy/${benchCopyId}/similarity`, { title: '全新标题', sections: [{ label: '开场', text: '这是一段和原视频完全无关的新写内容，讲的是怎样给孩子准备教育金。' }] })
+        check('原创度：全新内容相似度为 0 且无重合片段', liveFresh.data?.similarity === 0 && (liveFresh.data?.ranges ?? []).length === 0, liveFresh.data)
+        const detailSim = await req('GET', `/copy/${benchCopyId}`)
+        check('对标来源详情的每份稿带相似度', (detailSim.data?.drafts ?? []).every((d: any) => typeof d.similarity === 'number'), detailSim.data?.drafts?.map((d: any) => d.similarity))
+        const plain = await createManual(kosId, uniq('非对标原创度'), '非对标来源没有原文可比。')
+        if (plain) {
+          const liveNone = await req('POST', `/copy/${plain.copyId}/similarity`, { title: 't', sections: [{ label: 'a', text: '随便写点什么内容。' }] })
+          check('原创度：非对标来源 applicable=false', liveNone.ok === true && liveNone.data?.applicable === false, liveNone.data)
+          const plainDetail = await req('GET', `/copy/${plain.copyId}`)
+          check('非对标来源的稿不带相似度', (plainDetail.data?.drafts ?? []).every((d: any) => d.similarity === null || d.similarity === undefined), plainDetail.data?.drafts?.map((d: any) => d.similarity))
+        }
+
         // 阶段 3：对标结构拆解——拆解、缓存、勾选沿用、是否进入提示词
         const st1 = await req('POST', `/copy/${benchCopyId}/structure`, {})
         check(

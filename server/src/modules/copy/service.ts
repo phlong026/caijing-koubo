@@ -22,6 +22,7 @@ import {
 } from './repo.js'
 import {
   computeSimilarity,
+  createSimilarityScorer,
   countBodyWords,
   countSectionsWords,
   contentHash,
@@ -244,6 +245,8 @@ export interface CopyDetailDraft {
   hasSubmitted: boolean
   origin: string
   generationId?: string | null
+  /** 与对标原文的相似度（0–1）；仅对标来源有值，供候选稿对比原创度 */
+  similarity?: number | null
   updatedAt: string | null
 }
 
@@ -334,6 +337,8 @@ export async function getCopyDetail(copyId: string): Promise<CopyDetail> {
 
   const derived = derivedStatusOf(copy, drafts.length)
   const line = copy.line ?? persona?.line ?? null
+  // 对标来源：每份稿与原文的相似度（原文 n-gram 只建一次）
+  const scoreOf = copy.source === 'benchmark' && copy.sourceText ? createSimilarityScorer(copy.sourceText, line) : null
   return {
     copy: {
       ...copy,
@@ -347,6 +352,7 @@ export async function getCopyDetail(copyId: string): Promise<CopyDetail> {
     },
     // 注意：这里必须带 sections，前端编辑器直接以它初始化本地草稿态
     drafts: drafts.map((d) => ({
+      similarity: scoreOf ? scoreOf([d.title ?? '', ...d.sections.map((x) => x.text)].join('\n')).similarity : null,
       id: d.id,
       copyId: d.copyId,
       draftNo: d.draftNo,

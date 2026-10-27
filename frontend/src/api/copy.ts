@@ -88,6 +88,16 @@ export interface ScriptStructure {
   analyzedAt: string
 }
 
+/** 原创度（与预检查重同一口径）；ranges 的 sectionIndex = -1 表示标题，start/end 为该段文本内的下标 */
+export interface OriginalityResult {
+  applicable: boolean
+  line?: CopyLine | null
+  similarity?: number
+  threshold?: number
+  blocked?: boolean
+  ranges?: Array<{ sectionIndex: number; start: number; end: number }>
+}
+
 /** 生成时沿用哪些结构：钩子 / 段落分工 / 节奏 */
 export interface StructureUse {
   hook: boolean
@@ -123,6 +133,8 @@ export interface Draft {
   rev: number
   latestVersionNo: number
   hasSubmitted: boolean
+  /** 与对标原文的相似度（0–1），仅对标来源有值 */
+  similarity?: number | null
   origin: DraftOrigin
   generationId?: string | null
   updatedAt: string
@@ -613,6 +625,10 @@ export const copyApi = {
   },
 
   /* 工具 */
+  /** 原创度：当前内容与对标原文的相似度与重合片段位置（编辑时防抖调用）；非对标来源 applicable=false */
+  similarity(copyId: string, body: { title?: string | null; sections: Array<{ text: string }> }) {
+    return apiPost<OriginalityResult>(`/copy/${copyId}/similarity`, body)
+  },
   /** P1-22：编辑时实时合规扫描（后端 POST /copy/compliance/scan）；copyId 用于带出人物禁用表述 */
   scanCompliance(body: { copyId?: string; title?: string | null; sections: Section[] }) {
     return apiPost<{ hits: ComplianceHit[] }>('/copy/compliance/scan', body)

@@ -172,7 +172,7 @@ export const COMPLIANCE_SEED: Array<{ word: string; level: 'hard' | 'soft'; cate
   { word: '稳赚不亏', level: 'hard', category: '收益承诺' },
   { word: '刚性兑付', level: 'hard', category: '收益承诺' },
   { word: '内幕消息', level: 'hard', category: '违规表述' },
-  // 《金融产品网络营销管理办法》点名的诱导性用语（待合规部门确认分级）；「低风险」可能出现在产品风险等级描述里，先按软提示
+  // 《金融产品网络营销管理办法》点名的诱导性用语（分级已由合规确认）；「低风险」可能出现在产品风险等级描述里，先按软提示
   { word: '高收益', level: 'hard', category: '诱导性用语' },
   { word: '低风险', level: 'soft', category: '诱导性用语' },
   // ── 软提示：绝对化 / 夸大 ──
