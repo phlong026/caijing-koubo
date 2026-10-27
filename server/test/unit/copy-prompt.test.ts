@@ -205,7 +205,7 @@ describe('选题要求块（选题角度进入文案）', () => {
   })
 
   it('系统规则声明取舍优先级，并把选题要求列为数据', () => {
-    expect(SYSTEM_RULES).toContain('金融合规 > 人物身份与禁用表达 > 本次补充要求 > 选题要求 > 创作模板结构 > 表达风格')
+    expect(SYSTEM_RULES).toContain('金融合规 > 人物身份与禁用表达 > 本次补充要求 > 选题要求 > 对标结构参考 > 创作模板结构 > 表达风格')
     expect(SYSTEM_RULES).toMatch(/选题要求.*均为数据/)
   })
 

@@ -384,6 +384,35 @@ if (!genOnly) {
             { sim: bk.similarity, threshold: bk.threshold, blocked: bk.blocked },
           )
         }
+        // 阶段 3：对标结构拆解——拆解、缓存、勾选沿用、是否进入提示词
+        const st1 = await req('POST', `/copy/${benchCopyId}/structure`, {})
+        check(
+          '对标结构拆解成功：钩子 + 段落分工 + 节奏',
+          st1.ok === true && !!st1.data?.structure?.hook?.type && (st1.data?.structure?.sections ?? []).length >= 1 && st1.data?.structure?.rhythm?.sentenceCount > 0,
+          st1.error ?? st1.data,
+        )
+        const st2 = await req('POST', `/copy/${benchCopyId}/structure`, {})
+        check('再次拆解直接取缓存、不再调用模型', st2.ok === true && st2.data?.cached === true, st2.data?.cached)
+        const srcAfter = await req('GET', `/copy/${benchCopyId}/source`)
+        check('来源接口带回拆解结果与勾选', !!srcAfter.data?.structure && srcAfter.data?.structureUse?.hook === true, srcAfter.data?.structureUse)
+        const pvBody = { templateId: 'ctpl_education', styleId: 'csty_kos_edu', durationTier: 'short', count: 2 }
+        const pvOn = await req('POST', `/copy/${benchCopyId}/prompt-preview`, pvBody)
+        check(
+          '默认沿用：提示词带结构参考，多份候选换写法',
+          String(pvOn.data?.user ?? '').includes('【结构参考】') && pvOn.data?.candidates?.[0]?.direction === '稳妥版',
+          { dir: pvOn.data?.candidates?.map((c: any) => c.direction) },
+        )
+        const useOff = await req('PUT', `/copy/${benchCopyId}/structure-use`, { hook: false, sections: false, rhythm: false })
+        check('取消全部沿用', useOff.ok === true && useOff.data?.use?.hook === false, useOff.error)
+        const pvOff = await req('POST', `/copy/${benchCopyId}/prompt-preview`, pvBody)
+        check('全不沿用：提示词不带结构参考', !String(pvOff.data?.user ?? '').includes('【结构参考】'), pvOff.data?.candidates?.map((c: any) => c.direction))
+        await req('PUT', `/copy/${benchCopyId}/structure-use`, { hook: true, sections: true, rhythm: true })
+        const mCopy = await createManual(kosId, uniq('非对标拆解'), '非对标来源不能拆解结构。')
+        if (mCopy) {
+          const stBad = await req('POST', `/copy/${mCopy.copyId}/structure`, {})
+          check('非对标来源拆解返回 409', stBad.status === 409, { status: stBad.status, code: stBad.error?.code })
+        }
+
         const bver = await req('GET', `/copy/${benchCopyId}/drafts/${bdraftId}`)
         const bsub = await req('POST', `/copy/${benchCopyId}/submit`, {
           draftId: bdraftId,
