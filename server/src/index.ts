@@ -162,7 +162,9 @@ async function main(): Promise<void> {
   await registerTopicJobs()
   await registerBenchmarkJobs()
   await registerExtractWorker()
-  // 文案工坊生成队列（W2）
+  // 文案工坊生成队列（W2）；先把上次中断的生成标为失败，避免前端一直显示排队中
+  const { failInterruptedGenerations } = await import('./modules/copy/generation.js')
+  await failInterruptedGenerations().catch((e) => logger.error({ err: (e as Error).message }, 'copy.generate.interrupted_scan_failed'))
   registerCopyWorker()
   // 人物库模块（PL4/PL5）：素材处理 / 克隆执行 / 授权到期扫描三类 worker + 每日排期
   // + 重启时 submitting→uncertain 扫描（R9）

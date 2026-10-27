@@ -72,20 +72,21 @@
     <!-- 差异对比 -->
     <a-modal v-model:visible="diffVisible" title="版本对比" :width="720" :footer="false" unmount-on-close>
       <div v-if="diffLoading" class="py-12 text-center"><a-spin /></div>
-      <div v-else-if="diff" class="space-y-2 max-h-[480px] overflow-auto">
-        <div v-for="(d, i) in diff.sections" :key="i" class="diff-row" :class="`diff-${d.change}`">
+      <div v-else-if="diffRows" class="space-y-2 max-h-[480px] overflow-auto">
+        <a-empty v-if="!diffRows.length" description="与当前稿一致" />
+        <div v-for="d in diffRows" :key="d.index" class="diff-row" :class="`diff-${d.status}`">
           <div class="flex items-center gap-2 mb-1">
-            <a-tag :color="diffColor(d.change)" size="small">{{ diffLabel(d.change) }}</a-tag>
-            <span class="text-[13px] font-medium text-[#131f38]">第 {{ i + 1 }} 段</span>
+            <a-tag :color="diffColor(d.status)" size="small">{{ diffLabel(d.status) }}</a-tag>
+            <span class="text-[13px] font-medium text-[#131f38]">第 {{ d.index + 1 }} 段</span>
           </div>
           <div
-            v-if="d.change !== 'added'"
+            v-if="d.status !== 'added'"
             class="text-[12px] leading-[1.75] text-[#9aa6ba] line-through whitespace-pre-wrap"
           >
-            {{ d.base || '（空）' }}
+            {{ d.before }}
           </div>
-          <div v-if="d.change !== 'removed'" class="text-[13px] leading-[1.75] text-[#3c4a63] whitespace-pre-wrap">
-            {{ d.target || '（空）' }}
+          <div v-if="d.status !== 'removed'" class="text-[13px] leading-[1.75] text-[#3c4a63] whitespace-pre-wrap">
+            {{ d.after }}
           </div>
         </div>
       </div>
@@ -97,7 +98,7 @@
 import { computed, ref, watch } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
-import { copyApi, type CopyVersion, type Section, type VersionOrigin } from '@/api/copy'
+import { copyApi, type CopyVersion, type Section, type VersionDiff, type VersionOrigin } from '@/api/copy'
 
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ (e: 'update:visible', v: boolean): void }>()
@@ -115,11 +116,9 @@ const detailLoading = ref(false)
 
 const diffVisible = ref(false)
 const diffLoading = ref(false)
-const diff = ref<{
-  baseVersionNo: number | null
-  targetVersionNo: number
-  sections: Array<{ label: string; change: 'added' | 'removed' | 'modified' | 'same'; base: string; target: string }>
-} | null>(null)
+const diff = ref<VersionDiff | null>(null)
+/** 只列有变化的段落 */
+const diffRows = computed(() => diff.value?.diff.filter((d) => d.status !== 'same') ?? null)
 
 watch(
   () => props.visible,
@@ -179,11 +178,11 @@ function originColor(o: VersionOrigin): string {
 }
 
 function diffLabel(c: string): string {
-  return { added: '新增', removed: '删除', modified: '修改', same: '未变' }[c] ?? c
+  return { added: '新增', removed: '删除', changed: '修改', same: '未变' }[c] ?? c
 }
 
 function diffColor(c: string): string {
-  return { added: 'green', removed: 'red', modified: 'orange', same: 'gray' }[c] ?? 'gray'
+  return { added: 'green', removed: 'red', changed: 'orange', same: 'gray' }[c] ?? 'gray'
 }
 
 async function onDiff(v: CopyVersion): Promise<void> {
@@ -258,7 +257,7 @@ function fmtTime(iso: string): string {
 .diff-removed {
   border-left-color: #c03e35;
 }
-.diff-modified {
+.diff-changed {
   border-left-color: #b95f1d;
 }
 .diff-same {

@@ -1,5 +1,5 @@
 <template>
-  <div class="mw-card copy-editor" :class="{ 'is-continuous': !showParagraphTools }">
+  <div class="mw-card copy-editor">
     <!-- 生成完成后自动切稿的提示：内容被静默替换最容易让人以为丢了东西 -->
     <div v-if="store.switchedNotice" class="switch-notice">
       <icon-swap class="text-[#1d4ed8]" />
@@ -78,12 +78,8 @@
         <a-button size="mini" type="text" :disabled="!editor.sections.some((s) => s.text.trim())" @click="onCopyBody"
           >复制正文</a-button
         >
-        <a-button
-          size="mini"
-          type="text"
-          :aria-pressed="showParagraphTools"
-          @click="showParagraphTools = !showParagraphTools"
-          >{{ showParagraphTools ? '收起段落工具' : '段落工具' }}</a-button
+        <a-button size="mini" type="text" :disabled="readonly || !bodyText.trim()" @click="onVariantAtCursor"
+          >改写光标所在段</a-button
         >
         <a-tooltip content="撤销">
           <a-button aria-label="撤销" size="mini" type="text" :disabled="!store.canUndo" @click="store.undo()">
@@ -112,87 +108,33 @@
         />
       </div>
 
-      <!-- 段落 -->
-      <div class="px-5 py-3 space-y-3">
-        <div
-          v-for="(s, i) in editor.sections"
-          :key="i"
-          class="section-item"
-          :id="`copy-section-${i}`"
-          :class="{
-            'has-violation': hardViolations.has(i),
-            'has-soft-warning': violations.has(i) && !hardViolations.has(i),
-          }"
-        >
-          <div v-if="showParagraphTools" class="section-actions flex items-center gap-2 mb-1.5">
-            <span v-if="s.sourceRefs?.length" class="mw-subtle">原文 {{ s.sourceRefs.join('、') }} 段</span>
-            <span class="flex-1" />
-            <a-tooltip content="生成这一段的其他写法">
-              <a-button
-                aria-label="生成本段其他写法"
-                size="mini"
-                type="text"
-                :disabled="readonly"
-                @click="emit('variant', i)"
-              >
-                <template #icon><icon-swap /></template>
-              </a-button>
-            </a-tooltip>
-            <a-tooltip content="上移">
-              <a-button
-                aria-label="上移段落"
-                size="mini"
-                type="text"
-                :disabled="readonly || i === 0"
-                @click="store.moveSection(i, -1)"
-              >
-                <template #icon><icon-arrow-up /></template>
-              </a-button>
-            </a-tooltip>
-            <a-tooltip content="下移">
-              <a-button
-                aria-label="下移段落"
-                size="mini"
-                type="text"
-                :disabled="readonly || i === editor.sections.length - 1"
-                @click="store.moveSection(i, 1)"
-              >
-                <template #icon><icon-arrow-down /></template>
-              </a-button>
-            </a-tooltip>
-            <a-tooltip content="删除本段">
-              <a-button aria-label="删除段落" size="mini" type="text" :disabled="readonly" @click="onRemoveSection(i)">
-                <template #icon><icon-delete /></template>
-              </a-button>
-            </a-tooltip>
-          </div>
-
+      <!-- 正文：一个文本框，空行分段；保存时拆回段落（变体、合规定位、版本对比按段工作） -->
+      <div class="px-5 py-3">
+        <div id="copy-body" class="body-box" :class="{ 'has-violation': hardHitCount > 0 }">
           <a-textarea
-            v-model="s.text"
+            :model-value="bodyText"
             :disabled="readonly"
-            :auto-size="{ minRows: 1 }"
-            :aria-label="`第 ${i + 1} 段正文`"
-            placeholder="输入文案正文"
-            @input="onSectionInput(i)"
+            :auto-size="{ minRows: 8 }"
+            aria-label="文案正文"
+            placeholder="输入文案正文，空一行分段"
+            @update:model-value="onBodyInput"
           />
-
-          <!-- 合规命中 -->
-          <div v-if="hitsOfSection(i).length" class="mt-1 flex flex-wrap gap-1.5">
-            <a-tag
-              v-for="(h, hi) in hitsOfSection(i)"
-              :key="hi"
-              :color="h.level === 'hard' ? 'red' : 'orange'"
-              size="small"
-            >
-              {{ h.level === 'hard' ? '禁用' : '提示' }}：{{ h.word }}
-            </a-tag>
-          </div>
         </div>
 
-        <a-button v-if="showParagraphTools && !readonly" long type="dashed" size="small" @click="onAddSection">
-          <template #icon><icon-plus /></template>
-          添加段落
-        </a-button>
+        <!-- 合规命中：点击定位到正文 -->
+        <div v-if="hits.length" class="mt-2 flex flex-wrap gap-1.5">
+          <a-tag
+            v-for="(h, hi) in hits"
+            :key="hi"
+            :color="h.level === 'hard' ? 'red' : 'orange'"
+            size="small"
+            class="cursor-pointer"
+            @click="focusHit(h)"
+          >
+            {{ h.level === 'hard' ? '禁用' : '提示' }}：{{ h.word }} ·
+            {{ h.sectionIndex < 0 ? '标题' : `第 ${h.sectionIndex + 1} 段` }}
+          </a-tag>
+        </div>
       </div>
 
       <!-- 只读风险提示块（W4，不计字数） -->
@@ -229,11 +171,10 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
-import { copyApi, type ComplianceHit } from '@/api/copy'
+import { copyApi, type ComplianceHit, type Section } from '@/api/copy'
 
 const emit = defineEmits<{ (e: 'variant', sectionIndex: number): void }>()
 const store = useCopyStore()
-const showParagraphTools = ref(false)
 const draftTabs = ref<HTMLElement | null>(null)
 let tabsObserver: ResizeObserver | undefined
 function revealCurrentTab() {
@@ -254,16 +195,23 @@ const pendingDraft = ref<string | null>(null)
 let resolveSwitch: ((v: boolean) => void) | null = null
 defineExpose({ selectDraft: onSwitchDraft })
 function locateHit(e: Event) {
-  const h = (e as CustomEvent).detail as ComplianceHit
+  focusHit((e as CustomEvent).detail as ComplianceHit)
+}
+function focusHit(h: ComplianceHit) {
   void nextTick(() => {
-    const el = document.querySelector<HTMLTextAreaElement>(
-      h.sectionIndex < 0
-        ? '#copy-draft-title textarea, textarea#copy-draft-title'
-        : `#copy-section-${h.sectionIndex} textarea`,
-    )
-    el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-    el?.focus()
-    el?.setSelectionRange(h.start, h.end)
+    if (h.sectionIndex < 0) {
+      const el = document.querySelector<HTMLTextAreaElement>('#copy-draft-title textarea, textarea#copy-draft-title')
+      el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      el?.focus()
+      el?.setSelectionRange(h.start, h.end)
+      return
+    }
+    const seg = paragraphRanges(bodyText.value)[h.sectionIndex]
+    const el = bodyEl()
+    if (!seg || !el) return
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    el.focus()
+    el.setSelectionRange(seg.start + h.start, seg.start + h.end)
   })
 }
 onMounted(() => window.addEventListener('copy-focus-hit', locateHit))
@@ -274,6 +222,89 @@ onBeforeUnmount(() => {
 
 const editor = computed(() => store.editor)
 const readonly = computed(() => !store.canEdit || store.locked)
+
+/* ── 正文单文本框 ──
+ * 文本框里的原文是编辑时的唯一来源；每次输入后拆成段落写回 editor.sections。
+ * 撤销 / 重做 / 换稿 / 载入等从外部改了 sections 时，再按段落重新拼回文本框。 */
+const PARA_BREAK = /\n[ \t\u3000]*\n/g
+
+/** 文本框中每个非空段落的起止位置（去掉首尾空白后），与 parseBody 的拆分一一对应 */
+function paragraphRanges(text: string): Array<{ start: number; end: number }> {
+  const out: Array<{ start: number; end: number }> = []
+  let from = 0
+  const push = (a: number, b: number) => {
+    const raw = text.slice(a, b)
+    const lead = raw.length - raw.trimStart().length
+    const body = raw.trim()
+    if (body) out.push({ start: a + lead, end: a + lead + body.length })
+  }
+  for (const m of text.matchAll(PARA_BREAK)) {
+    push(from, m.index!)
+    from = m.index! + m[0].length
+  }
+  push(from, text.length)
+  return out
+}
+
+function parseBody(text: string, prev: Section[]): Section[] {
+  const parts = paragraphRanges(text).map((r) => text.slice(r.start, r.end))
+  if (!parts.length) return [{ label: prev[0]?.label ?? '开场', text: '' }]
+  const used = new Set<number>()
+  return parts.map((t, i) => {
+    // 段落内容没变的沿用原段名与原文引用（文章模式 sourceRefs），其余按位置沿用
+    let k = prev.findIndex((p, j) => !used.has(j) && p.text.trim() === t)
+    if (k < 0 && i < prev.length && !used.has(i)) k = i
+    if (k >= 0) used.add(k)
+    const base = k >= 0 ? prev[k]! : null
+    return {
+      label: base?.label || `段落 ${i + 1}`,
+      text: t,
+      ...(base?.sourceRefs ? { sourceRefs: base.sourceRefs } : {}),
+    }
+  })
+}
+
+function joinBody(sections: Section[]): string {
+  return sections
+    .map((x) => x.text.trim())
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+const bodyText = ref('')
+watch(
+  () => (editor.value ? joinBody(editor.value.sections) : null),
+  (joined) => {
+    if (joined === null) {
+      bodyText.value = ''
+      return
+    }
+    if (joined !== joinBody(parseBody(bodyText.value, []))) bodyText.value = joined
+  },
+  { immediate: true },
+)
+
+/** 用更新后的值拆段：@input 先于 v-model 回写触发，读 bodyText 会拿到旧值并把新输入覆盖掉 */
+function onBodyInput(value: string): void {
+  bodyText.value = value
+  const e = editor.value
+  if (!e) return
+  e.sections = parseBody(value, e.sections)
+  store.markDirty()
+}
+
+function bodyEl(): HTMLTextAreaElement | null {
+  return document.querySelector<HTMLTextAreaElement>('#copy-body textarea')
+}
+
+/** 光标所在段落的序号（光标落在段落之间时取下一段） */
+function onVariantAtCursor(): void {
+  const ranges = paragraphRanges(bodyText.value)
+  if (!ranges.length) return
+  const pos = bodyEl()?.selectionStart ?? 0
+  const i = ranges.findIndex((r) => pos <= r.end)
+  emit('variant', i < 0 ? ranges.length - 1 : i)
+}
 
 watch(
   () => [editor.value?.draftId, store.drafts.length],
@@ -434,16 +465,7 @@ onBeforeUnmount(() => {
   if (liveTimer) clearTimeout(liveTimer)
 })
 
-const violations = computed(() => new Set(hits.value.map((h) => h.sectionIndex)))
-const hardViolations = computed(() => new Set(hits.value.filter((h) => h.level === 'hard').map((h) => h.sectionIndex)))
-
-function hitsOfSection(index: number): ComplianceHit[] {
-  return hits.value.filter((h) => h.sectionIndex === index)
-}
-
-function onSectionInput(_index: number): void {
-  store.markDirty()
-}
+const hardHitCount = computed(() => hits.value.filter((h) => h.level === 'hard').length)
 
 async function onCopyBody(): Promise<void> {
   const text = editor.value?.sections
@@ -457,20 +479,6 @@ async function onCopyBody(): Promise<void> {
   } catch {
     Message.error('复制失败，请手动选择正文复制')
   }
-}
-
-function onAddSection(): void {
-  store.addSection()
-}
-
-function onRemoveSection(index: number): void {
-  Modal.confirm({
-    title: '删除该段落？',
-    content: '删除后可用「撤销」或「历史版本」恢复。',
-    okText: '删除',
-    cancelText: '取消',
-    onOk: () => store.removeSection(index),
-  })
 }
 
 async function onSave(): Promise<void> {
@@ -554,24 +562,12 @@ async function onDuplicate(): Promise<void> {
 </script>
 
 <style scoped>
-.is-continuous .section-item {
-  background: transparent;
-  padding: 0;
-  border-radius: 0;
-}
-.is-continuous .section-item :deep(.arco-textarea-wrapper) {
-  background: transparent;
-  border-color: transparent;
-}
-.section-item :deep(.arco-textarea) {
+.body-box :deep(.arco-textarea) {
   font-size: 16px;
   line-height: 2;
 }
-.is-continuous .section-item :deep(.arco-textarea) {
-  padding: 0;
-}
-.is-continuous .section-item :deep(.arco-textarea-wrapper:focus-within) {
-  border-color: #dbe6df;
+.body-box.has-violation :deep(.arco-textarea-wrapper) {
+  border-color: #f5d4d1;
 }
 .risk-caption summary {
   font-size: 12px;
@@ -650,20 +646,5 @@ async function onDuplicate(): Promise<void> {
 .title-input :deep(.arco-input-focus) {
   border-bottom-color: #e6ecf5;
   box-shadow: none;
-}
-
-.section-item {
-  padding: 10px 12px;
-  border-radius: 9px;
-  border: 1px solid transparent;
-  background: #fbfcfe;
-  transition: all 0.18s ease;
-}
-.section-item:hover {
-  background: #f8fafd;
-}
-.section-item.has-violation {
-  border-color: #f5d4d1;
-  background: #fefafa;
 }
 </style>

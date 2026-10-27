@@ -7,7 +7,7 @@ import { newId, jenc, jdec } from '../../lib/util.js'
 import { toDb, utcNow } from '../../lib/time.js'
 import { chat, currentModelLabel } from '../../integrations/copy-llm/index.js'
 import { recordOperation } from '../audit/repo.js'
-import { enqueue, QUEUE_NAMES } from '../../queue/index.js'
+import { enqueue, getQueueBackend, QUEUE_NAMES } from '../../queue/index.js'
 import {
   countDrafts,
   getCopy,
@@ -219,14 +219,7 @@ export async function acceptGeneration(args: GenerateArgs): Promise<GenerateAcce
   })
 
   // 6) 入队（jobId 用 generationId，天然去重）
-  await enqueue(
-    QUEUE_NAMES.copyGenerate,
-    'generate',
-    { generationId },
-    { jobId: generationId, attempts: 1 },
-  ).catch((e) => {
-    logger.error({ err: (e as Error).message, generationId }, 'copy.generate.enqueue_failed')
-  })
+  await enqueueOrFail(generationId, 'generate')
 
   await recordOperation({
     operator: args.operator,
@@ -361,6 +354,52 @@ async function buildSourceBlock(copy: CopyRow): Promise<Parameters<typeof assemb
   }
 }
 
+/**
+ * 入队失败（Redis 不可用等）时把生成记录标为失败并报错。
+ * 之前只打日志、接口照常返回 pending，记录会永远停在「排队中」。
+ */
+async function enqueueOrFail(generationId: string, jobName: 'generate' | 'variant'): Promise<void> {
+  try {
+    await enqueue(QUEUE_NAMES.copyGenerate, jobName, { generationId }, { jobId: generationId, attempts: 1 })
+  } catch (e) {
+    logger.error({ err: (e as Error).message, generationId, jobName }, 'copy.generate.enqueue_failed')
+    await updateGeneration(generationId, {
+      status: 'failed',
+      error: '任务排队失败，请稍后重试',
+      finished_at: toDb(utcNow()),
+    })
+    throw err.upstream('生成任务排队失败，请稍后重试')
+  }
+}
+
+/** 审核中 / 已归档的文案不再写入任何稿（§3.1：in_review 下写操作一律拒绝） */
+function isLocked(copy: CopyRow | null): boolean {
+  return !copy || copy.status === 'in_review' || copy.status === 'archived'
+}
+
+const LOCKED_REASON = '文案已提交审核或已归档，本次生成未写入'
+
+/**
+ * 启动时补扫中断的生成：内存队列重启后任务全部丢失；Redis 队列里卡住超过 30 分钟的也视为中断。
+ * 标为失败后前端轮询即可结束，运营可重新生成；worker 再拿到这些任务时会因终态直接跳过。
+ */
+export async function failInterruptedGenerations(): Promise<number> {
+  const db = getDb()
+  const memory = getQueueBackend() === 'memory'
+  const cutoff = toDb(new Date(Date.now() - 30 * 60_000))
+  const rows = await db.all<{ id: string }>(
+    memory
+      ? "SELECT `id` FROM `copy_generation` WHERE `status` IN ('pending', 'running')"
+      : "SELECT `id` FROM `copy_generation` WHERE `status` IN ('pending', 'running') AND `created_at` < ?",
+    memory ? [] : [cutoff],
+  )
+  for (const r of rows) {
+    await updateGeneration(r.id, { status: 'failed', error: '任务已中断（服务重启或排队超时），请重新生成', finished_at: toDb(utcNow()) }, db)
+  }
+  if (rows.length) logger.warn({ count: rows.length, memory }, 'copy.generate.interrupted_failed')
+  return rows.length
+}
+
 /* ── 异步执行（BullMQ worker 调用）────────────────────────────────── */
 
 export async function runGeneration(generationId: string): Promise<void> {
@@ -380,6 +419,10 @@ export async function runGeneration(generationId: string): Promise<void> {
       { status: 'failed', error: '文案已不存在', finished_at: toDb(utcNow()) },
       db,
     )
+    return
+  }
+  if (isLocked(copy)) {
+    await updateGeneration(generationId, { status: 'failed', error: LOCKED_REASON, finished_at: toDb(utcNow()) }, db)
     return
   }
 
@@ -462,6 +505,8 @@ export async function runGeneration(generationId: string): Promise<void> {
 
       // P1-14①：标题也纳入扫描
       const hits = scanCompliance(parsed.sections, words, persona.ipProfile.forbiddenClaims, parsed.title)
+      // 模型调用耗时数十秒，期间文案可能已提交审核或归档：落稿前再查一次
+      if (isLocked(await getCopy(copy.id, db))) throw new Error(LOCKED_REASON)
       // 稿号由 insertDraft 在同一临界区内取号并插入（批内并发不会撞 UNIQUE(copy_id, draft_no)）
       const { id: draftId } = await insertDraft(
         {
@@ -548,11 +593,10 @@ export async function runGeneration(generationId: string): Promise<void> {
 
   // 当前稿切到本次生成的第一份（AI 产出物，不覆盖已有稿内容 W5）
   if (draftIds.length) {
-    await db.run('UPDATE `copy` SET `current_draft_id` = ?, `updated_at` = ? WHERE `id` = ?', [
-      draftIds[0],
-      toDb(utcNow()),
-      copy.id,
-    ])
+    await db.run(
+      "UPDATE `copy` SET `current_draft_id` = ?, `updated_at` = ? WHERE `id` = ? AND `status` NOT IN ('in_review', 'archived')",
+      [draftIds[0], toDb(utcNow()), copy.id],
+    )
   }
   if (warnings.length) {
     logger.info({ generationId, warnings }, 'copy.generate.warnings')
@@ -670,9 +714,7 @@ export async function acceptVariant(args: VariantArgs): Promise<{ generationId: 
     db,
   )
 
-  await enqueue(QUEUE_NAMES.copyGenerate, 'variant', { generationId }, { jobId: generationId, attempts: 1 }).catch(
-    (e) => logger.error({ err: (e as Error).message, generationId }, 'copy.variant.enqueue_failed'),
-  )
+  await enqueueOrFail(generationId, 'variant')
   return { generationId }
 }
 

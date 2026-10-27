@@ -162,6 +162,25 @@ if (!genOnly) {
     )
   }
 
+  // 一次选多条线的人物：每条文案的 line 必须是自己人物的线（人物查询按线排序，不能按下标配对）
+  const mixed = await req('POST', '/copy', {
+    source: 'manual',
+    personaIds: [basicId, managerId, kosId],
+    title: uniq('多人物生产线'),
+    sourceText: '多人物创建时校验生产线归属。',
+  })
+  const mixedLines = await Promise.all(
+    (mixed.data?.copyIds ?? []).map(async (id: string) => {
+      const d = await req('GET', `/copy/${id}`)
+      return [d.data?.persona?.line, d.data?.copy?.line]
+    }),
+  )
+  check(
+    '多人物新建文案：每条文案的生产线与其人物一致',
+    mixedLines.length === 3 && mixedLines.every(([p, c]) => !!p && p === c),
+    mixedLines,
+  )
+
   /* ──────────────────── 2. AC-E2 并发保存乐观锁 ──────────────────── */
 
   console.log('\n[2] AC-E2 并发保存 → COPY_DRAFT_CONFLICT')

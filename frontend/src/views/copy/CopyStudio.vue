@@ -14,6 +14,10 @@
           ><template #icon><icon-shrink v-if="workspace.focusWriting" /><icon-expand v-else /></template
           >{{ workspace.focusWriting ? '退出专注' : '专注写作' }}</a-button
         >
+        <a-button v-if="auth.hasRole('reviewer', 'admin')" @click="configVisible = true">
+          <template #icon><icon-settings /></template>
+          文案配置
+        </a-button>
         <a-button @click="listVisible = true">
           <template #icon><icon-file /></template>
           文案任务
@@ -203,12 +207,15 @@ import SubmitDialog from './components/SubmitDialog.vue'
 import VariantPanel from './components/VariantPanel.vue'
 import TemplateEditor from './components/TemplateEditor.vue'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
 const store = useCopyStore()
 const draftEditorRef = ref<InstanceType<typeof DraftEditor> | null>(null)
 const workspace = useWorkspaceStore()
+// 模板 / 风格 / 合规词库的写接口限审核员与管理员（auth/guard ROLE_RULES）
+const auth = useAuthStore()
 const collapsed = reactive({ source: false, settings: false })
 type FlowStep = 'source' | 'settings' | 'write' | 'review'
 function goToStep(step: FlowStep) {
@@ -278,6 +285,10 @@ const listVisible = ref(false)
 const versionVisible = ref(false)
 const submitVisible = ref(false)
 const configVisible = ref(false)
+// 改过模板 / 风格后刷新创作设置里的下拉选项
+watch(configVisible, (v) => {
+  if (!v) void store.loadOptions(store.detail?.persona?.id)
+})
 const variantVisible = ref(false)
 const variantIndex = ref(0)
 
