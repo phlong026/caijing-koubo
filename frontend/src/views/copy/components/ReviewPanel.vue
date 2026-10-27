@@ -2,7 +2,7 @@
   <div v-if="review || copy?.status === 'approved' || copy?.status === 'rejected'" class="mw-card p-5">
     <div class="flex items-center justify-between mb-3">
       <div class="mw-card-title">
-        审核进度 <a-tag v-if="review?.isStub" color="orange" size="small">测试流程</a-tag>
+        审核进度 <a-tag v-if="review?.isStub" color="orange" size="small">模拟审核</a-tag>
       </div>
       <a-tag :color="statusColor" size="small">{{ statusText }}</a-tag>
     </div>

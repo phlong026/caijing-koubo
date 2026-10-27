@@ -1,6 +1,7 @@
 <template>
   <section class="source-workbench" aria-label="来源材料">
-    <SourceIntake @created="(ids) => emit('created', ids)" @source-mode="(mode) => emit('source-mode', mode)">
+    <!-- 已有文案的第 1 步只展示素材与回看校对；新建文案统一走「文案任务 → 新建文案」 -->
+    <div class="source-material">
       <a-spin :loading="loading" class="w-full">
         <div class="source-overview" :class="{ 'has-cover': material?.videoId }">
           <button
@@ -19,7 +20,6 @@
             <div v-if="material?.author" class="mw-subtle mb-3">
               {{ material.author }}<template v-if="material.duration"> · {{ material.duration }} 秒</template>
             </div>
-            <div class="source-note">请核对名称、数字和引用，生成时将使用校对稿。</div>
             <a-button :disabled="!material" @click="openReview(false)">回看与校对</a-button>
           </div>
         </div>
@@ -36,9 +36,8 @@
         <a v-if="sourceLink" :href="sourceLink" target="_blank" rel="noopener noreferrer" class="source-origin"
           >查看来源网页 ↗</a
         >
-        <p v-if="store.copy?.status === 'in_review'" class="source-note">审核中素材已锁定；撤回后可继续校对。</p>
       </a-spin>
-    </SourceIntake>
+    </div>
     <a-modal
       :visible="reviewOpen"
       title="素材回看与校对"
@@ -47,9 +46,6 @@
       @cancel="closeReview"
     >
       <template #footer
-        ><span class="review-save-hint" role="status">{{
-          savedReview ? '已保存校对记录，生成将使用校对文本' : '校对不会覆盖原始提取文本'
-        }}</span
         ><a-button @click="closeReview">返回编辑</a-button
         ><a-button
           type="primary"
@@ -75,9 +71,7 @@
             playUrl ? '从头回看' : '加载并播放原视频'
           }}</a-button>
           <p v-if="playError" class="source-error" role="alert">{{ playError }}</p>
-          <div class="source-reference-title">
-            原始文案 <span v-if="material?.sentences?.length" class="mw-subtle">点击时间回看片段</span>
-          </div>
+          <div class="source-reference-title">原始文案</div>
           <div class="transcript-list">
             <template v-if="material?.sentences?.length"
               ><div v-for="(s, i) in material.sentences" :key="i" class="transcript-row">
@@ -95,8 +89,7 @@
           </div>
         </div>
         <div class="source-correction">
-          <label for="corrected-source"
-            ><strong>校对稿</strong><span class="mw-subtle">修正专名、数字和听写错误</span></label
+          <label for="corrected-source"><strong>校对稿</strong></label
           ><a-textarea
             id="corrected-source"
             v-model="correctedText"
@@ -113,8 +106,7 @@
             placeholder="记录修改了什么；需要保留的事实或引用来源"
             :disabled="!store.canEdit"
             :auto-size="{ minRows: 2, maxRows: 4 }"
-          /><a-checkbox v-model="confirmed" :disabled="!store.canEdit">我已人工核对素材中的专名、数字和引用</a-checkbox>
-          <p class="source-note">此确认仅针对素材，不代表新生成稿已经通过人工审核。</p>
+          /><a-checkbox v-model="confirmed" :disabled="!store.canEdit">已核对专名、数字和引用</a-checkbox>
         </div>
       </div>
     </a-modal>
@@ -126,8 +118,6 @@ import { Message, Modal } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
 import { copyApi, type SourceMaterial, type SourceReview } from '@/api/copy'
 import { getVideoPlayback } from '@/api/benchmark'
-import SourceIntake from './SourceIntake.vue'
-const emit = defineEmits<{ (e: 'created', ids: string[]): void; (e: 'source-mode', mode: string): void }>()
 const store = useCopyStore()
 const material = ref<SourceMaterial | null>(null),
   loading = ref(false),
@@ -396,17 +386,9 @@ async function saveReview() {
   margin-top: 16px;
   align-items: flex-start;
 }
-.review-save-hint {
-  margin-right: auto;
-  font-size: 12px;
-  color: #7b8780;
-}
 @media (max-width: 750px) {
   .source-review-grid {
     grid-template-columns: 1fr;
-  }
-  .review-save-hint {
-    display: none;
   }
 }
 </style>

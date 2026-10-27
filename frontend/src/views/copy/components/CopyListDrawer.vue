@@ -1,7 +1,7 @@
 <template>
   <a-drawer :visible="visible" :width="520" title="文案任务" unmount-on-close @cancel="emit('update:visible', false)">
     <template #footer>
-      <a-button type="primary" long @click="openCreate">
+      <a-button type="primary" long @click="onCreate">
         <template #icon><icon-plus /></template>
         新建文案
       </a-button>
@@ -16,9 +16,9 @@
         <a-option v-for="(label, key) in statusOptions" :key="key" :value="key">{{ label }}</a-option>
       </a-select>
       <a-select v-model="line" size="small" placeholder="线" allow-clear class="!w-[90px]" @change="reload">
-        <a-option value="manager">管理人</a-option>
+        <a-option value="manager">经理 IP</a-option>
         <a-option value="kos">员工 KOS</a-option>
-        <a-option value="persona">素人</a-option>
+        <a-option value="persona">素人矩阵</a-option>
       </a-select>
     </div>
 
@@ -58,72 +58,14 @@
         <a-link @click="loadMore">加载更多（{{ items.length }}/{{ total }}）</a-link>
       </div>
     </a-spin>
-
-    <!-- 新建弹窗 -->
-    <a-modal v-model:visible="createVisible" title="新建文案" :width="560" :footer="false" unmount-on-close>
-      <a-form :model="form" layout="vertical">
-        <!-- P0-6②：FR-S4 要求可一次选多位目标人物，每位各产一条 -->
-        <a-form-item label="目标人物" required>
-          <a-select v-model="form.personaIds" multiple placeholder="选择一位或多位人物" @change="onPersonaChange">
-            <a-option
-              v-for="p in personas"
-              :key="p.id"
-              :value="p.id"
-              :label="`${p.name}（${p.lineLabel || p.line}）`"
-            />
-          </a-select>
-          <div class="mw-subtle mt-1">选多位人物时，每位各生成一条文案</div>
-        </a-form-item>
-
-        <a-form-item label="创作方式">
-          <a-radio-group v-model="form.mode" type="button" size="small">
-            <a-radio value="manual">手动输入</a-radio>
-            <a-radio value="article">上传文章</a-radio>
-          </a-radio-group>
-        </a-form-item>
-
-        <!-- P0-6①：FR-S4 标题必填，≤60 字 -->
-        <a-form-item label="标题" required>
-          <a-input v-model="form.title" placeholder="给这条文案起个标题" :max-length="60" show-word-limit />
-        </a-form-item>
-
-        <!-- 手动输入 -->
-        <a-form-item v-if="form.mode === 'manual'" label="素材内容（可选）">
-          <a-textarea
-            v-model="form.sourceText"
-            :auto-size="{ minRows: 4, maxRows: 10 }"
-            :max-length="5000"
-            show-word-limit
-            placeholder="把你的想法、要点或完整素材贴进来；不填则只按标题与关键词起草"
-          />
-        </a-form-item>
-
-        <!-- 造文章 -->
-        <a-form-item v-else label="文章文件">
-          <div class="w-full">
-            <a-upload :auto-upload="false" :limit="1" accept=".docx,.pdf,.txt,.md" @change="onFileChange" />
-            <div class="mw-subtle mt-1">支持 .docx / .pdf / .txt / .md，单个文件不超过 10MB</div>
-          </div>
-        </a-form-item>
-
-        <a-form-item label="关键词（可选）">
-          <a-input v-model="form.keywords" placeholder="用逗号分隔，例如：定投, 上班族" />
-        </a-form-item>
-
-        <div class="flex justify-end gap-2 pt-1">
-          <a-button @click="createVisible = false">取消</a-button>
-          <a-button type="primary" :loading="creating" :disabled="!canCreate" @click="onCreate">创建</a-button>
-        </div>
-      </a-form>
-    </a-modal>
   </a-drawer>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
-import { articleApi, copyApi, type CopyDerivedStatus, type CopyLine, type CopyListItem } from '@/api/copy'
+import { copyApi, type CopyDerivedStatus, type CopyLine, type CopyListItem } from '@/api/copy'
 
 const props = defineProps<{
   visible: boolean
@@ -133,6 +75,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
   (e: 'picked', copyId: string): void
+  /** 新建统一走完整的来源入口（爆款选题 / 文章 / 视频改写 / 手动输入） */
+  (e: 'create'): void
 }>()
 
 const store = useCopyStore()
@@ -153,8 +97,6 @@ const statusOptions: Record<string, string> = {
   approved: '已通过',
   revising: '修订中',
 }
-
-const personas = computed(() => (store.options?.personas ?? []).filter((p) => p.enabled))
 
 watch(
   () => props.visible,
@@ -231,79 +173,15 @@ function onPick(id: string): void {
   emit('update:visible', false)
 }
 
+function onCreate(): void {
+  emit('create')
+  emit('update:visible', false)
+}
+
 function fmtTime(iso: string): string {
   const d = new Date(iso)
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-/* ── 新建 ── */
-
-const createVisible = ref(false)
-const creating = ref(false)
-const form = reactive({
-  mode: 'manual' as 'manual' | 'article',
-  // P0-6②：多选人物
-  personaIds: [] as string[],
-  title: '',
-  sourceText: '',
-  keywords: '',
-})
-const file = ref<File | null>(null)
-
-function openCreate(): void {
-  form.mode = 'manual'
-  form.personaIds = personas.value[0]?.id ? [personas.value[0].id] : []
-  form.title = ''
-  form.sourceText = ''
-  form.keywords = ''
-  file.value = null
-  createVisible.value = true
-}
-
-function onPersonaChange(): void {
-  // 人物决定所属线，重新拉取可用的风格（多选时以首位为准，仅用于选项加载）
-  void store.loadOptions(form.personaIds[0])
-}
-
-function onFileChange(_files: unknown, currentFile: { file?: File }): void {
-  file.value = currentFile?.file ?? null
-}
-
-// P0-6①②：标题必填（FR-S4）+ 人物至少一位；补充资料 / 关键词均为可选
-const canCreate = computed(() => {
-  if (!form.personaIds.length) return false
-  if (!form.title.trim()) return false
-  if (form.mode === 'manual') return true
-  return !!file.value
-})
-
-async function onCreate(): Promise<void> {
-  creating.value = true
-  try {
-    let articleId: string | undefined
-    if (form.mode === 'article' && file.value) {
-      const a = await articleApi.uploadEdit(file.value)
-      articleId = a.articleId
-    }
-    const r = await copyApi.create({
-      source: form.mode,
-      personaIds: form.personaIds,
-      title: form.title.trim(),
-      sourceText: form.mode === 'manual' && form.sourceText.trim() ? form.sourceText : undefined,
-      keywords: form.keywords || undefined,
-      articleId,
-    })
-    Message.success(r.copyIds.length > 1 ? `已创建 ${r.copyIds.length} 条文案` : '已创建文案')
-    createVisible.value = false
-    emit('picked', r.copyIds[0])
-    emit('update:visible', false)
-    reload()
-  } catch (e) {
-    Message.error((e as Error).message)
-  } finally {
-    creating.value = false
-  }
 }
 </script>
 

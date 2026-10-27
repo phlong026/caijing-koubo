@@ -40,6 +40,7 @@ import {
   precheck,
   renameDraft,
   restoreVersion,
+  assertWritable,
   saveDraftContent,
   saveDraftVersion,
   switchCurrentDraft,
@@ -60,7 +61,7 @@ import {
   type StubRejectSim,
 } from './review.js'
 import { listPersonasForCopy } from './persona-bridge.js'
-import { getVersion, listVersions, getSubmission, getGeneration, listVariantsByGeneration } from './repo.js'
+import { getVersion, listVersions, getSubmission, getGeneration, listVariantsByGeneration, runningGeneration } from './repo.js'
 import { parseArticleBuffer, parsePastedText, saveArticle, validateFileMeta, writeTempFile } from './article.js'
 import { getArticle } from './repo.js'
 import { scanCompliance } from './text.js'
@@ -307,7 +308,12 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
     // FR-X3：视频创作只读冗余（文案步骤条第 4 步点亮与「去视频创作」入口用）
     const { getLatestVideoJobBrief } = await import('../video/service.js')
     const latestVideoJob = await getLatestVideoJobBrief(id).catch(() => null)
-    return ok({ ...detail, generations, variants, article, latestVideoJob })
+    // 进行中的整稿生成：刷新页面或换设备打开时据此接上进度，避免重复点击生成
+    const running = await runningGeneration(id, 'generate')
+    const activeGeneration = running
+      ? { id: running.id, status: running.status, count: running.count, createdAt: running.createdAt }
+      : null
+    return ok({ ...detail, generations, variants, article, latestVideoJob, activeGeneration })
   })
 
   app.post('/copy', async (req) => {
@@ -339,7 +345,8 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
     const { id } = req.params as { id: string }
     const body = (req.body ?? {}) as { title?: string; settings?: Record<string, unknown> }
     const copy = await requireCopy(id)
-    if (copy.status === 'archived') throw err.invalidState('该文案已归档，不可修改')
+    // 审核中锁定、归档不可改（§3.1：in_review 下除撤回外的写操作一律拒绝）
+    assertWritable(copy)
 
     const patch: Record<string, unknown> = { updated_at: toDb(utcNow()) }
     if (body.title !== undefined) {
@@ -554,10 +561,11 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
   app.post('/copy/versions/:versionId/restore', async (req) => {
     const { versionId } = req.params as { versionId: string }
     const q = (req.query ?? {}) as { copyId?: string }
+    const body = (req.body ?? {}) as { confirmReedit?: boolean }
     const v = await getVersion(versionId)
     if (!v) throw err.notFound('版本不存在')
     const copyId = q.copyId ?? v.copyId
-    const r = await restoreVersion(copyId, versionId, req.operator)
+    const r = await restoreVersion(copyId, versionId, req.operator, !!body.confirmReedit)
     return ok({ versionId: r.version.id, versionNo: r.version.versionNo, draft: r.draft })
   })
 
@@ -657,9 +665,9 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
 
   app.post('/copy/variants/:variantId/apply', async (req) => {
     const { variantId } = req.params as { variantId: string }
-    const body = (req.body ?? {}) as { mode?: string; confirmChanged?: boolean }
+    const body = (req.body ?? {}) as { mode?: string; confirmChanged?: boolean; confirmReedit?: boolean }
     const mode = body.mode === 'new_draft' ? 'new_draft' : 'replace'
-    const r = await applyVariant(variantId, mode, !!body.confirmChanged, req.operator)
+    const r = await applyVariant(variantId, mode, !!body.confirmChanged, req.operator, !!body.confirmReedit)
     if (r.changed) {
       // 需要确认：返回 200 + requiresConfirm，由前端弹对比
       return ok({ requiresConfirm: true, draftId: r.draftId })
@@ -950,12 +958,20 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
     if (!existing) throw err.notFound('词不存在')
     const body = (req.body ?? {}) as Record<string, unknown>
     const db = (await import('../../db/index.js')).getDb()
+    // 与新增同一套校验：空词会让扫描失效、重名会撞唯一索引（之前直接 500）
+    const word = body.word === undefined ? existing.word : String(body.word).trim()
+    if (!word) throw err.badRequest('词不能为空')
+    if (word.length > 128) throw err.badRequest('词过长（≤128 字符）')
+    if (word !== existing.word) {
+      const dup = await db.get<{ id: string }>('SELECT `id` FROM `compliance_word` WHERE `word` = ? AND `id` <> ?', [word, id])
+      if (dup) throw err.conflict(`「${word}」已存在词库中`)
+    }
     await db.run(
       'UPDATE `compliance_word` SET `word` = ?, `level` = ?, `category` = ?, `enabled` = ?, `updated_by` = ?, `updated_at` = ? WHERE `id` = ?',
       [
-        body.word === undefined ? existing.word : String(body.word).trim(),
+        word,
         body.level === undefined ? existing.level : body.level === 'hard' ? 'hard' : 'soft',
-        body.category === undefined ? existing.category : String(body.category ?? '') || null,
+        body.category === undefined ? existing.category : String(body.category ?? '').slice(0, 32) || null,
         body.enabled === undefined ? (existing.enabled ? 1 : 0) : body.enabled ? 1 : 0,
         req.operator,
         toDb(utcNow()),

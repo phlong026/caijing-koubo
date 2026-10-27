@@ -51,20 +51,13 @@ try{
  assert.ok(check.estSeconds>60);assert.equal(check.durationOk,false);assert.ok(check.checks.find((c:any)=>c.key==='duration'&&!c.pass));assert.ok(check.checks.find((c:any)=>c.key==='sourceReview'&&!c.pass));assert.equal(check.complianceHits.filter((h:any)=>h.word==='第一').length,0)
  assert.ok((await req('POST','/copy/compliance/scan',{sections:[{label:'正文',text:'我们就是行业第一。'}]})).hits.some((h:any)=>h.word==='第一'))
  pass('duration and facts warnings; ordinal exemption preserves superiority warnings')
- await req('POST',`/copy/${id}/finalize`,{draftId,rev:draft.rev-1},409)
- const final=await req('POST',`/copy/${id}/finalize`,{draftId,rev:draft.rev})
- assert.equal((await req('GET',`/copy/${id}`)).drafts.find((d:any)=>d.id===draftId).isFinal,true)
- const snapshot=await req('GET',`/copy/versions/${final.finalSelection.versionId}`)
- draft=(await req('PUT',`/copy/${id}/drafts/${draftId}`,{title:draft.title,rev:draft.rev,sections:[{label:'正文',text:'修改后的文案，必须重新定稿。'}]})).draft
- assert.equal((await req('GET',`/copy/${id}`)).drafts.find((d:any)=>d.id===draftId).isFinal,false)
- assert.ok((await req('POST',`/copy/${id}/precheck`,{draftId})).checks.some((c:any)=>c.key==='finalSelection'&&c.level==='hard'&&!c.pass))
- assert.equal((await req('GET',`/copy/versions/${final.finalSelection.versionId}`)).plainText,snapshot.plainText)
- pass('immutable final snapshot, stale revision rejection and final invalidation after edits')
+ draft=(await req('PUT',`/copy/${id}/drafts/${draftId}`,{title:draft.title,rev:draft.rev,sections:[{label:'正文',text:'修改后的文案，直接提交当前稿。'}]})).draft
+ assert.ok(!(await req('POST',`/copy/${id}/precheck`,{draftId})).checks.some((c:any)=>c.key==='finalSelection'))
+ pass('submission locks the current draft directly; no separate finalize step')
  await db.run("UPDATE `copy` SET `status`='in_review' WHERE `id`=?",[id])
  await req('PUT',`/copy/${id}/settings`,settings,409)
  await req('PUT',`/copy/${id}/source-review`,{correctedText:'试图更改'},409)
- await req('POST',`/copy/${id}/finalize`,{draftId,rev:draft.rev},409)
- pass('review lock protects settings, source and final selection')
+ pass('review lock protects settings and source')
  const before=(await req('GET',`/copy/${id}`)).currentDraft
  const manualText='来源测试资料：学习计划需结合个人基础安排，不承诺学习或投资效果。'
  await req('POST','/copy',{source:'manual',personaIds:[persona.id],title:'',sourceText:manualText},400)

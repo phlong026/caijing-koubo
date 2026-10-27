@@ -21,7 +21,7 @@
           :max-length="limits.maxInstructions"
           :auto-size="{ minRows: 2, maxRows: 4 }"
           :disabled="readonly"
-          placeholder="写给谁？这次讲什么角度？必须保留什么？不要出现什么？"
+          placeholder="例如：讲给新手听，突出费率"
         />
       </div>
 
@@ -69,7 +69,6 @@
           <a-select v-model="model.styleId" :disabled="readonly" placeholder="选择风格" class="w-full">
             <a-option v-for="s in styles" :key="s.id" :value="s.id">
               {{ s.name }}
-              <span class="text-[11px] text-[#9aa6ba] ml-1">{{ s.description }}</span>
             </a-option>
           </a-select>
           <div v-if="!styles.length" class="mw-subtle mt-1">暂无适合当前人物的风格</div>
@@ -96,10 +95,7 @@
               :disabled="readonly"
               class="!w-[120px]"
             />
-            <span class="mw-subtle">秒</span>
-            <span class="mw-subtle">
-              {{ limits.customDurationMin }}–{{ limits.customDurationMax }} 秒， 约 {{ wordRangeText }}
-            </span>
+            <span class="mw-subtle">秒 · 约 {{ wordRangeText }}</span>
           </div>
           <div v-else class="mt-1.5 mw-subtle">约 {{ wordRangeText }}</div>
         </div>
@@ -116,7 +112,6 @@
           :disabled="readonly"
           class="!w-[120px]"
         />
-        <span class="mw-subtle">最多 {{ limits.maxBatchCount }} 份 / 次</span>
       </div>
 
       <!-- 操作 -->
@@ -146,11 +141,11 @@
           <div class="gen-track">
             <div class="gen-fill" :style="{ width: `${store.genProgress}%` }" />
           </div>
-          <div class="flex items-center justify-between mt-1.5 text-[11px] text-[#8894a8]">
-            <span>{{ progressHint }}</span>
-            <span v-if="store.genRemainMs !== null && isGenerating" class="tabular-nums">
-              预计还需 {{ remainText }}
-            </span>
+          <div
+            v-if="store.genRemainMs !== null && isGenerating"
+            class="flex items-center justify-end mt-1.5 text-[11px] text-[#8894a8] tabular-nums"
+          >
+            预计还需 {{ remainText }}
           </div>
         </div>
 
@@ -175,7 +170,6 @@
 
         <!-- 超时兜底 -->
         <div v-if="store.genTimedOut" class="mt-2 flex items-center gap-2 text-[12px] text-[#8a6212]">
-          <span>等待较久，可能仍在排队。</span>
           <a-link @click="store.resumePolling()">继续等待</a-link>
         </div>
       </div>
@@ -185,16 +179,11 @@
         <span>{{ store.settingsError }}</span
         ><a-link @click="store.saveCreativeSettings()">重试</a-link>
       </div>
-      <div v-if="model.count > 1" class="mw-subtle">
-        <template v-if="hasTopicAngle">保持选题角度，按不同开场方式生成 {{ model.count }} 篇</template>
-        <template v-else>按误区、场景、问答等不同方向生成 {{ model.count }} 篇</template>
-      </div>
       <a-button type="primary" long :loading="store.generating" :disabled="!canGenerate" @click="onGenerate"
         ><template #icon><icon-edit /></template>生成文案</a-button
       >
       <span v-if="draftLimitReached" class="mw-subtle"
-        >已有 {{ store.drafts.length }} 篇，本次最多可生成
-        {{ Math.max(0, limits.maxDrafts - store.drafts.length) }} 篇，请减少份数</span
+        >最多还能生成 {{ Math.max(0, limits.maxDrafts - store.drafts.length) }} 篇</span
       >
       <span v-if="readonly" class="mw-subtle">审核中不可生成新稿</span>
     </div>
@@ -266,8 +255,6 @@ const styleOrigin = computed(() => {
   if (!i?.styleId) return ''
   return i.styleId === model.styleId ? '人物默认' : '已修改，与人物默认不同'
 })
-/** 资讯选题带角度：多份时只换开场方式（与后端 candidates.ts 一致） */
-const hasTopicAngle = computed(() => store.detail?.copy.source === 'news' && !!store.detail?.copy.topicId)
 
 /**
  * a-input-number 的 v-model 不接受 null，这里做一层代理：
@@ -357,18 +344,6 @@ const remainText = computed(() => {
   if (ms === null) return ''
   if (ms < 5000) return '即将完成'
   return `约 ${Math.ceil(ms / 10000) * 10} 秒`
-})
-
-/** 进度条下方的一句话提示 */
-const progressHint = computed(() => {
-  const g = store.activeGeneration
-  if (!g) return ''
-  if (g.status === 'pending') return '正在排队，请稍候'
-  if (genStatus.value === 'done') return '新稿已添加，可打开查看'
-  if (genStatus.value === 'partial' || genStatus.value === 'failed') return '可查看失败原因后重试'
-  if (doneCount.value > 0)
-    return `已产出 ${doneCount.value} 份，剩余 ${Math.max(0, (g.count ?? 0) - doneCount.value)} 份正在写`
-  return '正在整理素材并撰写文案，请稍候'
 })
 
 function fmtDuration(ms: number): string {

@@ -3,8 +3,7 @@
     <a-tabs v-model:active-key="tab" size="medium" class="mw-tabs">
       <!-- 模板 -->
       <a-tab-pane key="templates" title="内容模板">
-        <div class="flex items-center justify-between mb-3">
-          <span class="mw-subtle">模板决定文案的结构与硬性约束，改动后新生成即生效</span>
+        <div class="flex items-center justify-end mb-3">
           <a-button size="small" @click="editTemplate(null)">
             <template #icon><icon-plus /></template>
             新建
@@ -16,7 +15,7 @@
               <div class="flex items-center gap-2 mb-1">
                 <span class="text-[13.5px] font-medium text-[#131f38]">{{ t.name }}</span>
                 <a-tag v-if="t.isBuiltin" size="small">内置</a-tag>
-                <span class="mw-subtle">rev {{ t.revision }}</span>
+                <a-tag v-if="!t.enabled" size="small" color="gray">已停用</a-tag>
                 <span class="flex-1" />
                 <a-link @click="editTemplate(t)">编辑</a-link>
                 <a-link v-if="!t.isBuiltin" status="danger" @click="removeTemplate(t)">删除</a-link>
@@ -29,8 +28,7 @@
 
       <!-- 风格 -->
       <a-tab-pane key="styles" title="表达风格">
-        <div class="flex items-center justify-between mb-3">
-          <span class="mw-subtle">风格按线隔离：管理人与 KOS 的风格互不通用</span>
+        <div class="flex items-center justify-end mb-3">
           <a-button size="small" @click="editStyle(null)">
             <template #icon><icon-plus /></template>
             新建
@@ -41,14 +39,13 @@
             <div v-for="s in styles" :key="s.id" class="cfg-row">
               <div class="flex items-center gap-2 mb-1">
                 <span class="text-[13.5px] font-medium text-[#131f38]">{{ s.name }}</span>
-                <a-tag v-if="s.line" size="small" :color="lineColor(s.line)">{{ lineLabel(s.line) }}</a-tag>
-                <a-tag v-else size="small" color="gray">通用</a-tag>
+                <a-tag size="small" :color="lineColor(s.line)">{{ lineLabel(s.line) }}</a-tag>
                 <a-tag v-if="s.isBuiltin" size="small">内置</a-tag>
+                <a-tag v-if="!s.enabled" size="small" color="gray">已停用</a-tag>
                 <span class="flex-1" />
                 <a-link @click="editStyle(s)">编辑</a-link>
                 <a-link v-if="!s.isBuiltin" status="danger" @click="removeStyle(s)">删除</a-link>
               </div>
-              <div class="mw-subtle leading-[1.7]">{{ s.description }}</div>
             </div>
           </div>
         </a-spin>
@@ -56,8 +53,7 @@
 
       <!-- 合规词库 -->
       <a-tab-pane key="words" title="合规词库">
-        <div class="flex items-center justify-between mb-3">
-          <span class="mw-subtle">硬禁用词会阻断提交；软提示词仅提示不拦截</span>
+        <div class="flex items-center justify-end mb-3">
           <a-button size="small" @click="editWord(null)">
             <template #icon><icon-plus /></template>
             添加
@@ -70,15 +66,10 @@
                 {{ w.level === 'hard' ? '禁用' : '提示' }}
               </a-tag>
               <span class="text-[13px] text-[#131f38] font-medium">{{ w.word }}</span>
-              <span v-if="w.note" class="mw-subtle flex-1 truncate">{{ w.note }}</span>
+              <span v-if="w.category" class="mw-subtle flex-1 truncate">{{ w.category }}</span>
               <span v-else class="flex-1" />
-              <a-switch
-                :model-value="w.enabled"
-                size="small"
-                :disabled="w.isBuiltin"
-                @change="(v: unknown) => toggleWord(w, !!v)"
-              />
-              <a-link v-if="!w.isBuiltin" status="danger" @click="removeWord(w)">删除</a-link>
+              <a-switch :model-value="w.enabled" size="small" @change="(v: unknown) => toggleWord(w, !!v)" />
+              <a-link status="danger" @click="removeWord(w)">删除</a-link>
             </div>
           </div>
         </a-spin>
@@ -105,6 +96,7 @@
         <a-form-item label="提示词" required>
           <a-textarea v-model="tplModal.prompt" :auto-size="{ minRows: 6, maxRows: 12 }" />
         </a-form-item>
+        <a-form-item label="启用"><a-switch v-model="tplModal.enabled" /></a-form-item>
         <div class="flex justify-end gap-2">
           <a-button @click="tplModal.visible = false">取消</a-button>
           <a-button type="primary" :loading="saving" @click="saveTemplate">保存</a-button>
@@ -122,17 +114,17 @@
     >
       <a-form :model="styleModal" layout="vertical">
         <a-form-item label="名称" required><a-input v-model="styleModal.name" /></a-form-item>
-        <a-form-item label="适用线">
-          <a-select v-model="styleLineModel" allow-clear placeholder="不选表示通用">
-            <a-option value="manager">管理人</a-option>
+        <a-form-item label="适用线" required>
+          <a-select v-model="styleLineModel" placeholder="选择生产线">
+            <a-option value="manager">经理 IP</a-option>
             <a-option value="kos">员工 KOS</a-option>
-            <a-option value="persona">素人</a-option>
+            <a-option value="persona">素人矩阵</a-option>
           </a-select>
         </a-form-item>
-        <a-form-item label="一句话说明"><a-input v-model="styleModal.description" /></a-form-item>
         <a-form-item label="提示词" required>
           <a-textarea v-model="styleModal.prompt" :auto-size="{ minRows: 5, maxRows: 10 }" />
         </a-form-item>
+        <a-form-item label="启用"><a-switch v-model="styleModal.enabled" /></a-form-item>
         <div class="flex justify-end gap-2">
           <a-button @click="styleModal.visible = false">取消</a-button>
           <a-button type="primary" :loading="saving" @click="saveStyle">保存</a-button>
@@ -150,7 +142,9 @@
             <a-radio value="soft">软提示</a-radio>
           </a-radio-group>
         </a-form-item>
-        <a-form-item label="备注"><a-input v-model="wordModal.note" placeholder="为什么不能用" /></a-form-item>
+        <a-form-item label="分类"
+          ><a-input v-model="wordModal.category" :max-length="32" placeholder="例如：收益承诺"
+        /></a-form-item>
         <div class="flex justify-end gap-2">
           <a-button @click="wordModal.visible = false">取消</a-button>
           <a-button type="primary" :loading="saving" @click="saveWord">保存</a-button>
@@ -184,22 +178,23 @@ const tplModal = reactive<{
   structureHint: string
   riskHint: string
   prompt: string
-}>({ visible: false, id: null, name: '', description: '', structureHint: '', riskHint: '', prompt: '' })
+  enabled: boolean
+}>({ visible: false, id: null, name: '', description: '', structureHint: '', riskHint: '', prompt: '', enabled: true })
 
 const styleModal = reactive<{
   visible: boolean
   id: string | null
   name: string
-  description: string
   prompt: string
   line: CopyLine | null
-}>({ visible: false, id: null, name: '', description: '', prompt: '', line: null })
+  enabled: boolean
+}>({ visible: false, id: null, name: '', prompt: '', line: null, enabled: true })
 
-const wordModal = reactive<{ visible: boolean; word: string; level: 'hard' | 'soft'; note: string }>({
+const wordModal = reactive<{ visible: boolean; word: string; level: 'hard' | 'soft'; category: string }>({
   visible: false,
   word: '',
   level: 'hard',
-  note: '',
+  category: '',
 })
 
 watch(
@@ -223,11 +218,11 @@ async function reloadAll(): Promise<void> {
   }
 }
 
-function lineLabel(l: CopyLine | null): string {
-  return { manager: '管理人', kos: '员工 KOS', persona: '素人' }[l as string] ?? '通用'
+function lineLabel(l: CopyLine): string {
+  return { manager: '经理 IP', kos: '员工 KOS', persona: '素人矩阵' }[l as string] ?? '通用'
 }
 
-/** a-select 不接受 null，空值用 undefined 表示「通用」 */
+/** a-select 不接受 null，未选时用 undefined */
 const styleLineModel = computed<CopyLine | undefined>({
   get: () => styleModal.line ?? undefined,
   set: (v) => {
@@ -247,6 +242,7 @@ function editTemplate(t: CopyTemplate | null): void {
   tplModal.structureHint = t?.structureHint ?? ''
   tplModal.riskHint = t?.riskHint ?? ''
   tplModal.prompt = t?.prompt ?? ''
+  tplModal.enabled = t?.enabled ?? true
   tplModal.visible = true
 }
 
@@ -263,6 +259,7 @@ async function saveTemplate(): Promise<void> {
       structureHint: tplModal.structureHint,
       riskHint: tplModal.riskHint,
       prompt: tplModal.prompt,
+      enabled: tplModal.enabled,
     }
     if (tplModal.id) await configApi.updateTemplate(tplModal.id, body)
     else await configApi.createTemplate(body)
@@ -298,24 +295,24 @@ function removeTemplate(t: CopyTemplate): void {
 function editStyle(s: CopyStyle | null): void {
   styleModal.id = s?.id ?? null
   styleModal.name = s?.name ?? ''
-  styleModal.description = s?.description ?? ''
   styleModal.prompt = s?.prompt ?? ''
   styleModal.line = s?.line ?? null
+  styleModal.enabled = s?.enabled ?? true
   styleModal.visible = true
 }
 
 async function saveStyle(): Promise<void> {
-  if (!styleModal.name.trim() || !styleModal.prompt.trim()) {
-    Message.warning('名称与提示词必填')
+  if (!styleModal.name.trim() || !styleModal.prompt.trim() || !styleModal.line) {
+    Message.warning('名称、适用线与提示词必填')
     return
   }
   saving.value = true
   try {
     const body = {
       name: styleModal.name.trim(),
-      description: styleModal.description,
       prompt: styleModal.prompt,
       line: styleModal.line,
+      enabled: styleModal.enabled,
     }
     if (styleModal.id) await configApi.updateStyle(styleModal.id, body)
     else await configApi.createStyle(body)
@@ -351,7 +348,7 @@ function removeStyle(s: CopyStyle): void {
 function editWord(_w: ComplianceWord | null): void {
   wordModal.word = ''
   wordModal.level = 'hard'
-  wordModal.note = ''
+  wordModal.category = ''
   wordModal.visible = true
 }
 
@@ -365,7 +362,7 @@ async function saveWord(): Promise<void> {
     await configApi.createWord({
       word: wordModal.word.trim(),
       level: wordModal.level,
-      note: wordModal.note || undefined,
+      category: wordModal.category.trim() || undefined,
     })
     Message.success('已添加')
     wordModal.visible = false

@@ -97,7 +97,6 @@ export interface Draft {
   latestVersionNo: number
   hasSubmitted: boolean
   origin: DraftOrigin
-  isFinal?: boolean
   generationId?: string | null
   updatedAt: string
 }
@@ -237,6 +236,8 @@ export interface CopyDetail {
   generations: Generation[]
   variants: Variant[]
   article: ArticleDetail | null
+  /** 进行中的整稿生成（pending / running），页面打开时据此接上进度 */
+  activeGeneration?: { id: string; status: Generation['status']; count: number; createdAt: string | null } | null
 }
 
 export interface ReviewQueueItem {
@@ -383,6 +384,20 @@ export interface PrecheckResult {
 
 /* ── 接口方法 ────────────────────────────────────────────────────── */
 
+/** 段落级对比（与后端 diffSections 同构）：before = 历史版本，after = 当前稿 */
+export interface VersionDiff {
+  beforeVersionId: string
+  afterDraftId?: string
+  afterVersionId?: string
+  diff: Array<{
+    index: number
+    status: 'same' | 'changed' | 'added' | 'removed'
+    label: string
+    before: string
+    after: string
+  }>
+}
+
 export const copyApi = {
   options(personaId?: string) {
     return apiGet<CopyOptions>('/copy/options', { personaId })
@@ -435,12 +450,6 @@ export const copyApi = {
   saveSourceReview(copyId: string, body: SourceReview) {
     return apiPut<{ sourceReview: SourceReview }>(`/copy/${copyId}/source-review`, body)
   },
-  finalize(copyId: string, body: { draftId: string; rev: number }) {
-    return apiPost<{ finalSelection: { draftId: string; versionId: string; versionNo: number } }>(
-      `/copy/${copyId}/finalize`,
-      body,
-    )
-  },
   source(copyId: string) {
     return apiGet<SourceMaterial>(`/copy/${copyId}/source`)
   },
@@ -482,19 +491,10 @@ export const copyApi = {
     return apiGet<CopyVersion & { sections: Section[]; plainText: string }>(`/copy/versions/${versionId}`)
   },
   versionDiff(versionId: string) {
-    return apiGet<{
-      baseVersionNo: number | null
-      targetVersionNo: number
-      sections: Array<{
-        label: string
-        change: 'added' | 'removed' | 'modified' | 'same'
-        base: string
-        target: string
-      }>
-    }>(`/copy/versions/${versionId}/diff`)
+    return apiGet<VersionDiff>(`/copy/versions/${versionId}/diff`)
   },
-  restoreVersion(versionId: string) {
-    return apiPost<{ draft: Draft }>(`/copy/versions/${versionId}/restore`)
+  restoreVersion(versionId: string, body?: { confirmReedit?: boolean }) {
+    return apiPost<{ draft: Draft }>(`/copy/versions/${versionId}/restore`, body)
   },
 
   /* 生成 */
@@ -524,8 +524,12 @@ export const copyApi = {
   variants(copyId: string, draftId: string, body: { sectionIndex: number; kinds: string[]; count?: number }) {
     return apiPost<{ generationId: string }>(`/copy/${copyId}/drafts/${draftId}/variants`, body)
   },
-  applyVariant(variantId: string, body: { mode: 'replace' | 'new_draft'; confirmChanged?: boolean }) {
-    return apiPost<{ applied: boolean; requiresConfirm?: boolean; draft?: Draft }>(
+  applyVariant(
+    variantId: string,
+    body: { mode: 'replace' | 'new_draft'; confirmChanged?: boolean; confirmReedit?: boolean },
+  ) {
+    // requiresConfirm：生成变体后该段已被改过，需用户确认后带 confirmChanged 重新提交（本次未写入）
+    return apiPost<{ requiresConfirm: boolean; draftId: string; versionId?: string }>(
       `/copy/variants/${variantId}/apply`,
       body,
     )
@@ -646,21 +650,23 @@ export const articleApi = {
 export interface CopyTemplate {
   id: string
   name: string
-  description: string
+  description: string | null
   prompt: string
-  structureHint: string
-  riskHint: string
+  structureHint: string | null
+  riskHint: string | null
+  enabled: boolean
   isBuiltin: boolean
   revision: number
   sort: number
 }
 
+/** 风格必须归属一条生产线（后端只接受 manager / kos / persona） */
 export interface CopyStyle {
   id: string
   name: string
-  description: string
   prompt: string
-  line: CopyLine | null
+  line: CopyLine
+  enabled: boolean
   isBuiltin: boolean
   revision: number
   sort: number
@@ -670,10 +676,8 @@ export interface ComplianceWord {
   id: string
   word: string
   level: 'hard' | 'soft'
-  note: string | null
-  isBuiltin: boolean
+  category: string | null
   enabled: boolean
-  revision: number
 }
 
 export const configApi = {
@@ -706,7 +710,7 @@ export const configApi = {
   words(params?: { level?: 'hard' | 'soft'; enabledOnly?: boolean }) {
     return apiGet<ComplianceWord[]>('/compliance-words', params)
   },
-  createWord(body: { word: string; level: 'hard' | 'soft'; note?: string }) {
+  createWord(body: { word: string; level: 'hard' | 'soft'; category?: string }) {
     return apiPost<ComplianceWord>('/compliance-words', body)
   },
   updateWord(id: string, body: Partial<ComplianceWord>) {
