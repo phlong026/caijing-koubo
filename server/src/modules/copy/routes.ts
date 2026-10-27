@@ -60,7 +60,7 @@ import {
   withdrawReview,
 } from './review.js'
 import { listPersonasForCopy } from './persona-bridge.js'
-import { getVersion, listVersions, getSubmission, getGeneration, listVariantsByGeneration } from './repo.js'
+import { getVersion, listVersions, getSubmission, getGeneration, listVariantsByGeneration, runningGeneration } from './repo.js'
 import { parseArticleBuffer, parsePastedText, saveArticle, validateFileMeta, writeTempFile } from './article.js'
 import { getArticle } from './repo.js'
 import { scanCompliance } from './text.js'
@@ -305,7 +305,12 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
     // FR-X3：视频创作只读冗余（文案步骤条第 4 步点亮与「去视频创作」入口用）
     const { getLatestVideoJobBrief } = await import('../video/service.js')
     const latestVideoJob = await getLatestVideoJobBrief(id).catch(() => null)
-    return ok({ ...detail, generations, variants, article, latestVideoJob })
+    // 进行中的整稿生成：刷新页面或换设备打开时据此接上进度，避免重复点击生成
+    const running = await runningGeneration(id, 'generate')
+    const activeGeneration = running
+      ? { id: running.id, status: running.status, count: running.count, createdAt: running.createdAt }
+      : null
+    return ok({ ...detail, generations, variants, article, latestVideoJob, activeGeneration })
   })
 
   app.post('/copy', async (req) => {

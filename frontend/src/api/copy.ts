@@ -97,7 +97,6 @@ export interface Draft {
   latestVersionNo: number
   hasSubmitted: boolean
   origin: DraftOrigin
-  isFinal?: boolean
   generationId?: string | null
   updatedAt: string
 }
@@ -230,6 +229,8 @@ export interface CopyDetail {
   generations: Generation[]
   variants: Variant[]
   article: ArticleDetail | null
+  /** 进行中的整稿生成（pending / running），页面打开时据此接上进度 */
+  activeGeneration?: { id: string; status: Generation['status']; count: number; createdAt: string | null } | null
 }
 
 export interface ReviewQueueItem {
@@ -439,12 +440,6 @@ export const copyApi = {
   },
   saveSourceReview(copyId: string, body: SourceReview) {
     return apiPut<{ sourceReview: SourceReview }>(`/copy/${copyId}/source-review`, body)
-  },
-  finalize(copyId: string, body: { draftId: string; rev: number }) {
-    return apiPost<{ finalSelection: { draftId: string; versionId: string; versionNo: number } }>(
-      `/copy/${copyId}/finalize`,
-      body,
-    )
   },
   source(copyId: string) {
     return apiGet<SourceMaterial>(`/copy/${copyId}/source`)

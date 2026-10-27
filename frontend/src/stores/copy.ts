@@ -338,6 +338,7 @@ export const useCopyStore = defineStore('copy', () => {
       precheck.value = null
       hydrateSettings()
       syncEditorFromCurrent()
+      resumeActiveGeneration()
     } catch (e) {
       if (e instanceof ApiError && (e.status === 404 || e.code === 'not_found')) notFound.value = true
       else error.value = (e as Error).message
@@ -564,10 +565,7 @@ export const useCopyStore = defineStore('copy', () => {
     if (!d) return
     const target = d.drafts.find((x) => x.id === draftId)
     if (target) {
-      const unchanged =
-        target.title === saved.title && JSON.stringify(target.sections) === JSON.stringify(saved.sections)
-      const isFinal = target.isFinal && unchanged
-      Object.assign(target, saved, { isFinal })
+      Object.assign(target, saved)
       target.rev = rev
       target.updatedAt = updatedAt
     }
@@ -704,8 +702,10 @@ export const useCopyStore = defineStore('copy', () => {
     }
   }
 
+  let pollFailures = 0
   function startPolling(generationId: string): void {
     stopPolling()
+    pollFailures = 0
     // 超时保护放宽到 10 分钟：真实模型批量生成（5 份×2 轮）可能超过 3 分钟，
     // 早期 2 分钟会误判为「卡住」。这里只停止轮询，任务本身在后端继续跑。
     const HARD_TIMEOUT_MS = 10 * 60_000
@@ -753,12 +753,61 @@ export const useCopyStore = defineStore('copy', () => {
           generating.value = false
           genTimedOut.value = true
         }
+        pollFailures = 0
       } catch {
-        stopPolling()
-        stopTick()
-        generating.value = false
+        // 偶发网络错误不停轮询；连续失败 3 次才停，并给出「继续等待」入口（任务在后端仍在跑）
+        pollFailures += 1
+        if (pollFailures >= 3) {
+          stopPolling()
+          stopTick()
+          generating.value = false
+          genTimedOut.value = true
+        }
       }
     }, 1200)
+  }
+
+  /** 打开文案时若有进行中的生成（刷新页面、换设备），直接接上进度，不必再点一次生成 */
+  function resumeActiveGeneration(): void {
+    const g = detail.value?.activeGeneration
+    const copyId = detail.value?.copy.id
+    if (!g) {
+      const prev = activeGeneration.value
+      if (prev && prev.copyId !== copyId) {
+        // 换到了别的文案：清掉上一条文案的生成进度
+        activeGeneration.value = null
+        generatedDrafts.value = []
+      } else if (prev && ['pending', 'running'].includes(prev.status)) {
+        // 载入期间刚好跑完（load 会先停掉轮询）：补取一次终态
+        void copyApi
+          .generation(prev.id)
+          .then((r) => {
+            if (activeGeneration.value?.id === r.id) activeGeneration.value = r
+          })
+          .catch(() => undefined)
+      }
+      generating.value = false
+      genTimedOut.value = false
+      stopTick()
+      return
+    }
+    if (pollTimer) return
+    activeGeneration.value = {
+      id: g.id,
+      copyId,
+      status: g.status,
+      count: g.count,
+      succeeded: 0,
+      failed: 0,
+    } as Generation
+    generating.value = true
+    genTimedOut.value = false
+    generatedDrafts.value = []
+    const started = g.createdAt ? Date.parse(g.createdAt) : NaN
+    genStartedAt.value = Number.isFinite(started) ? started : Date.now()
+    genEstimateMs.value = estimateDuration(Math.max(1, g.count))
+    startTick()
+    startPolling(g.id)
   }
 
   /** 手动重试：轮询停止但任务其实还在跑时，用同一 generationId 重新接上 */

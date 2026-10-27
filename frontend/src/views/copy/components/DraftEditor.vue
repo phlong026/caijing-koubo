@@ -26,7 +26,7 @@
               :title="`${d.title || d.name} · ${d.wordCount} 字`"
               @click="onSwitchDraft(d.id)"
             >
-              {{ d.isFinal ? '✓ ' : '' }}{{ d.name }}
+              {{ d.name }}
             </button>
           </div>
 

@@ -1,24 +1,12 @@
 <template>
-  <section class="candidate-shelf" aria-label="候选稿与定稿">
+  <section class="candidate-shelf" aria-label="候选稿">
     <div class="candidate-heading">
       <div>
-        <strong>选稿与定稿</strong><span class="mw-subtle">{{ store.drafts.length }} 篇候选</span>
+        <strong>候选稿</strong><span class="mw-subtle">{{ store.drafts.length }} 篇</span>
       </div>
-      <span v-if="final" class="final-status" :class="{ stale: !finalValid }">{{
-        finalValid
-          ? `已选用：${store.drafts.find((d) => d.id === final?.draftId)?.name || '定稿'}`
-          : '内容有修改，请重新定稿'
-      }}</span>
       <div class="candidate-actions">
         <a-button size="small" :disabled="picked.length !== 2" @click="compareOpen = true"
           >对比 {{ picked.length }}/2</a-button
-        >
-        <a-button
-          size="small"
-          :disabled="!store.canEdit || !store.editor || store.generating"
-          :loading="finalizing"
-          @click="finalize"
-          >定稿当前稿</a-button
         >
         <button class="shelf-toggle" :aria-expanded="expanded" @click="expanded = !expanded">
           {{ expanded ? '收起候选' : '展开候选稿' }}<icon-down />
@@ -38,7 +26,7 @@
             :disabled="!picked.includes(d.id) && picked.length >= 2"
             @change="toggle(d.id)"
             ><span class="mw-subtle">加入对比</span></a-checkbox
-          ><span v-if="d.isFinal" class="mw-tag mw-tag-gray">定稿</span>
+          ><span v-if="d.hasSubmitted" class="mw-tag mw-tag-gray">提交过</span>
         </div>
         <div class="candidate-direction">{{ d.name }}</div>
         <h3>{{ d.title || '未命名' }}</h3>
@@ -49,7 +37,7 @@
             size="mini"
             :type="d.id === store.editor?.draftId ? 'primary' : 'secondary'"
             @click="emit('open', d.id)"
-            >{{ d.id === store.editor?.draftId ? '正在编辑' : '打开编辑' }}</a-button
+            >{{ d.id === store.editor?.draftId ? '当前稿' : '选用此稿' }}</a-button
           >
         </div>
       </article>
@@ -62,7 +50,7 @@
           <section v-for="(s, i) in d.sections" :key="i">
             <p>{{ s.text }}</p>
           </section>
-          <a-button type="primary" @click="adopt(d.id)">采用并编辑这篇</a-button>
+          <a-button type="primary" @click="adopt(d.id)">选用这篇</a-button>
         </article>
       </div>
     </a-modal>
@@ -70,21 +58,13 @@
 </template>
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Message } from '@arco-design/web-vue'
-import { copyApi, type Draft } from '@/api/copy'
+import { type Draft } from '@/api/copy'
 import { useCopyStore } from '@/stores/copy'
 const emit = defineEmits<{ (e: 'open', id: string): void }>()
 const store = useCopyStore()
 const expanded = ref(false),
   picked = ref<string[]>([]),
-  compareOpen = ref(false),
-  finalizing = ref(false)
-const final = computed(() => store.copy?.settings?.finalSelection as { draftId: string; versionNo: number } | undefined)
-const finalValid = computed(
-  () =>
-    !!store.drafts.find((d) => d.id === final.value?.draftId && d.isFinal) &&
-    !(store.editor?.draftId === final.value?.draftId && store.isDirty),
-)
+  compareOpen = ref(false)
 const compared = computed(() =>
   picked.value.map((id) => store.drafts.find((d) => d.id === id)).filter((d): d is Draft => !!d),
 )
@@ -111,21 +91,6 @@ watch(
     expanded.value = false
   },
 )
-async function finalize() {
-  if (!store.copy || !store.editor) return
-  finalizing.value = true
-  try {
-    if (store.isDirty && (await store.save()) !== 'ok') throw new Error(store.error ?? '请先保存当前改动')
-    if (!(await store.saveCreativeSettings())) throw new Error(store.settingsError || '设置尚未保存')
-    await copyApi.finalize(store.copy.id, { draftId: store.editor.draftId, rev: store.editor.rev })
-    await store.load(store.copy.id)
-    Message.success('已定稿，可提交审核')
-  } catch (e) {
-    Message.error((e as Error).message)
-  } finally {
-    finalizing.value = false
-  }
-}
 </script>
 <style scoped>
 .candidate-shelf {
@@ -160,17 +125,6 @@ async function finalize() {
   border: 0;
   background: transparent;
   cursor: pointer;
-}
-.final-status {
-  font-size: 11px;
-  background: #eaf6ef;
-  color: #267052;
-  padding: 3px 8px;
-  border-radius: 5px;
-}
-.final-status.stale {
-  background: #fff4df;
-  color: #946010;
 }
 .candidate-grid {
   display: grid;
@@ -269,8 +223,7 @@ async function finalize() {
   .candidate-heading > div:first-child {
     flex: 1 0 100%;
   }
-  .candidate-heading strong,
-  .final-status {
+  .candidate-heading strong {
     white-space: nowrap;
   }
   .candidate-actions {

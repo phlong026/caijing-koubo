@@ -19,7 +19,6 @@
     </div>
 
     <div v-show="tab === 'topics'" id="source-pane-topics" role="tabpanel" aria-labelledby="source-tab-topics">
-      <slot v-if="hasTopicSource" />
       <div class="intake-footer">
         <a-button @click="router.push('/topics')">选择爆款选题 <icon-arrow-right /></a-button>
       </div>
@@ -202,10 +201,6 @@
       </div>
     </div>
     <p v-if="error" role="alert" class="intake-error">{{ error }}</p>
-    <details v-if="store.copy && !(tab === 'topics' && hasTopicSource)" class="current-material">
-      <summary>查看当前任务素材 · {{ store.copy.sourceLabel }}</summary>
-      <slot />
-    </details>
   </div>
 </template>
 
@@ -225,7 +220,7 @@ import {
   type BenchVideo,
 } from '@/api/benchmark'
 import BenchmarkVideoCard from '@/views/topics/BenchmarkVideoCard.vue'
-const emit = defineEmits<{ (e: 'created', ids: string[]): void; (e: 'source-mode', mode: string): void }>()
+const emit = defineEmits<{ (e: 'created', ids: string[]): void }>()
 const store = useCopyStore(),
   router = useRouter()
 type SourceTab = 'topics' | 'article' | 'video' | 'manual'
@@ -265,7 +260,6 @@ let pollTimer: ReturnType<typeof setTimeout> | null = null,
   videoSeq = 0,
   pollStarted = 0
 const personas = computed(() => store.options?.personas.filter((p) => p.enabled) ?? [])
-const hasTopicSource = computed(() => ['news', 'benchmark'].includes(store.copy?.source ?? ''))
 const canCreate = computed(
   () =>
     !creating.value &&
@@ -305,7 +299,6 @@ watch(
   },
   { immediate: true },
 )
-watch(tab, (value) => emit('source-mode', value), { immediate: true })
 function selectTab(value: SourceTab) {
   if (creating.value) return
   if (value === 'article') fileAccept.value = '.docx,.pdf,.txt,.md'
@@ -625,19 +618,6 @@ onBeforeUnmount(() => {
   margin-top: 12px;
 }
 .article-outline summary,
-.current-material summary {
-  cursor: pointer;
-  color: var(--mw-primary);
-}
-.current-material {
-  margin-top: 24px;
-  padding-top: 18px;
-  border-top: 1px solid var(--mw-border-light);
-  font-size: 12px;
-}
-.current-material[open] > summary {
-  margin-bottom: 18px;
-}
 .video-intake-result {
   display: grid;
   grid-template-columns: minmax(210px, 280px) minmax(0, 1fr);

@@ -562,7 +562,9 @@ if (!genOnly) {
     })
     const drafts: any[] = (await req('GET', `/copy/${multi.copyId}`)).data?.drafts ?? []
     const nos = drafts.map((d) => d.draftNo)
-    check('稿号互不重复', new Set(nos).size === nos.length && nos.length === 4, nos)
+    // 新建时的空白稿 1 从未编辑，生成出 3 份后自动移除，只剩 3 份生成稿
+    check('稿号互不重复', new Set(nos).size === nos.length && nos.length === 3, nos)
+    check('未编辑的空白初始稿在生成后自动移除', !nos.includes(1), nos)
 
     // 审核桩接口守卫：非法关卡名被拒；已裁决的审核单不再接受进度回写
     const aiDraft = done?.drafts?.[0]

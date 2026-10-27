@@ -71,7 +71,7 @@
             >
           </div>
           <div id="copy-source-content" v-show="!collapsed.source" class="flow-card">
-            <SourcePanel @created="onSourcesCreated" />
+            <SourcePanel />
           </div>
         </div>
       </section>
@@ -98,11 +98,10 @@
         </div>
       </section>
       <section id="copy-step-write" class="flow-step" aria-labelledby="copy-write-heading">
-        <span class="flow-node" :class="{ complete: currentFinal }">{{ currentFinal ? '✓' : '3' }}</span>
+        <span class="flow-node" :class="{ complete: submitted }">{{ submitted ? '✓' : '3' }}</span>
         <div class="flow-step-body">
           <div class="flow-step-heading">
-            <h2 id="copy-write-heading" tabindex="-1">改写与定稿</h2>
-            <span class="flow-state" :class="{ complete: currentFinal }">{{ currentFinal ? '已定稿' : '可编辑' }}</span>
+            <h2 id="copy-write-heading" tabindex="-1">改写与选稿</h2>
             <div class="flow-heading-actions">
               <a-button size="small" @click="versionVisible = true">本稿历史</a-button
               ><a-button
@@ -153,6 +152,7 @@
       v-model:visible="listVisible"
       :initial-ids="pendingIds"
       @picked="(id) => router.replace({ query: { id } })"
+      @create="router.push({ path: '/copy' })"
     />
     <VersionDrawer v-model:visible="versionVisible" />
     <SubmitDialog v-model:visible="submitVisible" @navigate="onPrecheckNavigate" />
@@ -251,9 +251,8 @@ const copy = computed(() => store.copy)
 const sourceConfirmed = computed(
   () => (store.copy?.settings?.sourceReview as SourceReview | undefined)?.confirmed === true,
 )
-const currentFinal = computed(
-  () => !!store.drafts.find((d) => d.id === store.editor?.draftId && d.isFinal) && !store.isDirty,
-)
+/** 提交即锁定当前稿（原「定稿」已合并进提交） */
+const submitted = computed(() => ['in_review', 'approved'].includes(copy.value?.status ?? ''))
 const reviewStatusLabel = computed(
   () =>
     ({ draft: '待提交', in_review: '审核中', approved: '已通过', rejected: '待修改', archived: '已归档' })[
