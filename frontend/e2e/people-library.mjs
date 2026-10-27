@@ -100,13 +100,26 @@ await ctx.addInitScript((t) => {
 }, tokens.ops)
 await ctx.addCookies([{ name: 'mw_token', value: tokens.ops, url: BASE }])
 const page = await ctx.newPage()
-/** 以审核员身份执行一段操作（四眼原则），结束后切回运营 */
+/**
+ * 切换登录身份：换令牌与媒体 Cookie 后重载页面（登录态在内存里，只改 localStorage 页面仍是原身份），
+ * 再选回当前验收人物。核验 / 审核按钮按角色渲染，所以必须真切身份。
+ */
+async function switchTo(token) {
+  await page.evaluate((t) => localStorage.setItem('mw_token', t), token)
+  await ctx.addCookies([{ name: 'mw_token', value: token, url: BASE }])
+  await page.reload()
+  await page.locator('.people-card', { hasText: NAME }).first().click({ timeout: 15000 })
+  await page.waitForFunction((n) => document.querySelector('.people-detail')?.innerText.includes(n), NAME, {
+    timeout: 8000,
+  })
+}
+/** 以审核员身份执行一段操作（四眼原则），结束后切回运营；调用方在 fn 内外各自重新打开所需 Tab / 抽屉 */
 async function asReviewer(fn) {
-  await page.evaluate((t) => localStorage.setItem('mw_token', t), tokens.reviewer)
+  await switchTo(tokens.reviewer)
   try {
     return await fn()
   } finally {
-    await page.evaluate((t) => localStorage.setItem('mw_token', t), tokens.ops)
+    await switchTo(tokens.ops)
   }
 }
 page.setDefaultTimeout(12000)
@@ -263,11 +276,16 @@ await step('上传并核验授权后人物变为可用', async () => {
   await drawer.locator('input[type=file]').setInputFiles(path.join(FX, 'auth.pdf'))
   await drawer.getByRole('button', { name: '上传授权' }).click()
   await toast('已上传').waitFor({ timeout: 8000 })
-  await asReviewer(async () => {
-    await drawer.getByRole('button', { name: '核验通过' }).click()
-    await toast('已核验通过').waitFor({ timeout: 8000 })
-  })
+  // 运营不渲染核验 / 驳回（与后端 ROLE_RULES 对齐）
+  await drawer.getByText('待核验').first().waitFor({ timeout: 8000 })
+  expect((await drawer.getByRole('button', { name: '核验通过' }).count()) === 0, '运营不应看到核验通过')
   await page.keyboard.press('Escape')
+  await asReviewer(async () => {
+    await detail().getByRole('button', { name: '授权管理' }).click()
+    await page.locator('.arco-drawer:visible').last().getByRole('button', { name: '核验通过' }).first().click()
+    await toast('已核验通过').waitFor({ timeout: 8000 })
+    await page.keyboard.press('Escape')
+  })
   await page.waitForFunction(
     () => !document.querySelector('.people-detail')?.innerText.includes('授权待核验，人物不可用'),
     null,
@@ -281,12 +299,16 @@ await step('驳回授权必须填写原因（空提交被拦）', async () => {
   await drawer.locator('input[type=file]').setInputFiles(path.join(FX, 'auth.pdf'))
   await drawer.getByRole('button', { name: '上传授权' }).click()
   await toast('已上传').waitFor({ timeout: 8000 })
-  await drawer.getByRole('button', { name: '驳回' }).first().click()
-  const modal = page.locator('.arco-modal:visible').last()
-  await modal.getByRole('button', { name: '确认' }).click()
-  await page.getByText('请填写原因').first().waitFor({ timeout: 4000 })
-  await modal.getByRole('button', { name: /取消|Cancel/ }).click()
   await page.keyboard.press('Escape')
+  await asReviewer(async () => {
+    await detail().getByRole('button', { name: '授权管理' }).click()
+    await page.locator('.arco-drawer:visible').last().getByRole('button', { name: '驳回' }).first().click()
+    const modal = page.locator('.arco-modal:visible').last()
+    await modal.getByRole('button', { name: '确认' }).click()
+    await page.getByText('请填写原因').first().waitFor({ timeout: 4000 })
+    await modal.getByRole('button', { name: /取消|Cancel/ }).click()
+    await page.keyboard.press('Escape')
+  })
 })
 
 console.log('\n[4] 形象照片')
@@ -297,10 +319,13 @@ await step('上传照片 → 处理 → 待审核 → 通过 → 设为封面', 
     .first()
     .setInputFiles([path.join(FX, 'photo1.jpg')])
   await detail().getByText('待审核').first().waitFor({ timeout: 40000 })
+  expect((await detail().getByRole('button', { name: '通过', exact: true }).count()) === 0, '运营不应看到素材审核按钮')
   await asReviewer(async () => {
-    await detail().getByRole('button', { name: '通过' }).first().click()
+    await tab('形象照片')
+    await detail().getByRole('button', { name: '通过', exact: true }).first().click()
     await detail().getByText('已通过').first().waitFor({ timeout: 8000 })
   })
+  await tab('形象照片')
   await detail().getByRole('button', { name: '设为封面' }).first().click()
   await toast('已设为封面').waitFor({ timeout: 8000 })
 })
@@ -335,9 +360,12 @@ await step('上传分身素材 → 转码质检 → 审核通过', async () => {
     .setInputFiles([path.join(FX, 'avatar.mp4')])
   await detail().getByText('待审核').first().waitFor({ timeout: 90000 })
   await asReviewer(async () => {
-    await detail().getByRole('button', { name: '通过' }).first().click()
-    await detail().getByRole('button', { name: '制作分身' }).first().waitFor({ timeout: 8000 })
+    await tab('口播分身')
+    await detail().getByRole('button', { name: '通过', exact: true }).first().click()
+    await detail().getByText('已通过').first().waitFor({ timeout: 8000 })
   })
+  await tab('口播分身')
+  await detail().getByRole('button', { name: '制作分身' }).first().waitFor({ timeout: 8000 })
 })
 await step('制作分身：未勾选确认文本时提交按钮禁用', async () => {
   await detail().getByRole('button', { name: '制作分身' }).first().click()
