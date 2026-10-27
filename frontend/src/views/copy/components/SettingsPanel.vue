@@ -346,7 +346,6 @@ const remainText = computed(() => {
   return `约 ${Math.ceil(ms / 10000) * 10} 秒`
 })
 
-
 function fmtDuration(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
   const m = Math.floor(s / 60)
