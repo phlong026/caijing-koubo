@@ -489,8 +489,8 @@ export const copyApi = {
   versionDiff(versionId: string) {
     return apiGet<VersionDiff>(`/copy/versions/${versionId}/diff`)
   },
-  restoreVersion(versionId: string) {
-    return apiPost<{ draft: Draft }>(`/copy/versions/${versionId}/restore`)
+  restoreVersion(versionId: string, body?: { confirmReedit?: boolean }) {
+    return apiPost<{ draft: Draft }>(`/copy/versions/${versionId}/restore`, body)
   },
 
   /* 生成 */
@@ -520,7 +520,10 @@ export const copyApi = {
   variants(copyId: string, draftId: string, body: { sectionIndex: number; kinds: string[]; count?: number }) {
     return apiPost<{ generationId: string }>(`/copy/${copyId}/drafts/${draftId}/variants`, body)
   },
-  applyVariant(variantId: string, body: { mode: 'replace' | 'new_draft'; confirmChanged?: boolean }) {
+  applyVariant(
+    variantId: string,
+    body: { mode: 'replace' | 'new_draft'; confirmChanged?: boolean; confirmReedit?: boolean },
+  ) {
     // requiresConfirm：生成变体后该段已被改过，需用户确认后带 confirmChanged 重新提交（本次未写入）
     return apiPost<{ requiresConfirm: boolean; draftId: string; versionId?: string }>(
       `/copy/variants/${variantId}/apply`,

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, reactive, ref, watch } from 'vue'
-import { ApiError } from '@/api/client'
+import { ApiError, needsReeditConfirm } from '@/api/client'
 import {
   copyApi,
   type CreativeSettings,
@@ -195,6 +195,8 @@ export const useCopyStore = defineStore('copy', () => {
   type SaveResult = 'ok' | 'conflict' | 'need_confirm' | 'error'
   let activeSave: Promise<SaveResult> | null = null
   let saveAgain = false
+  /** 已通过的文案有未保存改动、等待用户确认是否进入修订（FR-R6） */
+  const reeditPending = ref(false)
 
   /* ── 生成 ── */
   const generating = ref(false)
@@ -532,10 +534,9 @@ export const useCopyStore = defineStore('copy', () => {
           error.value = '文案正在审核中，暂不可编辑'
           return 'error'
         }
-        if (
-          ex.status === 409 &&
-          (ex as unknown as { details?: { requiresConfirm?: boolean } }).details?.requiresConfirm
-        ) {
+        if (needsReeditConfirm(ex)) {
+          // 编辑区据此弹出「已通过文案修改需重新审核」确认（自动保存触发时也要能确认）
+          reeditPending.value = true
           return 'need_confirm'
         }
         e.saveError = ex.message
@@ -883,6 +884,7 @@ export const useCopyStore = defineStore('copy', () => {
     canRedo,
     save,
     autosave,
+    reeditPending,
     cancelAutosave,
     discardLocalDraft,
     acceptServerState,

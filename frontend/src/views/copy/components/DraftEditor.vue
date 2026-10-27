@@ -484,21 +484,35 @@ async function onCopyBody(): Promise<void> {
 async function onSave(): Promise<void> {
   const r = await store.save()
   if (r === 'ok') Message.success('已保存')
-  else if (r === 'need_confirm') {
+  else if (r === 'error') Message.error(store.error ?? '保存失败')
+  // need_confirm 由下面的 reeditPending 统一弹确认
+}
+
+/** 已通过的文案被改动（含自动保存）：确认后进入修订中并保存；取消则放弃改动回到通过内容 */
+watch(
+  () => store.reeditPending,
+  (pending) => {
+    if (!pending) return
     Modal.confirm({
       title: '该文案已审核通过',
-      content: '修改后需重新提交审核，原通过版本会保留。是否继续？',
+      content: '修改后需重新提交审核，已生成的视频仍使用原通过版本。是否继续修改？',
       okText: '继续修改',
-      cancelText: '取消',
+      cancelText: '放弃改动',
       onOk: async () => {
-        const r2 = await store.save(true)
-        if (r2 === 'ok') Message.success('已保存，文案进入修订中')
+        store.reeditPending = false
+        const r = await store.save(true)
+        if (r === 'ok' && store.copy) {
+          await store.load(store.copy.id)
+          Message.success('已保存，文案进入修订中')
+        }
+      },
+      onCancel: async () => {
+        store.reeditPending = false
+        await store.reloadDraft()
       },
     })
-  } else if (r === 'error') {
-    Message.error(store.error ?? '保存失败')
-  }
-}
+  },
+)
 
 async function onReload(): Promise<void> {
   await store.reloadDraft()

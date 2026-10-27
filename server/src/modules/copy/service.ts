@@ -68,14 +68,16 @@ export function assertWritable(copy: CopyRow): void {
   }
 }
 
-/** 已通过状态下编辑需显式确认（FR-R6 / W11） */
-export function assertEditableWithConfirm(copy: CopyRow, confirmReedit?: boolean): void {
-  assertWritable(copy)
+/**
+ * 已通过的文案改稿内容须显式确认（FR-R6 / W11）：普通编辑、恢复版本、用变体替换段落共用。
+ * 前端识别 409 + requiresConfirm 后弹确认，再带 confirmReedit 重试。
+ */
+export function assertApprovedEditConfirmed(copy: CopyRow, confirmReedit?: boolean): void {
   if (copy.status === 'approved' && !confirmReedit) {
-    throw err.invalidState(
-      `该文案已审核通过（v${copy.approvedVersionId ? '已通过版本' : '-'}）。修改后须重新审核，已生成的视频仍绑定原版本。请确认后再编辑。`,
-      { requiresConfirm: true, approvedVersionId: copy.approvedVersionId },
-    )
+    throw err.invalidState('该文案已审核通过，修改后须重新审核，已生成的视频仍绑定原通过版本。请确认后再修改', {
+      requiresConfirm: true,
+      approvedVersionId: copy.approvedVersionId,
+    })
   }
 }
 
@@ -478,6 +480,7 @@ export async function createDraft(
       wordCount: words,
       origin,
       createdBy: operator,
+      maxDrafts: max,
     },
     db,
   )
@@ -501,13 +504,8 @@ export async function saveDraftContent(
   const db = getDb()
   const copy = await requireCopy(copyId, db)
   assertWritable(copy)
-  if (copy.status === 'approved' && !opts.allowApprovedEdit) {
-    // 通过后编辑须显式确认（FR-R6）：由路由层在确认后传 allowApprovedEdit 并降级状态
-    throw err.invalidState('该文案已审核通过，修改后须重新审核，请确认后再编辑', {
-      requiresConfirm: true,
-      approvedVersionId: copy.approvedVersionId,
-    })
-  }
+  // 通过后编辑须显式确认（FR-R6）：由路由层在确认后传 allowApprovedEdit 并降级状态
+  assertApprovedEditConfirmed(copy, opts.allowApprovedEdit)
 
   const draft = await getDraft(copyId, draftId, db)
   if (!draft) throw err.notFound('稿不存在')
@@ -671,10 +669,12 @@ export async function restoreVersion(
   copyId: string,
   versionId: string,
   operator: string,
+  confirmReedit = false,
 ): Promise<{ version: VersionRow; draft: DraftRow }> {
   const db = getDb()
   const copy = await requireCopy(copyId, db)
   assertWritable(copy)
+  assertApprovedEditConfirmed(copy, confirmReedit)
 
   const { getVersion } = await import('./repo.js')
   const target = await getVersion(versionId, db)
