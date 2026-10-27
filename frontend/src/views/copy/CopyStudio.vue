@@ -8,13 +8,16 @@
           <template v-if="personaName"> · {{ personaName }}</template>
           <template v-if="copy.lineLabel"> · {{ copy.lineLabel }}</template>
         </span>
-        <span v-else>选择素材，开始创作口播文案</span>
       </template>
       <template #actions>
         <a-button v-if="copy" :aria-pressed="workspace.focusWriting" @click="toggleWritingFocus"
           ><template #icon><icon-shrink v-if="workspace.focusWriting" /><icon-expand v-else /></template
           >{{ workspace.focusWriting ? '退出专注' : '专注写作' }}</a-button
         >
+        <a-button v-if="auth.hasRole('reviewer', 'admin')" @click="configVisible = true">
+          <template #icon><icon-settings /></template>
+          文案配置
+        </a-button>
         <a-button @click="listVisible = true">
           <template #icon><icon-file /></template>
           文案任务
@@ -36,7 +39,6 @@
     <div v-else-if="store.notFound" class="mw-card py-20 text-center">
       <icon-exclamation-circle style="font-size: 44px; color: #d5dce7" />
       <div class="text-[15px] font-medium text-[#3c4a63] mt-3">文案不存在或已被删除</div>
-      <div class="mw-subtle mt-1.5">可能链接已失效，或该文案已被归档</div>
       <a-button type="primary" class="mt-5" @click="listVisible = true">打开文案列表</a-button>
     </div>
     <div v-else-if="store.error && !copy" class="mw-card py-20 text-center">
@@ -69,10 +71,7 @@
             >
           </div>
           <div id="copy-source-content" v-show="!collapsed.source" class="flow-card">
-            <SourcePanel @created="onSourcesCreated" @source-mode="(mode) => (sourceMode = mode)" />
-            <div v-if="sourceMode === 'topics'" class="flow-next">
-              <a-button @click="goToStep('settings')">下一步：设置创作要求 <icon-arrow-down /></a-button>
-            </div>
+            <SourcePanel />
           </div>
         </div>
       </section>
@@ -81,14 +80,8 @@
         <div class="flow-step-body">
           <div class="flow-step-heading">
             <h2 id="copy-settings-heading" tabindex="-1">设置创作要求</h2>
-            <span class="flow-state">{{
-              store.settingsSaving
-                ? '保存中'
-                : store.settingsError
-                  ? '保存失败'
-                  : store.settingsDirty
-                    ? '有改动'
-                    : '已保存'
+            <span v-if="store.settingsSaving || store.settingsError" class="flow-state">{{
+              store.settingsSaving ? '保存中' : '保存失败'
             }}</span
             ><a-button
               type="text"
@@ -101,18 +94,14 @@
           </div>
           <div id="copy-settings-content" v-show="!collapsed.settings" class="flow-card">
             <SettingsPanel @preview="onPreviewPrompt" />
-            <div class="flow-next">
-              <a-button type="text" @click="goToStep('write')">编辑已有文案 <icon-arrow-down /></a-button>
-            </div>
           </div>
         </div>
       </section>
       <section id="copy-step-write" class="flow-step" aria-labelledby="copy-write-heading">
-        <span class="flow-node" :class="{ complete: currentFinal }">{{ currentFinal ? '✓' : '3' }}</span>
+        <span class="flow-node" :class="{ complete: submitted }">{{ submitted ? '✓' : '3' }}</span>
         <div class="flow-step-body">
           <div class="flow-step-heading">
-            <h2 id="copy-write-heading" tabindex="-1">改写与定稿</h2>
-            <span class="flow-state" :class="{ complete: currentFinal }">{{ currentFinal ? '已定稿' : '可编辑' }}</span>
+            <h2 id="copy-write-heading" tabindex="-1">改写与选稿</h2>
             <div class="flow-heading-actions">
               <a-button size="small" @click="versionVisible = true">本稿历史</a-button
               ><a-button
@@ -130,9 +119,6 @@
               @variant="onVariant"
             />
           </div>
-          <div class="flow-next">
-            <a-button @click="goToStep('review')">下一步：检查与审核 <icon-arrow-down /></a-button>
-          </div>
         </div>
       </section>
       <section id="copy-step-review" class="flow-step" aria-labelledby="copy-review-heading">
@@ -145,25 +131,7 @@
             <span class="flow-state" :class="{ complete: copy.status === 'approved' }">{{ reviewStatusLabel }}</span>
           </div>
           <ReviewPanel v-if="showReview" />
-          <div class="flow-card flow-submit">
-            <div>
-              <strong>{{
-                copy.status === 'approved'
-                  ? '文案已通过审核'
-                  : copy.status === 'in_review'
-                    ? '文案正在审核中'
-                    : '检查文案，提交审核'
-              }}</strong>
-              <p>
-                {{
-                  copy.status === 'approved'
-                    ? '可查看通过稿，准备制作视频。'
-                    : copy.status === 'in_review'
-                      ? '审核完成后可在此查看结果。'
-                      : '提交前将检查字数、时长、用词和定稿内容。'
-                }}
-              </p>
-            </div>
+          <div v-if="hasReviewAction" class="flow-submit">
             <a-button
               v-if="copy.status === 'draft' || copy.status === 'rejected'"
               type="primary"
@@ -171,14 +139,7 @@
               @click="submitVisible = true"
               >检查并提交审核</a-button
             >
-            <a-button
-              v-else-if="
-                copy.status === 'in_review' &&
-                ['submitted', 'gate1', 'gate2', 'gate3'].includes(store.detail?.review?.status ?? '')
-              "
-              @click="onWithdraw"
-              >撤回提交</a-button
-            >
+            <a-button v-else-if="canWithdraw" @click="onWithdraw">撤回提交</a-button>
             <a-button v-else-if="copy.status === 'approved'" type="primary" @click="onGoVideo">去视频创作</a-button>
             <a-button v-if="canGoPublish" @click="onGoPublish">去发布</a-button>
           </div>
@@ -191,9 +152,10 @@
       v-model:visible="listVisible"
       :initial-ids="pendingIds"
       @picked="(id) => router.replace({ query: { id } })"
+      @create="router.push({ path: '/copy' })"
     />
     <VersionDrawer v-model:visible="versionVisible" />
-    <SubmitDialog v-model:visible="submitVisible" @submitted="onSubmitted" @navigate="onPrecheckNavigate" />
+    <SubmitDialog v-model:visible="submitVisible" @navigate="onPrecheckNavigate" />
     <VariantPanel v-model:visible="variantVisible" :section-index="variantIndex" />
     <TemplateEditor v-model:visible="configVisible" />
 
@@ -216,7 +178,7 @@
               >
               · {{ store.creativeSettings.count }} 篇
             </p>
-            <p>{{ store.creativeSettings.instructions || '按所选人物、模板和风格创作' }}</p>
+            <p v-if="store.creativeSettings.instructions">{{ store.creativeSettings.instructions }}</p>
             <p class="mw-subtle">使用素材：{{ store.copy?.settings?.sourceReview ? '已保存的校对稿' : '原始素材' }}</p>
           </div>
         </div>
@@ -245,14 +207,16 @@ import SubmitDialog from './components/SubmitDialog.vue'
 import VariantPanel from './components/VariantPanel.vue'
 import TemplateEditor from './components/TemplateEditor.vue'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
 const store = useCopyStore()
 const draftEditorRef = ref<InstanceType<typeof DraftEditor> | null>(null)
 const workspace = useWorkspaceStore()
+// 模板 / 风格 / 合规词库的写接口限审核员与管理员（auth/guard ROLE_RULES）
+const auth = useAuthStore()
 const collapsed = reactive({ source: false, settings: false })
-const sourceMode = ref('topics')
 type FlowStep = 'source' | 'settings' | 'write' | 'review'
 function goToStep(step: FlowStep) {
   if (step === 'source' || step === 'settings') collapsed[step] = false
@@ -287,9 +251,8 @@ const copy = computed(() => store.copy)
 const sourceConfirmed = computed(
   () => (store.copy?.settings?.sourceReview as SourceReview | undefined)?.confirmed === true,
 )
-const currentFinal = computed(
-  () => !!store.drafts.find((d) => d.id === store.editor?.draftId && d.isFinal) && !store.isDirty,
-)
+/** 提交即锁定当前稿（原「定稿」已合并进提交） */
+const submitted = computed(() => ['in_review', 'approved'].includes(copy.value?.status ?? ''))
 const reviewStatusLabel = computed(
   () =>
     ({ draft: '待提交', in_review: '审核中', approved: '已通过', rejected: '待修改', archived: '已归档' })[
@@ -305,6 +268,16 @@ watch(
 )
 /** 人物名取自详情顶层 `persona`（copy 自身没有 persona 字段） */
 const personaName = computed(() => store.detail?.persona?.name ?? '')
+// 校对台没有撤回接口，已送校对台的单不显示撤回（后端同样会拒绝）
+const canWithdraw = computed(
+  () =>
+    copy.value?.status === 'in_review' &&
+    store.detail?.review?.channel !== 'jiaoduitai' &&
+    ['submitted', 'gate1', 'gate2', 'gate3'].includes(store.detail?.review?.status ?? ''),
+)
+const hasReviewAction = computed(
+  () => ['draft', 'rejected', 'approved'].includes(copy.value?.status ?? '') || canWithdraw.value || canGoPublish.value,
+)
 const showReview = computed(
   () => !!store.detail?.review || ['in_review', 'approved', 'rejected'].includes(copy.value?.status ?? ''),
 )
@@ -313,6 +286,10 @@ const listVisible = ref(false)
 const versionVisible = ref(false)
 const submitVisible = ref(false)
 const configVisible = ref(false)
+// 改过模板 / 风格后刷新创作设置里的下拉选项
+watch(configVisible, (v) => {
+  if (!v) void store.loadOptions(store.detail?.persona?.id)
+})
 const variantVisible = ref(false)
 const variantIndex = ref(0)
 
@@ -463,15 +440,24 @@ async function onSaveDraft(): Promise<void> {
   }
 }
 
-async function onWithdraw(): Promise<void> {
-  if (!copy.value) return
-  try {
-    await copyApi.withdraw(copy.value.id)
-    await store.load(copy.value.id)
-    Message.success('已撤回提交，可继续编辑')
-  } catch (e) {
-    Message.error((e as Error).message)
-  }
+function onWithdraw(): void {
+  const id = copy.value?.id
+  if (!id) return
+  Modal.confirm({
+    title: '撤回提交？',
+    content: '撤回后需重新提交审核。',
+    okText: '撤回',
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        await copyApi.withdraw(id)
+        await store.load(id)
+        Message.success('已撤回')
+      } catch (e) {
+        Message.error((e as Error).message)
+      }
+    },
+  })
 }
 
 function onGoVideo(): void {
@@ -498,12 +484,6 @@ function reload(): void {
 function onVariant(sectionIndex: number): void {
   variantIndex.value = sectionIndex
   variantVisible.value = true
-}
-
-/* ── 提交 ── */
-
-function onSubmitted(_submissionId: string): void {
-  Message.info('审核进行中，可稍后刷新查看结果')
 }
 
 /* ── 提示词预览 ── */
@@ -673,27 +653,12 @@ async function onPreviewPrompt(settings: CreativeSettings): Promise<void> {
   border-radius: 8px;
   background: #fff;
 }
-.flow-next {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 18px;
-}
 .flow-submit {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 20px;
+  justify-content: flex-end;
+  gap: 12px;
   flex-wrap: wrap;
-}
-.flow-submit strong {
-  font-size: 15px;
-  font-weight: 500;
-}
-.flow-submit p {
-  font-size: 13px;
-  color: var(--mw-text3);
-  margin-top: 8px;
-  line-height: 1.8;
 }
 :global(.copy-flow-page .copy-settings) {
   height: auto;

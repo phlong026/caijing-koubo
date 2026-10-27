@@ -2,20 +2,20 @@
   <div v-if="review || copy?.status === 'approved' || copy?.status === 'rejected'" class="mw-card p-5">
     <div class="flex items-center justify-between mb-3">
       <div class="mw-card-title">
-        审核进度 <a-tag v-if="review?.isStub" color="orange" size="small">测试流程</a-tag>
+        审核进度 <a-tag v-if="review?.isStub" color="orange" size="small">模拟审核</a-tag>
       </div>
       <a-tag :color="statusColor" size="small">{{ statusText }}</a-tag>
     </div>
 
-    <p v-if="review?.isStub" class="mw-subtle mb-3">当前为模拟审核，结果仅供测试，尚未完成人工审核。</p>
     <!-- 审核去向（决策 D3 / D4）：校对台审核或审核员人工裁决 -->
-    <p v-else-if="inReview && review?.channel === 'jiaoduitai'" class="mw-subtle mb-3">
+    <p v-if="inReview && review?.channel === 'jiaoduitai'" class="mw-subtle mb-3">
       已送校对台审核<template v-if="review.externalReviewNo">（审核单 {{ review.externalReviewNo }}）</template
       >，结果自动同步；校对台不支持撤回。
     </p>
     <p v-else-if="inReview && review?.channel === 'manual'" class="mw-subtle mb-3">
       等待审核员在「审核工作台」裁决（自动审核关卡尚未接入）。
     </p>
+
     <!-- 三关进度 -->
     <div v-if="review" class="space-y-1.5 mb-3">
       <div v-for="(g, gi) in review.gates" :key="gi" class="gate-row">
@@ -42,12 +42,10 @@
 
     <!-- 操作 -->
     <div class="flex items-center gap-2 flex-wrap">
-      <a-button v-if="canWithdraw" size="small" :loading="withdrawing" @click="onWithdraw">撤回审核</a-button>
       <a-button v-if="copy?.status === 'approved'" size="small" type="primary" @click="onFetchApproved">
         <template #icon><icon-download /></template>
         查看通过稿
       </a-button>
-      <span v-if="copy?.status === 'in_review'" class="mw-subtle"> 送审后可撤回；进入人工复核后不可撤回。 </span>
     </div>
 
     <!-- 已通过稿预览 -->
@@ -77,7 +75,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Message, Modal } from '@arco-design/web-vue'
+import { Message } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
 import { copyApi, type GateResult, type Section } from '@/api/copy'
 
@@ -85,14 +83,7 @@ const store = useCopyStore()
 
 const copy = computed(() => store.copy)
 const review = computed(() => store.detail?.review ?? null)
-
-const WITHDRAWABLE = ['submitted', 'gate1', 'gate2', 'gate3']
-// 校对台没有撤回接口，已送校对台的单不显示撤回（后端同样会拒绝）
-const canWithdraw = computed(
-  () => !!review.value && WITHDRAWABLE.includes(review.value.status) && review.value.channel !== 'jiaoduitai',
-)
 const inReview = computed(() => copy.value?.status === 'in_review')
-const withdrawing = ref(false)
 
 const statusText = computed(() => {
   if (review.value) return review.value.statusLabel
@@ -115,30 +106,6 @@ function gateClass(g: GateResult): string {
 
 function gateName(gate: string): string {
   return store.options?.labels.gates?.[gate] ?? gate
-}
-
-async function onWithdraw(): Promise<void> {
-  if (!copy.value) return
-  Modal.confirm({
-    title: '撤回审核？',
-    content: '撤回后文案回到可编辑状态，需重新提交审核。',
-    okText: '撤回',
-    cancelText: '取消',
-    onOk: async () => {
-      const id = copy.value?.id
-      if (!id) return
-      withdrawing.value = true
-      try {
-        await copyApi.withdraw(id)
-        Message.success('已撤回')
-        await store.load(id)
-      } catch (e) {
-        Message.error((e as Error).message)
-      } finally {
-        withdrawing.value = false
-      }
-    },
-  })
 }
 
 /* ── 取已通过稿 ── */

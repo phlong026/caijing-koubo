@@ -17,16 +17,8 @@
         {{ item.label }}
       </button>
     </div>
-    <div class="source-shortcuts" aria-label="来源快捷入口">
-      <button @click="shortcut('word')"><icon-file />Word 文档</button
-      ><button @click="shortcut('markdown')"><icon-file />Markdown</button
-      ><button @click="shortcut('paste')"><icon-paste />粘贴文本</button
-      ><button @click="selectTab('video')"><icon-video-camera />视频链接</button>
-    </div>
 
     <div v-show="tab === 'topics'" id="source-pane-topics" role="tabpanel" aria-labelledby="source-tab-topics">
-      <slot v-if="hasTopicSource" />
-      <p v-else class="intake-hint">从爆款选题中选择资讯或对标视频，送入这里继续创作。</p>
       <div class="intake-footer">
         <a-button @click="router.push('/topics')">选择爆款选题 <icon-arrow-right /></a-button>
       </div>
@@ -51,7 +43,6 @@
             ><a-button :loading="parsing"><icon-upload />选择文章文件</a-button></template
           ></a-upload
         >
-        <p class="intake-hint">支持 Word、PDF、TXT、Markdown；文件不超过 10MB，正文不超过 2 万字。</p>
       </div>
       <div v-else class="intake-field">
         <label for="source-article-text">来源文案</label
@@ -120,8 +111,7 @@
         />
       </div>
       <div class="intake-footer">
-        <span class="intake-hint">已有提取结果会直接复用。</span
-        ><a-button :loading="parsingVideo" :disabled="!videoLink.trim() || creating" @click="parseVideo"
+        <a-button :loading="parsingVideo" :disabled="!videoLink.trim() || creating" @click="parseVideo"
           >解析并提取文案</a-button
         >
       </div>
@@ -138,11 +128,8 @@
         <div class="video-intake-text">
           <strong>{{ extractionLabel }}</strong>
           <p v-if="extractError" role="alert" class="intake-error">{{ extractError }}</p>
-          <p v-if="pollStopped" class="intake-hint">提取仍可能在进行中，可继续查看进度。</p>
           <a-button v-if="pollStopped" size="small" @click="resumePoll">继续查看进度</a-button>
-          <p v-if="video.extractStatus === 'uncertain'" class="intake-hint">
-            上次提取结果不确定，重新提取可能重复计费。
-          </p>
+          <p v-if="video.extractStatus === 'uncertain'" class="intake-hint">重新提取可能重复计费</p>
           <a-button
             v-if="['failed', 'uncertain'].includes(video.extractStatus)"
             :loading="retrying"
@@ -150,7 +137,6 @@
             >{{ video.extractStatus === 'uncertain' ? '确认后重新提取' : '重新提取' }}</a-button
           >
           <pre v-if="scriptText">{{ scriptText }}</pre>
-          <p v-else class="intake-hint">提取完成后，可核对文案并选择目标人物。</p>
         </div>
       </div>
     </div>
@@ -169,7 +155,7 @@
         />
       </div>
       <div class="intake-field">
-        <label for="source-manual-text">来源文案 / 补充资料 <span>可选</span></label
+        <label for="source-manual-text">来源文案 / 补充资料</label
         ><a-textarea
           id="source-manual-text"
           v-model="manual.text"
@@ -177,12 +163,12 @@
           :max-length="5000"
           show-word-limit
           :auto-size="{ minRows: 6, maxRows: 14 }"
-          placeholder="粘贴已有文案、资讯摘要、产品资料或创作要点，作为本次写作的依据；没有资料也可按标题起草。"
+          placeholder="粘贴已有文案、资讯摘要或创作要点"
           :disabled="creating"
         />
       </div>
       <div class="intake-field">
-        <label for="source-manual-keywords">关键词 / 要点 <span>可选</span></label
+        <label for="source-manual-keywords">关键词 / 要点</label
         ><a-input
           id="source-manual-keywords"
           v-model="manual.keywords"
@@ -209,17 +195,12 @@
         ><a-option v-for="p in personas" :key="p.id" :value="p.id" :label="p.name"
       /></a-select>
       <div class="intake-footer">
-        <span class="intake-hint">为每位人物新建一条文案，保留当前稿件。</span
-        ><a-button type="primary" :loading="creating" :disabled="!canCreate" @click="createFromSource"
+        <a-button type="primary" :loading="creating" :disabled="!canCreate" @click="createFromSource"
           >创建文案并继续</a-button
         >
       </div>
     </div>
     <p v-if="error" role="alert" class="intake-error">{{ error }}</p>
-    <details v-if="store.copy && !(tab === 'topics' && hasTopicSource)" class="current-material">
-      <summary>查看当前任务素材 · {{ store.copy.sourceLabel }}</summary>
-      <slot />
-    </details>
   </div>
 </template>
 
@@ -239,7 +220,7 @@ import {
   type BenchVideo,
 } from '@/api/benchmark'
 import BenchmarkVideoCard from '@/views/topics/BenchmarkVideoCard.vue'
-const emit = defineEmits<{ (e: 'created', ids: string[]): void; (e: 'source-mode', mode: string): void }>()
+const emit = defineEmits<{ (e: 'created', ids: string[]): void }>()
 const store = useCopyStore(),
   router = useRouter()
 type SourceTab = 'topics' | 'article' | 'video' | 'manual'
@@ -279,7 +260,6 @@ let pollTimer: ReturnType<typeof setTimeout> | null = null,
   videoSeq = 0,
   pollStarted = 0
 const personas = computed(() => store.options?.personas.filter((p) => p.enabled) ?? [])
-const hasTopicSource = computed(() => ['news', 'benchmark'].includes(store.copy?.source ?? ''))
 const canCreate = computed(
   () =>
     !creating.value &&
@@ -319,7 +299,6 @@ watch(
   },
   { immediate: true },
 )
-watch(tab, (value) => emit('source-mode', value), { immediate: true })
 function selectTab(value: SourceTab) {
   if (creating.value) return
   if (value === 'article') fileAccept.value = '.docx,.pdf,.txt,.md'
@@ -331,14 +310,6 @@ async function moveTab(offset: number) {
   selectTab(TABS[(index + offset + TABS.length) % TABS.length].key)
   await nextTick()
   document.getElementById(`source-tab-${tab.value}`)?.focus()
-}
-async function shortcut(kind: 'word' | 'markdown' | 'paste') {
-  if (parsing.value || creating.value) return
-  selectTab('article')
-  articleMode.value = kind === 'paste' ? 'paste' : 'file'
-  fileAccept.value = kind === 'word' ? '.docx' : kind === 'markdown' ? '.md' : '.docx,.pdf,.txt,.md'
-  await nextTick()
-  if (kind === 'paste') document.querySelector<HTMLTextAreaElement>('#source-article-text textarea')?.focus()
 }
 function onFileChange(files: FileItem[], current: FileItem) {
   fileList.value = files
@@ -557,28 +528,6 @@ onBeforeUnmount(() => {
   font-weight: 600;
   border-bottom-color: var(--mw-primary);
 }
-.source-shortcuts {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 24px;
-}
-.source-shortcuts button {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 8px 12px;
-  border: 1px solid var(--mw-border);
-  background: #fafbf9;
-  border-radius: 5px;
-  font-size: 12px;
-  color: var(--mw-text2);
-  cursor: pointer;
-}
-.source-shortcuts button:hover {
-  border-color: var(--mw-primary);
-  color: var(--mw-primary);
-}
 .intake-row {
   margin-bottom: 18px;
 }
@@ -669,19 +618,6 @@ onBeforeUnmount(() => {
   margin-top: 12px;
 }
 .article-outline summary,
-.current-material summary {
-  cursor: pointer;
-  color: var(--mw-primary);
-}
-.current-material {
-  margin-top: 24px;
-  padding-top: 18px;
-  border-top: 1px solid var(--mw-border-light);
-  font-size: 12px;
-}
-.current-material[open] > summary {
-  margin-bottom: 18px;
-}
 .video-intake-result {
   display: grid;
   grid-template-columns: minmax(210px, 280px) minmax(0, 1fr);
@@ -712,14 +648,6 @@ onBeforeUnmount(() => {
 @media (max-width: 650px) {
   .intake-tabs {
     gap: 16px;
-  }
-  .source-shortcuts {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-  }
-  .source-shortcuts button {
-    padding: 8px;
-    justify-content: center;
   }
   .intake-footer > .arco-btn {
     width: 100%;

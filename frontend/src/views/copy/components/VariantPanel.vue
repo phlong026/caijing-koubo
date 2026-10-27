@@ -42,7 +42,6 @@
 
     <!-- 结果 -->
     <div v-if="variants.length" class="mt-4 space-y-2.5">
-      <div class="mw-subtle">选择一种替换，或另存为新稿（原段落保持不变）</div>
       <div v-for="v in variants" :key="v.id" class="variant-card">
         <div class="flex items-center gap-2 mb-1.5">
           <a-tag size="small" color="arcoblue">{{ kindLabel(v.kind) }}</a-tag>
@@ -56,8 +55,6 @@
         <div class="text-[13px] leading-[1.85] text-[#3c4a63] whitespace-pre-wrap">{{ v.text }}</div>
       </div>
     </div>
-
-    <div v-else-if="!loading" class="mt-4 mw-subtle text-center py-2">还没有变体，选好改法后点击生成</div>
   </a-modal>
 </template>
 
@@ -65,6 +62,7 @@
 import { ref, watch } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
+import { needsReeditConfirm } from '@/api/client'
 import { copyApi, type Variant } from '@/api/copy'
 
 const props = defineProps<{ visible: boolean; sectionIndex: number }>()
@@ -158,21 +156,54 @@ function onApply(v: Variant, mode: 'replace' | 'new_draft'): void {
       mode === 'replace' ? '原段落内容会被覆盖，可通过「历史版本」找回。' : '会用该写法生成一份新稿，原稿保持不变。',
     okText: '确认',
     cancelText: '取消',
-    onOk: async () => {
-      applying.value = v.id
-      try {
-        await copyApi.applyVariant(v.id, { mode })
-        Message.success(mode === 'replace' ? '已替换' : '已另存为新稿')
-        emit('update:visible', false)
-        await store.load(store.copy!.id)
-        store.syncEditorFromCurrent()
-      } catch (e) {
-        Message.error((e as Error).message)
-      } finally {
-        applying.value = null
-      }
-    },
+    onOk: () => applyVariant(v, mode, false, false),
   })
+}
+
+async function applyVariant(
+  v: Variant,
+  mode: 'replace' | 'new_draft',
+  confirmChanged: boolean,
+  confirmReedit: boolean,
+): Promise<void> {
+  if (!store.copy) return
+  applying.value = v.id
+  try {
+    // 后端按已保存内容判断段落是否被改过，先落盘本地改动
+    if (store.isDirty && (await store.save()) !== 'ok') {
+      Message.warning('请先保存当前稿')
+      return
+    }
+    const r = await copyApi.applyVariant(v.id, { mode, confirmChanged, confirmReedit })
+    if (r.requiresConfirm) {
+      Modal.confirm({
+        title: '这一段在生成变体后已修改',
+        content: '继续将用变体覆盖修改后的内容。',
+        okText: '继续',
+        cancelText: '取消',
+        onOk: () => applyVariant(v, mode, true, confirmReedit),
+      })
+      return
+    }
+    Message.success(mode === 'replace' ? '已替换' : '已另存为新稿')
+    emit('update:visible', false)
+    await store.load(store.copy.id)
+    store.syncEditorFromCurrent()
+  } catch (e) {
+    if (needsReeditConfirm(e)) {
+      Modal.confirm({
+        title: '该文案已审核通过',
+        content: '替换后需重新提交审核，已生成的视频仍使用原通过版本。是否继续？',
+        okText: '继续替换',
+        cancelText: '取消',
+        onOk: () => applyVariant(v, mode, confirmChanged, true),
+      })
+      return
+    }
+    Message.error((e as Error).message)
+  } finally {
+    applying.value = null
+  }
 }
 </script>
 

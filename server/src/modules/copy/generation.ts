@@ -7,7 +7,7 @@ import { newId, jenc, jdec } from '../../lib/util.js'
 import { toDb, utcNow } from '../../lib/time.js'
 import { chat, currentModelLabel } from '../../integrations/copy-llm/index.js'
 import { recordOperation } from '../audit/repo.js'
-import { enqueue, QUEUE_NAMES } from '../../queue/index.js'
+import { enqueue, getQueueBackend, QUEUE_NAMES } from '../../queue/index.js'
 import {
   countDrafts,
   getCopy,
@@ -39,6 +39,7 @@ import {
   type Section,
 } from './constants.js'
 import { getPersonaById } from './persona-bridge.js'
+import { assertApprovedEditConfirmed } from './service.js'
 import { insertVersion, listComplianceWords, storedPrompt } from './repo.js'
 
 /**
@@ -219,14 +220,7 @@ export async function acceptGeneration(args: GenerateArgs): Promise<GenerateAcce
   })
 
   // 6) 入队（jobId 用 generationId，天然去重）
-  await enqueue(
-    QUEUE_NAMES.copyGenerate,
-    'generate',
-    { generationId },
-    { jobId: generationId, attempts: 1 },
-  ).catch((e) => {
-    logger.error({ err: (e as Error).message, generationId }, 'copy.generate.enqueue_failed')
-  })
+  await enqueueOrFail(generationId, 'generate')
 
   await recordOperation({
     operator: args.operator,
@@ -361,6 +355,52 @@ async function buildSourceBlock(copy: CopyRow): Promise<Parameters<typeof assemb
   }
 }
 
+/**
+ * 入队失败（Redis 不可用等）时把生成记录标为失败并报错。
+ * 之前只打日志、接口照常返回 pending，记录会永远停在「排队中」。
+ */
+async function enqueueOrFail(generationId: string, jobName: 'generate' | 'variant'): Promise<void> {
+  try {
+    await enqueue(QUEUE_NAMES.copyGenerate, jobName, { generationId }, { jobId: generationId, attempts: 1 })
+  } catch (e) {
+    logger.error({ err: (e as Error).message, generationId, jobName }, 'copy.generate.enqueue_failed')
+    await updateGeneration(generationId, {
+      status: 'failed',
+      error: '任务排队失败，请稍后重试',
+      finished_at: toDb(utcNow()),
+    })
+    throw err.upstream('生成任务排队失败，请稍后重试')
+  }
+}
+
+/** 审核中 / 已归档的文案不再写入任何稿（§3.1：in_review 下写操作一律拒绝） */
+function isLocked(copy: CopyRow | null): boolean {
+  return !copy || copy.status === 'in_review' || copy.status === 'archived'
+}
+
+const LOCKED_REASON = '文案已提交审核或已归档，本次生成未写入'
+
+/**
+ * 启动时补扫中断的生成：内存队列重启后任务全部丢失；Redis 队列里卡住超过 30 分钟的也视为中断。
+ * 标为失败后前端轮询即可结束，运营可重新生成；worker 再拿到这些任务时会因终态直接跳过。
+ */
+export async function failInterruptedGenerations(): Promise<number> {
+  const db = getDb()
+  const memory = getQueueBackend() === 'memory'
+  const cutoff = toDb(new Date(Date.now() - 30 * 60_000))
+  const rows = await db.all<{ id: string }>(
+    memory
+      ? "SELECT `id` FROM `copy_generation` WHERE `status` IN ('pending', 'running')"
+      : "SELECT `id` FROM `copy_generation` WHERE `status` IN ('pending', 'running') AND `created_at` < ?",
+    memory ? [] : [cutoff],
+  )
+  for (const r of rows) {
+    await updateGeneration(r.id, { status: 'failed', error: '任务已中断（服务重启或排队超时），请重新生成', finished_at: toDb(utcNow()) }, db)
+  }
+  if (rows.length) logger.warn({ count: rows.length, memory }, 'copy.generate.interrupted_failed')
+  return rows.length
+}
+
 /* ── 异步执行（BullMQ worker 调用）────────────────────────────────── */
 
 export async function runGeneration(generationId: string): Promise<void> {
@@ -380,6 +420,10 @@ export async function runGeneration(generationId: string): Promise<void> {
       { status: 'failed', error: '文案已不存在', finished_at: toDb(utcNow()) },
       db,
     )
+    return
+  }
+  if (isLocked(copy)) {
+    await updateGeneration(generationId, { status: 'failed', error: LOCKED_REASON, finished_at: toDb(utcNow()) }, db)
     return
   }
 
@@ -462,6 +506,8 @@ export async function runGeneration(generationId: string): Promise<void> {
 
       // P1-14①：标题也纳入扫描
       const hits = scanCompliance(parsed.sections, words, persona.ipProfile.forbiddenClaims, parsed.title)
+      // 模型调用耗时数十秒，期间文案可能已提交审核或归档：落稿前再查一次
+      if (isLocked(await getCopy(copy.id, db))) throw new Error(LOCKED_REASON)
       // 稿号由 insertDraft 在同一临界区内取号并插入（批内并发不会撞 UNIQUE(copy_id, draft_no)）
       const { id: draftId } = await insertDraft(
         {
@@ -474,10 +520,12 @@ export async function runGeneration(generationId: string): Promise<void> {
           name: gen.count > 1 ? candidateUser(prompt.user, i, gen.count).direction : '自由创作',
           generationId,
           createdBy: gen.createdBy ?? 'system',
+          // 受理时只按当时稿数校验；执行期间可能有别的生成或新建稿落地，这里再卡一次
+          maxDrafts: config.copy.maxDrafts,
         },
         db,
       )
-      await insertVersion(
+      const version = await insertVersion(
         {
           copyId: copy.id,
           draftId,
@@ -492,12 +540,8 @@ export async function runGeneration(generationId: string): Promise<void> {
         },
         db,
       )
-      await db.run('UPDATE `copy_draft` SET `latest_version_no` = ? WHERE `id` = ?', [
-        (await db.get<{ n: number | null }>('SELECT MAX(`version_no`) AS n FROM `copy_version` WHERE `copy_id` = ?', [
-          copy.id,
-        ]))?.n ?? 0,
-        draftId,
-      ])
+      // 批内并发时 copy 级 MAX(version_no) 可能是别的稿的号，必须用本稿刚插入的版本号
+      await db.run('UPDATE `copy_draft` SET `latest_version_no` = ? WHERE `id` = ?', [version.versionNo, draftId])
       draftIds.push(draftId)
       succeeded += 1
       return { ok: true, draftId, cost }
@@ -548,16 +592,35 @@ export async function runGeneration(generationId: string): Promise<void> {
 
   // 当前稿切到本次生成的第一份（AI 产出物，不覆盖已有稿内容 W5）
   if (draftIds.length) {
-    await db.run('UPDATE `copy` SET `current_draft_id` = ?, `updated_at` = ? WHERE `id` = ?', [
-      draftIds[0],
-      toDb(utcNow()),
-      copy.id,
-    ])
+    await db.run(
+      "UPDATE `copy` SET `current_draft_id` = ?, `updated_at` = ? WHERE `id` = ? AND `status` NOT IN ('in_review', 'archived')",
+      [draftIds[0], toDb(utcNow()), copy.id],
+    )
+    await dropUntouchedBlankDrafts(copy.id, draftIds)
   }
   if (warnings.length) {
     logger.info({ generationId, warnings }, 'copy.generate.warnings')
   }
   logger.info({ generationId, succeeded, failed, cost: totalCost, status }, 'copy.generate.finished')
+}
+
+/**
+ * 新建文案时会先放一份空白稿，生成出结果后它只会以「0 字候选」的形式留在候选里。
+ * 只删从未保存过（rev = 0）、从未提交、手动新建且内容为空的稿；运营动过的稿一律保留。
+ */
+async function dropUntouchedBlankDrafts(copyId: string, keep: string[]): Promise<void> {
+  const db = getDb()
+  const rows = await db.all<{ id: string; title: string | null; sections: string | null }>(
+    "SELECT `id`, `title`, `sections` FROM `copy_draft` WHERE `copy_id` = ? AND `deleted_at` IS NULL AND `origin` = 'manual' AND `rev` = 0 AND `has_submitted` = 0",
+    [copyId],
+  )
+  const now = toDb(utcNow())
+  for (const r of rows) {
+    if (keep.includes(r.id)) continue
+    const sections = jdec<Section[]>(r.sections, [])
+    if (sections.some((x) => String(x.text ?? '').trim())) continue
+    await db.run('UPDATE `copy_draft` SET `deleted_at` = ? WHERE `id` = ? AND `rev` = 0', [now, r.id])
+  }
 }
 
 /** 调 LLM；非法 JSON 重试 1 次（FR-G4） */
@@ -670,9 +733,7 @@ export async function acceptVariant(args: VariantArgs): Promise<{ generationId: 
     db,
   )
 
-  await enqueue(QUEUE_NAMES.copyGenerate, 'variant', { generationId }, { jobId: generationId, attempts: 1 }).catch(
-    (e) => logger.error({ err: (e as Error).message, generationId }, 'copy.variant.enqueue_failed'),
-  )
+  await enqueueOrFail(generationId, 'variant')
   return { generationId }
 }
 
@@ -771,6 +832,7 @@ export async function applyVariant(
   mode: 'replace' | 'new_draft',
   confirmChanged: boolean,
   operator: string,
+  confirmReedit = false,
 ): Promise<{ draftId: string; versionId: string; changed: boolean }> {
   const db = getDb()
   const { getVariant } = await import('./repo.js')
@@ -781,6 +843,8 @@ export async function applyVariant(
   const copy = await requireCopy(v.copyId, db)
   if (copy.status === 'archived') throw err.invalidState('该文案已归档，不可操作')
   if (copy.status === 'in_review') throw err.copyLocked()
+  // 替换会改动已通过文案的稿内容并降回草稿，与普通编辑一样须先确认（FR-R6）；另存新稿不改原稿，无需确认
+  if (mode === 'replace') assertApprovedEditConfirmed(copy, confirmReedit)
 
   const draftRow = await db.get<Record<string, any>>(
     'SELECT * FROM `copy_draft` WHERE `id` = ? AND `deleted_at` IS NULL',
@@ -798,13 +862,6 @@ export async function applyVariant(
   }
 
   if (mode === 'new_draft') {
-    const current = await db.get<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM `copy_draft` WHERE `copy_id` = ? AND `deleted_at` IS NULL',
-      [copy.id],
-    )
-    if (Number(current?.c ?? 0) >= config.copy.maxDrafts) {
-      throw err.draftLimit(`该文案稿数已达上限 ${config.copy.maxDrafts}`, { max: config.copy.maxDrafts })
-    }
     const newSections = sections.map((s) => ({ ...s }))
     newSections[idx] = { ...newSections[idx]!, text: v.text }
     const wc = countSectionsWords(draftRow.title ?? null, newSections)
@@ -818,6 +875,7 @@ export async function applyVariant(
         origin: 'variant',
         generationId: v.generationId,
         createdBy: operator,
+        maxDrafts: config.copy.maxDrafts,
       },
       db,
     )

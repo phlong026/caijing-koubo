@@ -68,14 +68,16 @@ export function assertWritable(copy: CopyRow): void {
   }
 }
 
-/** 已通过状态下编辑需显式确认（FR-R6 / W11） */
-export function assertEditableWithConfirm(copy: CopyRow, confirmReedit?: boolean): void {
-  assertWritable(copy)
+/**
+ * 已通过的文案改稿内容须显式确认（FR-R6 / W11）：普通编辑、恢复版本、用变体替换段落共用。
+ * 前端识别 409 + requiresConfirm 后弹确认，再带 confirmReedit 重试。
+ */
+export function assertApprovedEditConfirmed(copy: CopyRow, confirmReedit?: boolean): void {
   if (copy.status === 'approved' && !confirmReedit) {
-    throw err.invalidState(
-      `该文案已审核通过（v${copy.approvedVersionId ? '已通过版本' : '-'}）。修改后须重新审核，已生成的视频仍绑定原版本。请确认后再编辑。`,
-      { requiresConfirm: true, approvedVersionId: copy.approvedVersionId },
-    )
+    throw err.invalidState('该文案已审核通过，修改后须重新审核，已生成的视频仍绑定原通过版本。请确认后再修改', {
+      requiresConfirm: true,
+      approvedVersionId: copy.approvedVersionId,
+    })
   }
 }
 
@@ -136,7 +138,8 @@ export async function createCopyFromArticleOrManual(input: CreateCopyInput): Pro
 
   // 人物校验（FR-X2：不存在 / 归档 / 停用 / 授权失效分别给出原因）与所属线冗余值
   await assertPersonasUsable(personaIds, db, 'copy')
-  const personas = await getPersonasByIds(personaIds)
+  // getPersonasByIds 按「线、名字」排序返回，不能按下标与 copyIds 配对，必须按 id 取
+  const personaById = new Map((await getPersonasByIds(personaIds)).map((p) => [p.id, p]))
 
   let sourceText = String(input.sourceText ?? '').trim()
   let refType: string | null = null
@@ -197,11 +200,12 @@ export async function createCopyFromArticleOrManual(input: CreateCopyInput): Pro
     copyIds.push(...r.copyIds)
 
     // 3) 补齐扩展列：line / source_text（manual 的补充资料）/ source_ref_*
+    //    copyIds 与 personaIds 同序（createDraftsFromTopics 按 personaIds 逐个展开）
     for (let i = 0; i < copyIds.length; i++) {
-      const p = personas[i]!
+      const p = personaById.get(personaIds[i]!)
       await t.run(
         `UPDATE \`copy\` SET \`line\` = ?, \`source_text\` = ?, \`source_ref_type\` = ?, \`source_ref_id\` = ?, \`updated_at\` = ? WHERE \`id\` = ?`,
-        [p.line, sourceText || null, refType, refId, now, copyIds[i]],
+        [p?.line ?? null, sourceText || null, refType, refId, now, copyIds[i]],
       )
     }
   })
@@ -239,7 +243,6 @@ export interface CopyDetailDraft {
   latestVersionNo: number
   hasSubmitted: boolean
   origin: string
-  isFinal?: boolean
   generationId?: string | null
   updatedAt: string | null
 }
@@ -356,7 +359,6 @@ export async function getCopyDetail(copyId: string): Promise<CopyDetail> {
       hasSubmitted: d.hasSubmitted,
       origin: d.origin,
       generationId: d.generationId,
-      isFinal: (copy.settings?.finalSelection as any)?.draftId === d.id && (copy.settings?.finalSelection as any)?.contentHash === contentHash(d.title, d.sections),
       updatedAt: d.updatedAt,
     })),
     // 当前稿需与列表项同构，前端 switchEditor 读 sections/title/rev
@@ -485,6 +487,7 @@ export async function createDraft(
       wordCount: words,
       origin,
       createdBy: operator,
+      maxDrafts: max,
     },
     db,
   )
@@ -508,13 +511,8 @@ export async function saveDraftContent(
   const db = getDb()
   const copy = await requireCopy(copyId, db)
   assertWritable(copy)
-  if (copy.status === 'approved' && !opts.allowApprovedEdit) {
-    // 通过后编辑须显式确认（FR-R6）：由路由层在确认后传 allowApprovedEdit 并降级状态
-    throw err.invalidState('该文案已审核通过，修改后须重新审核，请确认后再编辑', {
-      requiresConfirm: true,
-      approvedVersionId: copy.approvedVersionId,
-    })
-  }
+  // 通过后编辑须显式确认（FR-R6）：由路由层在确认后传 allowApprovedEdit 并降级状态
+  assertApprovedEditConfirmed(copy, opts.allowApprovedEdit)
 
   const draft = await getDraft(copyId, draftId, db)
   if (!draft) throw err.notFound('稿不存在')
@@ -678,10 +676,12 @@ export async function restoreVersion(
   copyId: string,
   versionId: string,
   operator: string,
+  confirmReedit = false,
 ): Promise<{ version: VersionRow; draft: DraftRow }> {
   const db = getDb()
   const copy = await requireCopy(copyId, db)
   assertWritable(copy)
+  assertApprovedEditConfirmed(copy, confirmReedit)
 
   const { getVersion } = await import('./repo.js')
   const target = await getVersion(versionId, db)
@@ -837,7 +837,6 @@ export async function precheck(copyId: string, draftId: string): Promise<Prechec
   const personaStatus = persona ? await derivePersonaStatus(persona) : null
 
   const checks: PrecheckCheck[] = [
-    ...((copy.settings?.finalSelection as any)?.draftId ? [{ key: 'finalSelection', label: '提审内容与定稿版本一致', level: 'hard' as const, pass: (copy.settings!.finalSelection as any).draftId === draftId && (copy.settings!.finalSelection as any).contentHash === contentHash(draft.title, draft.sections), message: '如果改过定稿内容或切换了候选稿，请先重新定稿，再提交审核' }] : []),
     { key: 'duration', label: `口播时长目标 ${durationRange.min === durationRange.max ? durationRange.max : `${durationRange.min}–${durationRange.max}`} 秒`, level: 'soft', pass: durationOk, message: durationOk ? `正文预计 ${estSeconds} 秒` : estSeconds > durationRange.max ? `预计超时 ${(estSeconds-durationRange.max).toFixed(1)} 秒；建议压缩正文后复检` : `预计少于目标 ${(durationRange.min-estSeconds).toFixed(1)} 秒；可适当补充解释` },
     { key: 'sourceReview', label: '素材已人工核对', level: 'soft', pass: (copy.settings?.sourceReview as any)?.confirmed === true && (copy.settings?.sourceReview as any)?.originalHash === contentHash(copy.sourceText, []), message: (copy.settings?.sourceReview as any)?.confirmed ? '素材已确认，新稿中的新增事实仍需核对' : '请在「准备素材」中核对名称、数字和引用' },
     {

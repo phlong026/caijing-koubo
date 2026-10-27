@@ -162,6 +162,25 @@ if (!genOnly) {
     )
   }
 
+  // 一次选多条线的人物：每条文案的 line 必须是自己人物的线（人物查询按线排序，不能按下标配对）
+  const mixed = await req('POST', '/copy', {
+    source: 'manual',
+    personaIds: [basicId, managerId, kosId],
+    title: uniq('多人物生产线'),
+    sourceText: '多人物创建时校验生产线归属。',
+  })
+  const mixedLines = await Promise.all(
+    (mixed.data?.copyIds ?? []).map(async (id: string) => {
+      const d = await req('GET', `/copy/${id}`)
+      return [d.data?.persona?.line, d.data?.copy?.line]
+    }),
+  )
+  check(
+    '多人物新建文案：每条文案的生产线与其人物一致',
+    mixedLines.length === 3 && mixedLines.every(([p, c]) => !!p && p === c),
+    mixedLines,
+  )
+
   /* ──────────────────── 2. AC-E2 并发保存乐观锁 ──────────────────── */
 
   console.log('\n[2] AC-E2 并发保存 → COPY_DRAFT_CONFLICT')
@@ -262,6 +281,11 @@ if (!genOnly) {
           { canSubmit: softPc.data?.canSubmit, hits: (softPc.data?.complianceHits ?? []).map((h: any) => h.level) },
         )
       }
+      // 编辑词条与新增同一套校验：改成已存在的词 409、改成空白 400（之前分别是 500 和静默保存）
+      const dupPut = await req('PUT', `/compliance-words/${cw.data?.id}`, { word: '保本' })
+      check('编辑词条为已存在的词 409', dupPut.status === 409, { status: dupPut.status, code: dupPut.error?.code })
+      const blankPut = await req('PUT', `/compliance-words/${cw.data?.id}`, { word: '   ' })
+      check('编辑词条为空白 400', blankPut.status === 400, { status: blankPut.status, code: blankPut.error?.code })
       await req('DELETE', `/compliance-words/${cw.data?.id}`)
     }
 
@@ -394,6 +418,11 @@ if (!genOnly) {
     })
     check('提交成功取得审核单', sub.ok === true && !!sub.data?.submissionId, sub.error?.code)
     if (sub.ok) {
+      const lockedPatch = await req('PATCH', `/copy/${r8.copyId}`, { title: uniq('审核中改标题') })
+      check('审核中修改标题 / 设置 409 COPY_LOCKED', lockedPatch.status === 409 && lockedPatch.error?.code === 'COPY_LOCKED', {
+        status: lockedPatch.status,
+        code: lockedPatch.error?.code,
+      })
       const wd = await req('POST', `/copy/${r8.copyId}/withdraw`)
       check('gate 阶段撤回成功', wd.ok === true, wd.error?.code)
       const afterWd = await req('GET', `/copy/${r8.copyId}`)
@@ -458,6 +487,25 @@ if (!genOnly) {
     check('文案状态变为 approved', after.data?.copy?.status === 'approved', after.data?.copy?.status)
     const again = await req('POST', `/review/submissions/${sid}/manual-decision`, { result: 'approved' })
     check('已裁决的审核单不能重复裁决 409', again.status === 409, again.status)
+
+    // 已通过的文案恢复历史版本：与普通编辑一样须先确认（FR-R6），确认后进入修订中
+    const vers = (await req('GET', `/copy/${mr.copyId}/versions`)).data ?? []
+    const target = vers[vers.length - 1]
+    if (target?.id) {
+      const noConfirm = await req('POST', `/copy/versions/${target.id}/restore`, {})
+      check('已通过文案恢复版本未确认 409 requiresConfirm', noConfirm.status === 409 && noConfirm.error?.details?.requiresConfirm === true, {
+        status: noConfirm.status,
+        details: noConfirm.error?.details,
+      })
+      const stillApproved = await req('GET', `/copy/${mr.copyId}`)
+      check('未确认时文案仍为 approved', stillApproved.data?.copy?.status === 'approved', stillApproved.data?.copy?.status)
+      const confirmed = await req('POST', `/copy/versions/${target.id}/restore`, { confirmReedit: true })
+      const revising = await req('GET', `/copy/${mr.copyId}`)
+      check('确认后恢复成功并进入修订中', confirmed.ok === true && revising.data?.copy?.derivedStatus === 'revising', {
+        ok: confirmed.ok,
+        status: revising.data?.copy?.derivedStatus,
+      })
+    }
   }
 
   /* ──────────────────── 6. AC-G4 非法 JSON 无半截稿 ──────────────────── */
@@ -514,7 +562,9 @@ if (!genOnly) {
     })
     const drafts: any[] = (await req('GET', `/copy/${multi.copyId}`)).data?.drafts ?? []
     const nos = drafts.map((d) => d.draftNo)
-    check('稿号互不重复', new Set(nos).size === nos.length && nos.length === 4, nos)
+    // 新建时的空白稿 1 从未编辑，生成出 3 份后自动移除，只剩 3 份生成稿
+    check('稿号互不重复', new Set(nos).size === nos.length && nos.length === 3, nos)
+    check('未编辑的空白初始稿在生成后自动移除', !nos.includes(1), nos)
 
     // 审核桩接口守卫：非法关卡名被拒；已裁决的审核单不再接受进度回写
     const aiDraft = done?.drafts?.[0]

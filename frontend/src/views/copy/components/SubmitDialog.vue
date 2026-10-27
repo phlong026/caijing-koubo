@@ -19,12 +19,11 @@
     </template>
     <div v-if="loading" class="py-14 text-center">
       <a-spin />
-      <div class="mw-subtle mt-3">正在检查字数、合规与查重…</div>
     </div>
 
     <template v-else-if="result">
       <p class="mw-subtle mb-3">
-        {{ store.drafts.find((d) => d.id === result?.draftId)?.name }} · {{ store.editor?.title }}
+        提交当前稿：{{ store.drafts.find((d) => d.id === result?.draftId)?.name }} · {{ store.editor?.title }}
       </p>
       <!-- 结论条 -->
       <div
@@ -65,7 +64,6 @@
         </div>
       </div>
 
-      <p class="mw-subtle mb-4">实际时长以配音为准，风险提示将单独显示为字幕。</p>
       <!-- 检查项 -->
       <div class="flex items-center justify-between mb-2">
         <span class="mw-subtle"
@@ -151,10 +149,8 @@
         </div>
       </div>
 
-      <div class="precheck-boundary">
-        提交后还需人工审核。<a-checkbox v-if="hasWarnings" v-model="acknowledged"
-          >我已了解以上提醒，继续提交</a-checkbox
-        >
+      <div v-if="hasWarnings" class="precheck-boundary">
+        <a-checkbox v-model="acknowledged">我已了解以上提醒，继续提交</a-checkbox>
       </div>
     </template>
 
@@ -183,7 +179,6 @@ const store = useCopyStore()
 function checkStep(key: string): 'source' | 'settings' | 'write' | undefined {
   const steps: Partial<Record<string, 'source' | 'settings' | 'write'>> = {
     sourceReview: 'source',
-    finalSelection: 'write',
     duration: 'write',
     wordRange: 'write',
     content: 'write',
@@ -242,7 +237,7 @@ async function onSubmit(): Promise<void> {
       draftId: store.editor.draftId,
       rev: store.editor.rev,
     })
-    Message.success(`已提交审核（第 ${r.versionNo} 版），正在自动预检…`)
+    Message.success(`已提交审核（第 ${r.versionNo} 版）`)
     emit('update:visible', false)
     emit('submitted', r.submissionId)
     await store.load(store.copy.id)
