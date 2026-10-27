@@ -474,8 +474,6 @@ function onVariant(sectionIndex: number): void {
   variantVisible.value = true
 }
 
-/* ── 提交 ── */
-
 /* ── 提示词预览 ── */
 
 const promptVisible = ref(false)
