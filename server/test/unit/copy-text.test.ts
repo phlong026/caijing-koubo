@@ -173,6 +173,25 @@ describe('合规扫描（FR-R1）', () => {
     expect(scanCompliance(sec('听到“保本”两个字，先问依据在哪'), words)).toEqual([])
   })
 
+  it('肯定语气与逗号后的反问不能豁免承诺（P0 回归）', () => {
+    const seedLike: ComplianceWordRow[] = [
+      ...words,
+      { word: '稳赚', level: 'hard', category: '收益承诺' },
+      { word: '必涨', level: 'hard', category: '确定性判断' },
+      { word: '闭眼买', level: 'hard', category: '投资建议' },
+    ]
+    const hard = (t: string) => scanCompliance(sec(t), seedLike).filter((h) => h.level === 'hard').map((h) => h.word)
+    expect(hard('这只基金真的稳赚，赶紧上车。')).toEqual(['稳赚'])
+    expect(hard('这只基金保本稳赚，你还在等什么？')).toEqual(['保本', '稳赚'])
+    expect(hard('现在入场必涨，怎么能错过？')).toEqual(['必涨'])
+    expect(hard('闭眼买就完了，还犹豫啥？')).toEqual(['闭眼买'])
+    expect(hard('买它稳赚吧，大家跟上。')).toEqual(['稳赚'])
+    // 真正的问句与辟谣仍放行
+    expect(hard('债基真的稳赚不赔吗？')).toEqual([])
+    expect(hard('定投一定稳赚吗')).toEqual([])
+    expect(hard('有人说闭眼买就能赚？别信。')).toEqual([])
+  })
+
   it('「第一」用作序号放行，用作排名仍命中', () => {
     expect(scanCompliance(sec('第一，先看费率。'), words)).toEqual([])
     expect(scanCompliance(sec('第一步，先开户。'), words)).toEqual([])

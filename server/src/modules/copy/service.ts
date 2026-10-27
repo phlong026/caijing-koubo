@@ -136,7 +136,8 @@ export async function createCopyFromArticleOrManual(input: CreateCopyInput): Pro
 
   // 人物校验（FR-X2：不存在 / 归档 / 停用 / 授权失效分别给出原因）与所属线冗余值
   await assertPersonasUsable(personaIds, db, 'copy')
-  const personas = await getPersonasByIds(personaIds)
+  // getPersonasByIds 按「线、名字」排序返回，不能按下标与 copyIds 配对，必须按 id 取
+  const personaById = new Map((await getPersonasByIds(personaIds)).map((p) => [p.id, p]))
 
   let sourceText = String(input.sourceText ?? '').trim()
   let refType: string | null = null
@@ -197,11 +198,12 @@ export async function createCopyFromArticleOrManual(input: CreateCopyInput): Pro
     copyIds.push(...r.copyIds)
 
     // 3) 补齐扩展列：line / source_text（manual 的补充资料）/ source_ref_*
+    //    copyIds 与 personaIds 同序（createDraftsFromTopics 按 personaIds 逐个展开）
     for (let i = 0; i < copyIds.length; i++) {
-      const p = personas[i]!
+      const p = personaById.get(personaIds[i]!)
       await t.run(
         `UPDATE \`copy\` SET \`line\` = ?, \`source_text\` = ?, \`source_ref_type\` = ?, \`source_ref_id\` = ?, \`updated_at\` = ? WHERE \`id\` = ?`,
-        [p.line, sourceText || null, refType, refId, now, copyIds[i]],
+        [p?.line ?? null, sourceText || null, refType, refId, now, copyIds[i]],
       )
     }
   })

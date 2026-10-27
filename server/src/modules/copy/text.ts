@@ -271,11 +271,12 @@ function isNegated(text: string, start: number): boolean {
  * 疑问 / 反问 / 引述语境白名单（AC-G5 回归暴露）。
  * 「债基真的**稳赚不赔**吗？」「听到"**保本稳赚**"，先问一句依据在哪」
  * 是**辟谣式反问与引述**，语义与「承诺稳赚」完全相反，不能判违规。
- * 判定口径：命中词落在疑问句里（紧邻前后出现「吗 / 呢 / 真的…吗 / 是不是 / …？」），
- * 或被引号包裹（「」/『』/“”/""），即视为未作出承诺。
+ * 判定口径：命中词所在**分句**以问号收尾或以「吗 / 呢 / 嘛」结束，或被引号包裹（「」/『』/“”/""）。
+ * 分句以逗号等标点切分：「保本稳赚，你还在等什么？」后半句的问号不能豁免前半句的承诺；
+ * 「真的稳赚」「稳赚吧」是肯定语气，不再豁免。
  */
-const QUESTION_SUFFIX = /^(吗|呢|么|嘛|吧)/
-const QUESTION_PREFIX = /(是不是|会不会|能不能|该不该|要不要|真的|难道|是否|有无)$/
+const CLAUSE_BREAKS = '，,。！!；;：:\n？?'
+const QUESTION_PARTICLE_END = /(吗|呢|嘛)\s*$/
 const QUOTE_PAIRS: Array<[string, string]> = [
   ['「', '」'],
   ['『', '』'],
@@ -300,33 +301,22 @@ function isQuoted(text: string, start: number, end: number): boolean {
   return false
 }
 
-/** 命中处是否处于疑问 / 反问语境：看本句内该词之后是否以问号收尾，或紧跟疑问语气词 */
-function isQuestion(text: string, start: number, end: number): boolean {
-  // 句界（中英文句末标点 + 换行）
-  const sentStart = Math.max(
-    0,
-    ...[...'。！!；;\n'].map((p) => text.lastIndexOf(p, start) + 1).filter((x) => x > 0).concat(0),
-  )
-  const nextEnd = [...'。！!；;\n'].map((p) => text.indexOf(p, end)).filter((x) => x >= 0)
-  const sentEnd = nextEnd.length ? Math.min(...nextEnd) : text.length
-  const sentence = text.slice(sentStart, sentEnd + 1)
-
-  // 1) 词组后紧跟疑问语气词：「稳赚不赔吗」「保本吧」
-  if (QUESTION_SUFFIX.test(text.slice(end, end + 2))) return true
-  // 2) 词组前是「是不是 / 会不会 / 真的 / 是否」等疑问引导词
-  if (QUESTION_PREFIX.test(text.slice(Math.max(0, start - 4), start))) return true
-  // 3) 本句以问号收尾（反问句）
-  if (/[?？]/.test(text.slice(end, sentEnd + 2))) return true
-  // 4) 整句是「…是什么 / 为什么…」这类设问标题
-  if (/[?？]/.test(sentence) && /(是什么|为什么|怎么|如何|多少|哪|谁)/.test(sentence)) return true
-  return false
+/** 命中处所在分句是否为问句：分句以问号收尾，或以疑问语气词结束 */
+function isQuestion(text: string, end: number): boolean {
+  let stop = text.length
+  for (const p of CLAUSE_BREAKS) {
+    const at = text.indexOf(p, end)
+    if (at >= 0 && at < stop) stop = at
+  }
+  if (text[stop] === '?' || text[stop] === '？') return true
+  return QUESTION_PARTICLE_END.test(text.slice(end, stop))
 }
 
 /** 该命中是否属于「非承诺」语境（否定 / 引述 / 疑问反问） */
 function isNonClaim(text: string, start: number, end: number): boolean {
   if (isNegated(text, start)) return true
   if (isQuoted(text, start, end)) return true
-  return isQuestion(text, start, end)
+  return isQuestion(text, end)
 }
 
 /**

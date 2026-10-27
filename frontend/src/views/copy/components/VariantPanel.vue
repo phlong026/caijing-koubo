@@ -155,21 +155,39 @@ function onApply(v: Variant, mode: 'replace' | 'new_draft'): void {
       mode === 'replace' ? '原段落内容会被覆盖，可通过「历史版本」找回。' : '会用该写法生成一份新稿，原稿保持不变。',
     okText: '确认',
     cancelText: '取消',
-    onOk: async () => {
-      applying.value = v.id
-      try {
-        await copyApi.applyVariant(v.id, { mode })
-        Message.success(mode === 'replace' ? '已替换' : '已另存为新稿')
-        emit('update:visible', false)
-        await store.load(store.copy!.id)
-        store.syncEditorFromCurrent()
-      } catch (e) {
-        Message.error((e as Error).message)
-      } finally {
-        applying.value = null
-      }
-    },
+    onOk: () => applyVariant(v, mode, false),
   })
+}
+
+async function applyVariant(v: Variant, mode: 'replace' | 'new_draft', confirmChanged: boolean): Promise<void> {
+  if (!store.copy) return
+  applying.value = v.id
+  try {
+    // 后端按已保存内容判断段落是否被改过，先落盘本地改动
+    if (store.isDirty && (await store.save()) !== 'ok') {
+      Message.warning('请先保存当前稿')
+      return
+    }
+    const r = await copyApi.applyVariant(v.id, { mode, confirmChanged })
+    if (r.requiresConfirm) {
+      Modal.confirm({
+        title: '这一段在生成变体后已修改',
+        content: '继续将用变体覆盖修改后的内容。',
+        okText: '继续',
+        cancelText: '取消',
+        onOk: () => applyVariant(v, mode, true),
+      })
+      return
+    }
+    Message.success(mode === 'replace' ? '已替换' : '已另存为新稿')
+    emit('update:visible', false)
+    await store.load(store.copy.id)
+    store.syncEditorFromCurrent()
+  } catch (e) {
+    Message.error((e as Error).message)
+  } finally {
+    applying.value = null
+  }
 }
 </script>
 

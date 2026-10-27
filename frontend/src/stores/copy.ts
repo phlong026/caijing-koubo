@@ -470,30 +470,6 @@ export const useCopyStore = defineStore('copy', () => {
     precheck.value = null
   }
 
-  function addSection(): void {
-    if (!editor.value) return
-    editor.value.sections.push({ label: `段落 ${editor.value.sections.length + 1}`, text: '' })
-    markDirty()
-  }
-
-  function removeSection(index: number): void {
-    if (!editor.value) return
-    editor.value.sections.splice(index, 1)
-    markDirty()
-    precheck.value = null
-  }
-
-  /** 段落上移 / 下移（W4 工具栏「段落增删移动」） */
-  function moveSection(index: number, delta: -1 | 1): void {
-    const list = editor.value?.sections
-    const to = index + delta
-    if (!list || to < 0 || to >= list.length) return
-    const [item] = list.splice(index, 1)
-    list.splice(to, 0, item!)
-    markDirty()
-    precheck.value = null
-  }
-
   function updateTitle(title: string): void {
     if (!editor.value) return
     editor.value.title = title
@@ -901,9 +877,6 @@ export const useCopyStore = defineStore('copy', () => {
     markDirty,
     updateSection,
     updateTitle,
-    addSection,
-    removeSection,
-    moveSection,
     undo,
     redo,
     canUndo,
