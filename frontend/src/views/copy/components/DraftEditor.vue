@@ -67,7 +67,7 @@
 
     <!-- 空态 -->
     <div v-if="!editor" class="py-16">
-      <a-empty description="暂无稿件，点击 + 新建一份，或用左侧「生成文案」">
+      <a-empty description="暂无稿件">
         <a-button v-if="store.canEdit" type="primary" @click="onNewDraft">新建空白稿</a-button>
       </a-empty>
     </div>
@@ -214,8 +214,7 @@
       </div>
     </template>
     <a-modal :visible="!!pendingDraft" title="当前稿有未保存改动" @cancel="cancelSwitch"
-      ><p>可以先保存再切换，也可以留在当前稿继续编辑。</p>
-      <template #footer
+      ><template #footer
         ><a-button @click="cancelSwitch">继续编辑</a-button
         ><a-button status="danger" @click="confirmSwitch(true)">放弃并切换</a-button
         ><a-button type="primary" :loading="editor?.saving" @click="confirmSwitch(false)"

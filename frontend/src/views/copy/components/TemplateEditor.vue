@@ -3,8 +3,7 @@
     <a-tabs v-model:active-key="tab" size="medium" class="mw-tabs">
       <!-- 模板 -->
       <a-tab-pane key="templates" title="内容模板">
-        <div class="flex items-center justify-between mb-3">
-          <span class="mw-subtle">模板决定文案的结构与硬性约束，改动后新生成即生效</span>
+        <div class="flex items-center justify-end mb-3">
           <a-button size="small" @click="editTemplate(null)">
             <template #icon><icon-plus /></template>
             新建
@@ -16,7 +15,6 @@
               <div class="flex items-center gap-2 mb-1">
                 <span class="text-[13.5px] font-medium text-[#131f38]">{{ t.name }}</span>
                 <a-tag v-if="t.isBuiltin" size="small">内置</a-tag>
-                <span class="mw-subtle">rev {{ t.revision }}</span>
                 <span class="flex-1" />
                 <a-link @click="editTemplate(t)">编辑</a-link>
                 <a-link v-if="!t.isBuiltin" status="danger" @click="removeTemplate(t)">删除</a-link>
@@ -29,8 +27,7 @@
 
       <!-- 风格 -->
       <a-tab-pane key="styles" title="表达风格">
-        <div class="flex items-center justify-between mb-3">
-          <span class="mw-subtle">风格按线隔离：管理人与 KOS 的风格互不通用</span>
+        <div class="flex items-center justify-end mb-3">
           <a-button size="small" @click="editStyle(null)">
             <template #icon><icon-plus /></template>
             新建
@@ -56,8 +53,7 @@
 
       <!-- 合规词库 -->
       <a-tab-pane key="words" title="合规词库">
-        <div class="flex items-center justify-between mb-3">
-          <span class="mw-subtle">硬禁用词会阻断提交；软提示词仅提示不拦截</span>
+        <div class="flex items-center justify-end mb-3">
           <a-button size="small" @click="editWord(null)">
             <template #icon><icon-plus /></template>
             添加
@@ -124,9 +120,9 @@
         <a-form-item label="名称" required><a-input v-model="styleModal.name" /></a-form-item>
         <a-form-item label="适用线">
           <a-select v-model="styleLineModel" allow-clear placeholder="不选表示通用">
-            <a-option value="manager">管理人</a-option>
+            <a-option value="manager">经理 IP</a-option>
             <a-option value="kos">员工 KOS</a-option>
-            <a-option value="persona">素人</a-option>
+            <a-option value="persona">素人矩阵</a-option>
           </a-select>
         </a-form-item>
         <a-form-item label="一句话说明"><a-input v-model="styleModal.description" /></a-form-item>
@@ -224,7 +220,7 @@ async function reloadAll(): Promise<void> {
 }
 
 function lineLabel(l: CopyLine | null): string {
-  return { manager: '管理人', kos: '员工 KOS', persona: '素人' }[l as string] ?? '通用'
+  return { manager: '经理 IP', kos: '员工 KOS', persona: '素人矩阵' }[l as string] ?? '通用'
 }
 
 /** a-select 不接受 null，空值用 undefined 表示「通用」 */

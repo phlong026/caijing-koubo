@@ -16,9 +16,9 @@
         <a-option v-for="(label, key) in statusOptions" :key="key" :value="key">{{ label }}</a-option>
       </a-select>
       <a-select v-model="line" size="small" placeholder="线" allow-clear class="!w-[90px]" @change="reload">
-        <a-option value="manager">管理人</a-option>
+        <a-option value="manager">经理 IP</a-option>
         <a-option value="kos">员工 KOS</a-option>
-        <a-option value="persona">素人</a-option>
+        <a-option value="persona">素人矩阵</a-option>
       </a-select>
     </div>
 
@@ -72,7 +72,6 @@
               :label="`${p.name}（${p.lineLabel || p.line}）`"
             />
           </a-select>
-          <div class="mw-subtle mt-1">选多位人物时，每位各生成一条文案</div>
         </a-form-item>
 
         <a-form-item label="创作方式">
@@ -94,7 +93,7 @@
             :auto-size="{ minRows: 4, maxRows: 10 }"
             :max-length="5000"
             show-word-limit
-            placeholder="把你的想法、要点或完整素材贴进来；不填则只按标题与关键词起草"
+            placeholder="想法、要点或完整素材"
           />
         </a-form-item>
 
@@ -102,7 +101,6 @@
         <a-form-item v-else label="文章文件">
           <div class="w-full">
             <a-upload :auto-upload="false" :limit="1" accept=".docx,.pdf,.txt,.md" @change="onFileChange" />
-            <div class="mw-subtle mt-1">支持 .docx / .pdf / .txt / .md，单个文件不超过 10MB</div>
           </div>
         </a-form-item>
 
