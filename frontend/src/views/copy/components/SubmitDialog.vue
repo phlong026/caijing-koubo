@@ -23,7 +23,7 @@
 
     <template v-else-if="result">
       <p class="mw-subtle mb-3">
-        {{ store.drafts.find((d) => d.id === result?.draftId)?.name }} · {{ store.editor?.title }}
+        提交当前稿：{{ store.drafts.find((d) => d.id === result?.draftId)?.name }} · {{ store.editor?.title }}
       </p>
       <!-- 结论条 -->
       <div
@@ -179,7 +179,6 @@ const store = useCopyStore()
 function checkStep(key: string): 'source' | 'settings' | 'write' | undefined {
   const steps: Partial<Record<string, 'source' | 'settings' | 'write'>> = {
     sourceReview: 'source',
-    finalSelection: 'write',
     duration: 'write',
     wordRange: 'write',
     content: 'write',

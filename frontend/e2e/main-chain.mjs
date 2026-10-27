@@ -111,9 +111,9 @@ await step('生成文案 → 正文就绪', async () => {
     .waitFor({ timeout: 10000 })
 })
 
-await step('定稿当前稿', async () => {
-  await page.getByRole('button', { name: '定稿当前稿' }).click()
-  await page.locator('.final-status', { hasText: '已选用' }).waitFor({ timeout: 8000 })
+await step('选稿：生成结果即当前稿（提交时锁定，无需单独定稿）', async () => {
+  await page.getByRole('button', { name: /展开候选稿/ }).click()
+  await page.locator('.candidate-card.selected').getByRole('button', { name: '当前稿' }).waitFor({ timeout: 8000 })
 })
 
 await step('提交前检查 → 确认提醒 → 提交审核', async () => {

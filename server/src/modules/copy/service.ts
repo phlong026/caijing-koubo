@@ -243,7 +243,6 @@ export interface CopyDetailDraft {
   latestVersionNo: number
   hasSubmitted: boolean
   origin: string
-  isFinal?: boolean
   generationId?: string | null
   updatedAt: string | null
 }
@@ -358,7 +357,6 @@ export async function getCopyDetail(copyId: string): Promise<CopyDetail> {
       hasSubmitted: d.hasSubmitted,
       origin: d.origin,
       generationId: d.generationId,
-      isFinal: (copy.settings?.finalSelection as any)?.draftId === d.id && (copy.settings?.finalSelection as any)?.contentHash === contentHash(d.title, d.sections),
       updatedAt: d.updatedAt,
     })),
     // 当前稿需与列表项同构，前端 switchEditor 读 sections/title/rev
@@ -830,7 +828,6 @@ export async function precheck(copyId: string, draftId: string): Promise<Prechec
   const personaStatus = persona ? await derivePersonaStatus(persona) : null
 
   const checks: PrecheckCheck[] = [
-    ...((copy.settings?.finalSelection as any)?.draftId ? [{ key: 'finalSelection', label: '提审内容与定稿版本一致', level: 'hard' as const, pass: (copy.settings!.finalSelection as any).draftId === draftId && (copy.settings!.finalSelection as any).contentHash === contentHash(draft.title, draft.sections), message: '如果改过定稿内容或切换了候选稿，请先重新定稿，再提交审核' }] : []),
     { key: 'duration', label: `口播时长目标 ${durationRange.min === durationRange.max ? durationRange.max : `${durationRange.min}–${durationRange.max}`} 秒`, level: 'soft', pass: durationOk, message: durationOk ? `正文预计 ${estSeconds} 秒` : estSeconds > durationRange.max ? `预计超时 ${(estSeconds-durationRange.max).toFixed(1)} 秒；建议压缩正文后复检` : `预计少于目标 ${(durationRange.min-estSeconds).toFixed(1)} 秒；可适当补充解释` },
     { key: 'sourceReview', label: '素材已人工核对', level: 'soft', pass: (copy.settings?.sourceReview as any)?.confirmed === true && (copy.settings?.sourceReview as any)?.originalHash === contentHash(copy.sourceText, []), message: (copy.settings?.sourceReview as any)?.confirmed ? '素材已确认，新稿中的新增事实仍需核对' : '请在「准备素材」中核对名称、数字和引用' },
     {

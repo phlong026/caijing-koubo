@@ -596,11 +596,31 @@ export async function runGeneration(generationId: string): Promise<void> {
       "UPDATE `copy` SET `current_draft_id` = ?, `updated_at` = ? WHERE `id` = ? AND `status` NOT IN ('in_review', 'archived')",
       [draftIds[0], toDb(utcNow()), copy.id],
     )
+    await dropUntouchedBlankDrafts(copy.id, draftIds)
   }
   if (warnings.length) {
     logger.info({ generationId, warnings }, 'copy.generate.warnings')
   }
   logger.info({ generationId, succeeded, failed, cost: totalCost, status }, 'copy.generate.finished')
+}
+
+/**
+ * 新建文案时会先放一份空白稿，生成出结果后它只会以「0 字候选」的形式留在候选里。
+ * 只删从未保存过（rev = 0）、从未提交、手动新建且内容为空的稿；运营动过的稿一律保留。
+ */
+async function dropUntouchedBlankDrafts(copyId: string, keep: string[]): Promise<void> {
+  const db = getDb()
+  const rows = await db.all<{ id: string; title: string | null; sections: string | null }>(
+    "SELECT `id`, `title`, `sections` FROM `copy_draft` WHERE `copy_id` = ? AND `deleted_at` IS NULL AND `origin` = 'manual' AND `rev` = 0 AND `has_submitted` = 0",
+    [copyId],
+  )
+  const now = toDb(utcNow())
+  for (const r of rows) {
+    if (keep.includes(r.id)) continue
+    const sections = jdec<Section[]>(r.sections, [])
+    if (sections.some((x) => String(x.text ?? '').trim())) continue
+    await db.run('UPDATE `copy_draft` SET `deleted_at` = ? WHERE `id` = ? AND `rev` = 0', [now, r.id])
+  }
 }
 
 /** 调 LLM；非法 JSON 重试 1 次（FR-G4） */

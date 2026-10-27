@@ -1,6 +1,7 @@
 <template>
   <section class="source-workbench" aria-label="来源材料">
-    <SourceIntake @created="(ids) => emit('created', ids)" @source-mode="(mode) => emit('source-mode', mode)">
+    <!-- 已有文案的第 1 步只展示素材与回看校对；新建文案统一走「文案任务 → 新建文案」 -->
+    <div class="source-material">
       <a-spin :loading="loading" class="w-full">
         <div class="source-overview" :class="{ 'has-cover': material?.videoId }">
           <button
@@ -36,7 +37,7 @@
           >查看来源网页 ↗</a
         >
       </a-spin>
-    </SourceIntake>
+    </div>
     <a-modal
       :visible="reviewOpen"
       title="素材回看与校对"
@@ -117,8 +118,6 @@ import { Message, Modal } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
 import { copyApi, type SourceMaterial, type SourceReview } from '@/api/copy'
 import { getVideoPlayback } from '@/api/benchmark'
-import SourceIntake from './SourceIntake.vue'
-const emit = defineEmits<{ (e: 'created', ids: string[]): void; (e: 'source-mode', mode: string): void }>()
 const store = useCopyStore()
 const material = ref<SourceMaterial | null>(null),
   loading = ref(false),

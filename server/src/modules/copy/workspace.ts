@@ -5,8 +5,8 @@ import { err } from '../../errors.js'
 import { config } from '../../config.js'
 import { toDb, utcNow } from '../../lib/time.js'
 import { recordOperation } from '../audit/repo.js'
-import { getDraft, getStyle, getTemplate, requireCopy, updateCopy } from './repo.js'
-import { assertWritable, saveDraftVersion } from './service.js'
+import { getStyle, getTemplate, requireCopy, updateCopy } from './repo.js'
+import { assertWritable } from './service.js'
 import { validateDuration } from './generation.js'
 import { contentHash, sanitizeText } from './text.js'
 
@@ -53,24 +53,6 @@ export function registerCopyWorkspaceRoutes(app: FastifyInstance): void {
     return ok({ sourceReview })
   })
 
-  app.post('/copy/:id/finalize', async req => {
-    const { id } = req.params as { id: string }
-    const b = (req.body ?? {}) as { draftId?: string; rev?: number }
-    const draft = b.draftId ? await getDraft(id, b.draftId) : null
-    if (!draft) throw err.notFound('候选稿不存在')
-    if (b.rev !== draft.rev) throw err.draftConflict()
-    if (!draft.title?.trim() || !draft.sections.some(s => s.text.trim())) throw err.badRequest('请先填写标题和正文')
-    const { version } = await saveDraftVersion(id, draft.id, req.operator)
-    const finalSelection = await getDb().tx(async db => {
-      const copy = await requireCopy(id, db)
-      assertWritable(copy)
-      const fresh = await getDraft(id, draft.id, db)
-      if (!fresh || fresh.rev !== b.rev || contentHash(fresh.title, fresh.sections) !== version.contentHash) throw err.draftConflict('定稿前内容已变化，请重新检查')
-      const selection = { draftId: draft.id, versionId: version.id, versionNo: version.versionNo, contentHash: version.contentHash, selectedAt: utcNow() }
-      await updateCopy(id, { current_draft_id: draft.id, settings: JSON.stringify({ ...copy.settings, finalSelection: selection }), updated_at: toDb(utcNow()) }, db)
-      return selection
-    })
-    await recordOperation({ operator: req.operator, action: 'copy.finalize', targetType: 'copy', targetId: id, detail: finalSelection })
-    return ok({ finalSelection })
-  })
+  // 「定稿」已与「提交审核」合并：提交即锁定当前稿为不可变版本，不再单独定稿。
+  // 老文案 settings 里残留的 finalSelection 不再参与任何判断。
 }
