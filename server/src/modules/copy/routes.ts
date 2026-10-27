@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { ok } from '../../app.js'
 import { registerCopyWorkspaceRoutes } from './workspace.js'
 import { err } from '../../errors.js'
-import { config } from '../../config.js'
+import { config, reviewMode } from '../../config.js'
 import { chat, resolveLlm } from '../../integrations/copy-llm/index.js'
 import { parsePaging, pageResult, toInt, jdec } from '../../lib/util.js'
 import { recordOperation } from '../audit/repo.js'
@@ -91,7 +91,7 @@ export function registerCopyLlmRoutes(app: FastifyInstance): void {
         ? r.dedicated
           ? '使用文案二创专用模型（COPY_LLM_*）'
           : config.copyLlm.baseUrl && config.copyLlm.apiKey && !config.copyLlm.complianceApproved
-            ? '已配置 COPY_LLM_* 但未获合规批准（COPY_LLM_COMPLIANCE_APPROVED），已回退百炼 DASHSCOPE_*'
+            ? '已配置 COPY_LLM_* 但 COPY_LLM_COMPLIANCE_APPROVED=false，已回退百炼 DASHSCOPE_*'
             : '未配置 COPY_LLM_*，已回退百炼 DASHSCOPE_*'
         : '未配置任何模型，当前走 mock 兜底输出',
     })
@@ -212,6 +212,8 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
         gates: GATE_LABELS,
       },
       // usable：派生状态可用（启用 + 授权有效）；新建文案只能选可用人物，否则创建时会被 409 拒绝
+      // 当前审核方式（校对台 / 审核桩 / 人工复核），前端据此提示提交后的去向
+      review: { mode: reviewMode() },
       personas: personas.map((p) => ({
         id: p.id,
         name: p.name,
@@ -689,7 +691,8 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
     // 审核桩联调参数（仅桩开启时有效）：在指定关卡模拟退回，用于 §9.8 场景 4
     let stubRejectAt: StubRejectSim | null = null
     if (body.stubRejectAt !== undefined) {
-      assertReviewStubEnabled()
+      // 校对台已接入时审核桩不推进新单，模拟参数不会生效，直接拒绝而不是静默忽略
+      if (reviewMode() !== 'stub') throw err.reviewStubDisabled('当前未使用审核桩（已关闭或已接入校对台），stubRejectAt 不可用')
       if (!['gate1', 'gate2', 'gate3'].includes(body.stubRejectAt)) {
         throw err.badRequest('stubRejectAt 只能是 gate1 / gate2 / gate3')
       }
@@ -1051,7 +1054,11 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
     const q = (req.query ?? {}) as { scope?: string; line?: string }
     const scope = q.scope === 'decided' ? 'decided' : 'pending'
     const line = q.line && ['manager', 'kos', 'persona'].includes(q.line) ? q.line : undefined
-    return ok({ items: await listReviewQueue({ scope, line }), stubEnabled: config.copy.reviewStubEnabled })
+    return ok({
+      items: await listReviewQueue({ scope, line }),
+      stubEnabled: config.copy.reviewStubEnabled,
+      mode: reviewMode(),
+    })
   })
 
   app.post('/review/submissions/:id/manual-decision', async (req) => {

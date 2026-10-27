@@ -285,6 +285,9 @@ watch(
 )
 
 const riskHint = computed(() => {
+  // 决策 D4：审核方（校对台 / 第 3 关）返回了风险话术就以它为准，否则预览模板话术
+  const fromReview = store.detail?.review?.riskHint?.trim()
+  if (fromReview) return fromReview
   const tpl = store.options?.templates.find(
     (t) => t.id === (store.copy?.settings as Record<string, unknown>)?.templateId,
   )

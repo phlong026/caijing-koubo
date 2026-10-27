@@ -127,8 +127,8 @@ async function main(): Promise<void> {
   )
   if (config.copyLlm.baseUrl && config.copyLlm.apiKey && !config.copyLlm.complianceApproved) {
     logger.warn(
-      'copy_llm.not_approved：已配置 COPY_LLM_*（第三方模型中转），但未设置 COPY_LLM_COMPLIANCE_APPROVED=true，' +
-        '文案生成已回退百炼。获得产品与合规书面批准后再开启。',
+      'copy_llm.disabled：已配置 COPY_LLM_*（第三方模型中转），但 COPY_LLM_COMPLIANCE_APPROVED=false，' +
+        '文案生成已回退百炼（决策 D1 默认走中转，确认是有意停用）。',
     )
   }
   if (config.copy.reviewStubEnabled) {

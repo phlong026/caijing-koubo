@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   extractReviewedText,
+  extractRiskText,
   mapExternalStatus,
   parseReviewedText,
   toSubmitText,
@@ -64,6 +65,20 @@ describe('extractReviewedText（取审核后的文案）', () => {
     expect(extractReviewedText({ status: 'approved' })).toBeNull()
     expect(extractReviewedText({ content_text: '   ' })).toBeNull()
     expect(extractReviewedText(null)).toBeNull()
+  })
+})
+
+describe('extractRiskText（校对台返回的风险话术，决策 D4 预留）', () => {
+  it('按配置的字段名取话术并去首尾空白', () => {
+    expect(extractRiskText({ risk_tip: '  市场有风险，投资需谨慎。 ' }, 'risk_tip')).toBe('市场有风险，投资需谨慎。')
+  })
+
+  it('未配置字段名、字段缺失或为空时返回 null（取稿回退模板话术）', () => {
+    expect(extractRiskText({ risk_tip: '话术' }, '')).toBeNull()
+    expect(extractRiskText({ other: '话术' }, 'risk_tip')).toBeNull()
+    expect(extractRiskText({ risk_tip: '   ' }, 'risk_tip')).toBeNull()
+    expect(extractRiskText({ risk_tip: 123 }, 'risk_tip')).toBeNull()
+    expect(extractRiskText(null, 'risk_tip')).toBeNull()
   })
 })
 

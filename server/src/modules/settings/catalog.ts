@@ -60,7 +60,7 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: 'COPY_LLM_UNIT_PRICE', label: '单价（元/千token）', type: 'number', group: 'copyllm', path: ['copyLlm', 'unitPrice'], desc: '分隔单价未配时按此计' },
   { key: 'COPY_LLM_INPUT_PRICE_PER_1K', label: '输入单价（元/千token）', type: 'number', group: 'copyllm', path: ['copyLlm', 'inputPricePer1k'] },
   { key: 'COPY_LLM_OUTPUT_PRICE_PER_1K', label: '输出单价（元/千token）', type: 'number', group: 'copyllm', path: ['copyLlm', 'outputPricePer1k'] },
-  { key: 'COPY_LLM_COMPLIANCE_APPROVED', label: '合规已批准（P0-4）', type: 'boolean', group: 'copyllm', path: ['copyLlm', 'complianceApproved'], desc: '生产环境须为 true 才启用第三方中转' },
+  { key: 'COPY_LLM_COMPLIANCE_APPROVED', label: '合规已批准（P0-4）', type: 'boolean', group: 'copyllm', path: ['copyLlm', 'complianceApproved'], desc: '缺省开启（决策 D1）；设为 false 时文案生成回退百炼' },
 
   /* ── 百炼 ── */
   { key: 'DASHSCOPE_API_KEY', label: 'API Key', type: 'password', group: 'dashscope', path: ['dashscope', 'apiKey'] },
@@ -111,6 +111,7 @@ export const SETTING_DEFS: SettingDef[] = [
   { key: 'JIAODUITAI_BASE_URL', label: 'Base URL', type: 'string', group: 'jiaoduitai', path: ['jiaoduitai', 'baseUrl'], desc: '配置即启用外部校对台审核' },
   { key: 'JIAODUITAI_TIMEOUT_MS', label: '超时（毫秒）', type: 'number', group: 'jiaoduitai', path: ['jiaoduitai', 'timeoutMs'] },
   { key: 'JIAODUITAI_POLL_MS', label: '轮询间隔（毫秒）', type: 'number', group: 'jiaoduitai', path: ['jiaoduitai', 'pollMs'] },
+  { key: 'JIAODUITAI_RISK_FIELD', label: '风险话术字段名', type: 'string', group: 'jiaoduitai', path: ['jiaoduitai', 'riskField'], desc: '审核结果里风险提示话术的字段名；留空则用模板话术（决策 D4）' },
 
   /* ── OSS ── */
   { key: 'OSS_REGION', label: 'Region', type: 'string', group: 'oss', path: ['oss', 'region'] },

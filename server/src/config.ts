@@ -222,6 +222,12 @@ export const config = {
     baseUrl: str('JIAODUITAI_BASE_URL', ''),
     timeoutMs: num('JIAODUITAI_TIMEOUT_MS', 15000),
     pollMs: num('JIAODUITAI_POLL_MS', 15000),
+    /**
+     * 决策 D4（2026-10-27）：风险提示话术以校对台返回的为准。校对台 v1.1 文档尚无独立的话术字段，
+     * 这里预留字段名：填写后从审核结果里取该字段作为追加话术（视频创作取稿优先使用），
+     * 未填写或结果里没有时仍用模板 riskHint 兜底。
+     */
+    riskField: str('JIAODUITAI_RISK_FIELD', ''),
   },
 
   /**
@@ -244,10 +250,10 @@ export const config = {
     outputPricePer1k: num('COPY_LLM_OUTPUT_PRICE_PER_1K', 0),
     /**
      * P0-4 合规闸门：COPY_LLM_* 指向第三方中转（如 ccg-cli.online）时，文案与人物档案会发往该服务。
-     * 生产环境必须显式设为 true（表示已获产品与合规书面批准）才启用，否则自动回退百炼；
-     * 开发环境不受影响。
+     * 决策 D1（2026-10-27）：文案二创采用第三方中转的 Claude 模型，百炼只负责语音转文案 →
+     * 所有环境缺省开启；需要临时停用中转时显式设为 false，文案生成回退百炼。
      */
-    complianceApproved: bool('COPY_LLM_COMPLIANCE_APPROVED', str('NODE_ENV', 'development') !== 'production'),
+    complianceApproved: bool('COPY_LLM_COMPLIANCE_APPROVED', true),
   },
 
   /**
@@ -510,6 +516,14 @@ export function hasFinStep(): boolean {
 /** 校对台审核平台是否已接入（未配置时沿用审核桩 / 人工复核） */
 export function hasJiaoduitai(): boolean {
   return !!config.jiaoduitai.baseUrl
+}
+/**
+ * 文案审核当前由谁处理（新提交的单）：校对台 > 审核桩 > 人工复核。
+ * 与 submitForReview 的分流一致：校对台已接入时审核桩不推进新单；都没有时由审核员在审核工作台直接裁决。
+ */
+export function reviewMode(): 'jiaoduitai' | 'stub' | 'manual' {
+  if (hasJiaoduitai()) return 'jiaoduitai'
+  return config.copy.reviewStubEnabled ? 'stub' : 'manual'
 }
 /** 飞影 HiFly 是否已配置（无 Key 时 mock 兜底，人物库克隆链路仍可联调） */
 export function hasHifly(): boolean {

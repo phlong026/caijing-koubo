@@ -690,7 +690,16 @@ export async function getApprovedCopy(copyId: string): Promise<ApprovedPayload> 
   const v = await getVersion(copy.approvedVersionId, db)
   if (!v) throw err.notApproved('已通过版本记录丢失，请联系管理员')
 
-  const sub = await getSubmissionByVersion(v.id, db)
+  // 校对台审定稿是 origin=review 的新版本，按版本反查不到审核单；此时取该文案最近一张通过的审核单
+  // （approved_version_id 随每次通过更新，二者一一对应），才能读到审核方返回的追加话术（决策 D4）
+  let sub = await getSubmissionByVersion(v.id, db)
+  if (!sub) {
+    const last = await db.get<{ id: string }>(
+      "SELECT `id` FROM `review_submission` WHERE `copy_id` = ? AND `status` = 'approved' ORDER BY `updated_at` DESC LIMIT 1",
+      [copy.id],
+    )
+    sub = last ? await getSubmission(last.id, db) : null
+  }
   const template = await resolveTemplateForCopy(copy, db)
   const persona = copy.personaId ? await getPersonaById(copy.personaId, true) : null
 

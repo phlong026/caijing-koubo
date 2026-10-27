@@ -45,7 +45,7 @@
 |---|---|---|
 | `COPY_LLM_BASE_URL` / `COPY_LLM_API_KEY` / `COPY_LLM_MODEL` | 三者齐备才启用 | 已实测 CCG 中转（`https://ccg-cli.online/v1` + claude 系列） |
 | `COPY_LLM_PROTOCOL` | 默认 `auto` | 按 baseurl+模型名自动判断 anthropic/openai |
-| `COPY_LLM_COMPLIANCE_APPROVED` | **生产必填** | ⚠️ 合规闸门：文案与人物档案会发往第三方。生产环境必须在获得**产品与合规书面批准**后设 `true`，否则即使配了也回退百炼（开发环境缺省 true） |
+| `COPY_LLM_COMPLIANCE_APPROVED` | 可选 | 合规闸门：文案与人物档案会发往第三方。**决策 D1（2026-10-27）：文案二创采用第三方中转的 Claude，缺省 `true`**；设 `false` 时文案生成回退百炼（百炼只负责语音转文案） |
 | `COPY_LLM_INPUT_PRICE_PER_1K` / `_OUTPUT_PRICE_PER_1K` | 可选 | 成本核算单价 |
 
 ### 4. TikHub —— 对标账号检测 / 监控 / 爆款解析 / 视频下载（对标线主数据源）
@@ -125,7 +125,7 @@
 |---|---|---|
 | A. 真实资讯流 | `SATURN_NEWS_MCP_KEY`（+可选 `FINSTEP_API_KEY`）、`NEWS_MOCK_SOURCE=false` | 无 |
 | B. 对标账号检测/监控/解析/提取文案 | `TIKHUB_API_KEY` + `DASHSCOPE_API_KEY`（ASR）+ OSS 三件套 | 真实对标主页链接（粉丝≥1w） |
-| C. 真实文案生成 | `DASHSCOPE_API_KEY`；或 COPY_LLM 三件套 + `COPY_LLM_COMPLIANCE_APPROVED=true`（需合规书面批准） | 可用人物（授权已核验） |
+| C. 真实文案生成 | COPY_LLM 三件套（决策 D1 默认走第三方中转 Claude）；未配置时回退 `DASHSCOPE_API_KEY` | 可用人物（授权已核验） |
 | D. 真实分身/声音/口播视频 | `HIFLY_API_KEY` + OSS 三件套（签名 URL）+ `HIFLY_RESULT_HOSTS` | 真人素材视频 + 真人声音样本 + 授权书实体 + reviewer 核验 + consent |
 | E. 真实剪辑渲染（字幕烧录/尾页文字） | 带 libass+freetype 的 ffmpeg + OFL 字体入 `assets/fonts/` | 已完成的基础视频 |
 | F. 真实平台发布 | **不可用**——PU2/PU3 Playwright 平移未开发；参数已预留（见二） | 真实平台账号扫码（待引擎就绪） |
@@ -164,11 +164,10 @@ HIFLY_RESULT_HOSTS=<PoC 实际域名后配置>
 DASHSCOPE_API_KEY=<百炼密钥>
 ASR_PRICE_PER_SEC=<按账单填写>
 
-# ── 文案专用模型（可选；生产需合规批准后打开闸门）──
-# COPY_LLM_BASE_URL=https://ccg-cli.online/v1
-# COPY_LLM_API_KEY=<key>
-# COPY_LLM_MODEL=claude-opus-5.5
-# COPY_LLM_COMPLIANCE_APPROVED=true
+# ── 文案二创模型（决策 D1：第三方中转 Claude；COPY_LLM_COMPLIANCE_APPROVED 缺省 true）──
+COPY_LLM_BASE_URL=https://ccg-cli.online/v1
+COPY_LLM_API_KEY=<key>
+COPY_LLM_MODEL=claude-opus-5.5
 
 # ── TikHub（场景 B）──
 TIKHUB_API_KEY=<TikHub 密钥>

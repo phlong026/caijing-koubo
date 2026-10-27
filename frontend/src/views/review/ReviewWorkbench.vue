@@ -5,8 +5,11 @@
         >文案人工复核与成片复审：查看提交内容与关卡结果，通过或退回（退回须写原因）。提交人不能裁决自己的提交。</template
       >
       <template #actions>
-        <span v-if="!stubEnabled && kind === 'copy'" class="mw-alert-banner"
+        <span v-if="kind === 'copy' && reviewMode === 'manual'" class="mw-alert-banner"
           >自动审核关卡尚未接入：已提交的文案由人工复核直接裁决</span
+        >
+        <span v-else-if="kind === 'copy' && reviewMode === 'jiaoduitai'" class="mw-alert-banner"
+          >文案由校对台审核，结果自动同步；校对台在审的文案请在校对台处理</span
         >
       </template>
     </PageHead>
@@ -358,7 +361,8 @@ const auth = useAuthStore()
 const scope = ref<'pending' | 'decided'>('pending')
 const line = ref<CopyLine | undefined>()
 const items = ref<ReviewQueueItem[]>([])
-const stubEnabled = ref(false)
+/** 当前文案审核方式（校对台 / 审核桩 / 人工复核），决定页头提示 */
+const reviewMode = ref<'jiaoduitai' | 'stub' | 'manual'>('manual')
 const loading = ref(false)
 const error = ref('')
 const current = ref<ReviewQueueItem | null>(null)
@@ -392,7 +396,7 @@ async function load(): Promise<void> {
   try {
     const r = await copyApi.reviewQueue(scope.value, line.value)
     items.value = r.items
-    stubEnabled.value = r.stubEnabled
+    reviewMode.value = r.mode ?? (r.stubEnabled ? 'stub' : 'manual')
     const keep = current.value && r.items.find((i) => i.submissionId === current.value!.submissionId)
     if (keep) current.value = keep
     else if (r.items.length) void select(r.items[0]!)
