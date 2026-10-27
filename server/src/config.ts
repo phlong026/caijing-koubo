@@ -390,6 +390,8 @@ export const config = {
     maxSegmentsTextLen: num('CUT_SEGMENT_TEXT_MAX', 200),
     /** BGM 上传大小上限（MB） */
     bgmMaxMb: num('CUT_BGM_MAX_MB', 20),
+    /** 字体上传大小上限（MB，Q7：30 不够再调） */
+    fontMaxMb: num('CUT_FONT_MAX_MB', 30),
   },
 
   /**

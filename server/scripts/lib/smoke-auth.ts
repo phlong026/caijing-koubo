@@ -71,6 +71,8 @@ const ADMIN_ROUTES: Array<[RegExp, RegExp]> = [
   [/^GET$/, /^\/operations/],
   [/^(POST|DELETE)$/, /^\/news\/rules(\/|$)/],
   [/^POST$/, /^\/copy\/llm\/ping$/],
+  // 素材库 A6 / Q6：字体与素材包、关键词组的写接口仅管理员
+  [/^(POST|PATCH|DELETE)$/, /^\/(fonts|material-packs|material-keyword-groups)(\/|$)/],
 ]
 
 /** 按接口所需角色选令牌；role 显式指定时优先 */

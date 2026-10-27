@@ -40,8 +40,10 @@
     "smoke:video": "tsx scripts/smoke-video.ts",
     "smoke:publish": "tsx scripts/smoke-publish.ts",
     "smoke:cut": "tsx scripts/smoke-cut.ts",
+    "smoke:chain": "tsx scripts/smoke-chain.ts",
     "check:media-env": "tsx scripts/check-media-env.ts",
-    "test:video:align": "tsx scripts/test-video-align.ts"
+    "test:video:align": "tsx scripts/test-video-align.ts",
+    "smoke:material": "tsx scripts/smoke-material.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",

@@ -41,12 +41,13 @@ export async function buildApp(): Promise<FastifyInstance> {
   // 且 req.parts() 与 req.file() 各自新建 busboy 挂同一 raw 流、不能混用——
   // 因此这里按「全模块最大上传上限」设置全局 fileSize（分身素材 200MB），
   // 各素材类型的细分上限由路由在读流过程中自行判定（见 personas/routes.ts readMultipart）。
+  // files 上限放宽到 20：素材库素材包导入支持一次投多个片段（ML2），单文件路由仍只取 files[0]。
   const multipartMaxBytes = Math.max(
     config.copy.articleMaxBytes,
     ...Object.values(UPLOAD_LIMITS).map((l) => l.maxBytes),
   )
   await app.register(multipart, {
-    limits: { fileSize: multipartMaxBytes, files: 1, fields: 20 },
+    limits: { fileSize: multipartMaxBytes, files: 20, fields: 20 },
     throwFileSizeLimit: false,
   })
 
