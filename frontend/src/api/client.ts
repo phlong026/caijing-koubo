@@ -16,16 +16,28 @@ export type PageResult<T> = {
 export class ApiError extends Error {
   readonly code: string
   readonly status?: number
+  /** 服务端 error.details（如 requiresConfirm、预检未过的检查项），之前未透传导致「需确认」类分支永远不触发 */
+  readonly details?: unknown
 
-  constructor(code: string, message: string, status?: number) {
+  constructor(code: string, message: string, status?: number, details?: unknown) {
     super(message)
     this.name = 'ApiError'
     this.code = code
     this.status = status
+    this.details = details
   }
 }
 
-type ApiEnvelope<T> = { ok: true; data: T } | { ok: false; error: { code: string; message: string } }
+/** 已通过的文案改稿内容须先确认（后端 409 + details.requiresConfirm），确认后带 confirmReedit 重试 */
+export function needsReeditConfirm(e: unknown): boolean {
+  return (
+    e instanceof ApiError &&
+    e.status === 409 &&
+    !!(e.details as { requiresConfirm?: boolean } | null | undefined)?.requiresConfirm
+  )
+}
+
+type ApiEnvelope<T> = { ok: true; data: T } | { ok: false; error: { code: string; message: string; details?: unknown } }
 
 export type QueryValue = string | number | boolean | null | undefined
 
@@ -108,14 +120,14 @@ export async function request<T>(path: string, init: RequestInit = {}, query?: R
 
   if (!response.ok) {
     if (isEnvelope(payload) && !payload.ok) {
-      throw new ApiError(payload.error.code, payload.error.message, response.status)
+      throw new ApiError(payload.error.code, payload.error.message, response.status, payload.error.details)
     }
     const hint = response.status >= 500 ? '服务暂时不可用，请稍后重试' : '请求失败'
     throw new ApiError(`http_${response.status}`, `${hint}（${response.status}）`, response.status)
   }
 
   if (!isEnvelope(payload)) throw new ApiError('invalid_response', '服务端返回格式不正确', response.status)
-  if (!payload.ok) throw new ApiError(payload.error.code, payload.error.message, response.status)
+  if (!payload.ok) throw new ApiError(payload.error.code, payload.error.message, response.status, payload.error.details)
   return payload.data as T
 }
 

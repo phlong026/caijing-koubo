@@ -39,6 +39,7 @@ import {
   type Section,
 } from './constants.js'
 import { getPersonaById } from './persona-bridge.js'
+import { assertApprovedEditConfirmed } from './service.js'
 import { insertVersion, listComplianceWords, storedPrompt } from './repo.js'
 
 /**
@@ -519,10 +520,12 @@ export async function runGeneration(generationId: string): Promise<void> {
           name: gen.count > 1 ? candidateUser(prompt.user, i, gen.count).direction : '自由创作',
           generationId,
           createdBy: gen.createdBy ?? 'system',
+          // 受理时只按当时稿数校验；执行期间可能有别的生成或新建稿落地，这里再卡一次
+          maxDrafts: config.copy.maxDrafts,
         },
         db,
       )
-      await insertVersion(
+      const version = await insertVersion(
         {
           copyId: copy.id,
           draftId,
@@ -537,12 +540,8 @@ export async function runGeneration(generationId: string): Promise<void> {
         },
         db,
       )
-      await db.run('UPDATE `copy_draft` SET `latest_version_no` = ? WHERE `id` = ?', [
-        (await db.get<{ n: number | null }>('SELECT MAX(`version_no`) AS n FROM `copy_version` WHERE `copy_id` = ?', [
-          copy.id,
-        ]))?.n ?? 0,
-        draftId,
-      ])
+      // 批内并发时 copy 级 MAX(version_no) 可能是别的稿的号，必须用本稿刚插入的版本号
+      await db.run('UPDATE `copy_draft` SET `latest_version_no` = ? WHERE `id` = ?', [version.versionNo, draftId])
       draftIds.push(draftId)
       succeeded += 1
       return { ok: true, draftId, cost }
@@ -813,6 +812,7 @@ export async function applyVariant(
   mode: 'replace' | 'new_draft',
   confirmChanged: boolean,
   operator: string,
+  confirmReedit = false,
 ): Promise<{ draftId: string; versionId: string; changed: boolean }> {
   const db = getDb()
   const { getVariant } = await import('./repo.js')
@@ -823,6 +823,8 @@ export async function applyVariant(
   const copy = await requireCopy(v.copyId, db)
   if (copy.status === 'archived') throw err.invalidState('该文案已归档，不可操作')
   if (copy.status === 'in_review') throw err.copyLocked()
+  // 替换会改动已通过文案的稿内容并降回草稿，与普通编辑一样须先确认（FR-R6）；另存新稿不改原稿，无需确认
+  if (mode === 'replace') assertApprovedEditConfirmed(copy, confirmReedit)
 
   const draftRow = await db.get<Record<string, any>>(
     'SELECT * FROM `copy_draft` WHERE `id` = ? AND `deleted_at` IS NULL',
@@ -840,13 +842,6 @@ export async function applyVariant(
   }
 
   if (mode === 'new_draft') {
-    const current = await db.get<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM `copy_draft` WHERE `copy_id` = ? AND `deleted_at` IS NULL',
-      [copy.id],
-    )
-    if (Number(current?.c ?? 0) >= config.copy.maxDrafts) {
-      throw err.draftLimit(`该文案稿数已达上限 ${config.copy.maxDrafts}`, { max: config.copy.maxDrafts })
-    }
     const newSections = sections.map((s) => ({ ...s }))
     newSections[idx] = { ...newSections[idx]!, text: v.text }
     const wc = countSectionsWords(draftRow.title ?? null, newSections)
@@ -860,6 +855,7 @@ export async function applyVariant(
         origin: 'variant',
         generationId: v.generationId,
         createdBy: operator,
+        maxDrafts: config.copy.maxDrafts,
       },
       db,
     )

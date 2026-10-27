@@ -98,6 +98,7 @@
 import { computed, ref, watch } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
+import { needsReeditConfirm } from '@/api/client'
 import { copyApi, type CopyVersion, type Section, type VersionDiff, type VersionOrigin } from '@/api/copy'
 
 const props = defineProps<{ visible: boolean }>()
@@ -205,20 +206,32 @@ function onRestore(v: CopyVersion): void {
     content: '当前稿内容将被该版本覆盖，恢复动作会记入历史版本。',
     okText: '恢复',
     cancelText: '取消',
-    onOk: async () => {
-      try {
-        await copyApi.restoreVersion(v.id)
-        Message.success('已恢复')
-        if (store.copy) {
-          await store.load(store.copy.id)
-          items.value = await copyApi.versions(store.copy.id)
-        }
-        emit('update:visible', false)
-      } catch (e) {
-        Message.error((e as Error).message)
-      }
-    },
+    onOk: () => restore(v, false),
   })
+}
+
+async function restore(v: CopyVersion, confirmReedit: boolean): Promise<void> {
+  try {
+    await copyApi.restoreVersion(v.id, { confirmReedit })
+    Message.success('已恢复')
+    if (store.copy) {
+      await store.load(store.copy.id)
+      items.value = await copyApi.versions(store.copy.id)
+    }
+    emit('update:visible', false)
+  } catch (e) {
+    if (needsReeditConfirm(e)) {
+      Modal.confirm({
+        title: '该文案已审核通过',
+        content: '恢复后需重新提交审核，已生成的视频仍使用原通过版本。是否继续？',
+        okText: '继续恢复',
+        cancelText: '取消',
+        onOk: () => restore(v, true),
+      })
+      return
+    }
+    Message.error((e as Error).message)
+  }
 }
 
 function fmtTime(iso: string): string {

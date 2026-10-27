@@ -293,6 +293,8 @@ export interface InsertDraftInput {
   origin: string
   generationId?: string | null
   createdBy: string
+  /** 稿数上限：在串行临界区内复查，并发生成 / 新建 / 另存时不会超出（超出抛 COPY_DRAFT_LIMIT） */
+  maxDrafts?: number
 }
 
 /**
@@ -319,6 +321,13 @@ export async function insertDraft(input: InsertDraftInput, db: Db = getDb()): Pr
   const now = toDb(utcNow())
   const MAX_TRIES = 3
   return serializeByCopy(input.copyId, async () => {
+    if (input.maxDrafts) {
+      const current = await countDrafts(input.copyId, db)
+      if (current >= input.maxDrafts) {
+        const { err } = await import('../../errors.js')
+        throw err.draftLimit(`该文案稿数已达上限 ${input.maxDrafts}，请先删除不需要的稿`, { current, max: input.maxDrafts })
+      }
+    }
     for (let attempt = 1; ; attempt++) {
       const draftNo = await nextDraftNo(input.copyId, db)
       try {
