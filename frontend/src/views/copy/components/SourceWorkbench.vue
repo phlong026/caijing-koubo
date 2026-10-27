@@ -36,6 +36,11 @@
         <a v-if="sourceLink" :href="sourceLink" target="_blank" rel="noopener noreferrer" class="source-origin"
           >查看来源网页 ↗</a
         >
+        <StructurePanel
+          v-if="material?.type === 'benchmark'"
+          :structure="material.structure"
+          :use="material.structureUse"
+        />
       </a-spin>
     </div>
     <a-modal
@@ -118,6 +123,7 @@ import { Message, Modal } from '@arco-design/web-vue'
 import { useCopyStore } from '@/stores/copy'
 import { copyApi, type SourceMaterial, type SourceReview } from '@/api/copy'
 import { getVideoPlayback } from '@/api/benchmark'
+import StructurePanel from './StructurePanel.vue'
 const store = useCopyStore()
 const material = ref<SourceMaterial | null>(null),
   loading = ref(false),

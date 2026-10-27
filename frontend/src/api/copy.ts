@@ -71,8 +71,35 @@ export interface SourceReview {
   confirmed: boolean
   reviewedAt?: string
 }
+/** 对标视频结构拆解（与后端 structure-core 同构） */
+export interface ScriptStructure {
+  hook: { type: string; note: string; from: number; to: number; text: string }
+  sections: Array<{ role: string; summary: string; from: number; to: number }>
+  rhythm: {
+    sentenceCount: number
+    seconds: number | null
+    charsPerSentence: number
+    charsPerSecond: number | null
+    hookSeconds: number | null
+  }
+  reusable: string[]
+  forbidden: string[]
+  model: string | null
+  analyzedAt: string
+}
+
+/** 生成时沿用哪些结构：钩子 / 段落分工 / 节奏 */
+export interface StructureUse {
+  hook: boolean
+  sections: boolean
+  rhythm: boolean
+}
+
 export interface SourceMaterial {
   type: string
+  /** 仅对标来源：已有的结构拆解与当前勾选 */
+  structure?: ScriptStructure | null
+  structureUse?: StructureUse
   title?: string
   text: string | null
   videoId?: string
@@ -452,6 +479,15 @@ export const copyApi = {
   },
   source(copyId: string) {
     return apiGet<SourceMaterial>(`/copy/${copyId}/source`)
+  },
+  /** 对标结构拆解；已有结果直接返回缓存，refresh 才重新调用模型 */
+  analyzeStructure(copyId: string, refresh = false) {
+    return apiPost<{ structure: ScriptStructure; cached: boolean; use: StructureUse }>(`/copy/${copyId}/structure`, {
+      refresh,
+    })
+  },
+  saveStructureUse(copyId: string, use: StructureUse) {
+    return apiPut<{ use: StructureUse }>(`/copy/${copyId}/structure-use`, use)
   },
 
   /* 稿 */

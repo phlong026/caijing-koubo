@@ -61,6 +61,8 @@ import {
   type StubRejectSim,
 } from './review.js'
 import { listPersonasForCopy } from './persona-bridge.js'
+import { analyzeStructure, getStructureView } from './structure.js'
+import { normalizeStructureUse } from './structure-core.js'
 import { getVersion, listVersions, getSubmission, getGeneration, listVariantsByGeneration, runningGeneration } from './repo.js'
 import { parseArticleBuffer, parsePastedText, saveArticle, validateFileMeta, writeTempFile } from './article.js'
 import { getArticle } from './repo.js'
@@ -369,6 +371,41 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
     return ok(await getCopy(id))
   })
 
+  /**
+   * 对标视频结构拆解（阶段 3）：拆钩子 / 段落分工 / 节奏 / 可借鉴 / 不可挪用，结果缓存在提取记录上。
+   * 已有结果直接返回（不再调用模型），refresh=true 才重新拆解。
+   */
+  app.post('/copy/:id/structure', async (req) => {
+    const { id } = req.params as { id: string }
+    const body = (req.body ?? {}) as { refresh?: boolean }
+    const copy = await requireCopy(id)
+    assertWritable(copy)
+    const r = await analyzeStructure(copy, { refresh: !!body.refresh })
+    if (!r.cached) {
+      await recordOperation({
+        operator: req.operator,
+        action: 'copy.structure',
+        targetType: 'copy',
+        targetId: id,
+        detail: { sections: r.structure.sections.length, hook: r.structure.hook.type, refresh: !!body.refresh },
+      })
+    }
+    return ok({ structure: r.structure, cached: r.cached, use: normalizeStructureUse(copy.settings?.structureUse) })
+  })
+
+  /** 沿用哪些结构：钩子 / 段落分工 / 节奏，只存勾选，不动其他创作设置 */
+  app.put('/copy/:id/structure-use', async (req) => {
+    const { id } = req.params as { id: string }
+    const copy = await requireCopy(id)
+    assertWritable(copy)
+    const use = normalizeStructureUse(req.body)
+    await updateCopy(id, {
+      settings: JSON.stringify({ ...(copy.settings ?? {}), structureUse: use }),
+      updated_at: toDb(utcNow()),
+    })
+    return ok({ use })
+  })
+
   app.post('/copy/:id/archive', async (req) => {
     const { id } = req.params as { id: string }
     const copy = await requireCopy(id)
@@ -413,8 +450,11 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
           ])
         : null
       const sentences: unknown = jdec<unknown>(cache?.sentences, null)
+      const { structure, use: structureUse } = await getStructureView(copy)
       return ok({
         type: 'benchmark',
+        structure,
+        structureUse,
         videoId: copy.sourceRefId,
         coverUrl: v?.cover_url ?? null,
         publishedAt: v?.published_at ?? null,

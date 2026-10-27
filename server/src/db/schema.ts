@@ -258,6 +258,8 @@ export const TABLES: TableDef[] = [
       vc('video_id', 64),
       { name: 'text', type: 'longtext', nullable: true },
       { name: 'sentences', type: 'json', nullable: true },
+      // 结构拆解结果（钩子 / 段落分工 / 节奏 / 可借鉴 / 不可挪用），同一视频的多条文案共用，按需生成
+      { name: 'structure', type: 'json', nullable: true },
       int('duration', 0, { nullable: true }),
       vc('engine', 64, { nullable: true }),
       vc('extract_mode', 16, { nullable: true }),

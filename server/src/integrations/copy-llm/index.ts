@@ -397,6 +397,8 @@ function estimateCost(r: ResolvedLlm, inputTokens?: number, outputTokens?: numbe
 /* ── mock 兜底：结构对齐真实输出，保证链路可跑通 ───────────────────── */
 function mockChat(messages: ChatMessage[]): string {
   const user = messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n')
+  // ── 文案工坊：对标结构拆解（阶段 3）──
+  if (/【逐字稿】/.test(user) && /"hook"/.test(user)) return mockStructureChat(user)
   // ── 文案工坊：变体任务（FR-G5）──
   if (/"variants"/.test(user) || /【本次任务】只改写一个段落/.test(user)) return mockVariantChat(user)
   // ── 文案工坊：整稿生成（FR-G4）──
@@ -426,6 +428,28 @@ function mockChat(messages: ChatMessage[]): string {
  * 关键点：**绝不复制来源原文**（保证素人线查重可通过 AC-R2 / 全局场景 2），
  * 也不包含任何硬禁用词，从而让 smoke 在无密钥时全链路可跑通（AC-G7）。
  */
+/** 结构拆解 mock：按句序号均分成 3 段，结构合法即可（不读逐字稿内容） */
+function mockStructureChat(user: string): string {
+  const idx = Array.from(user.matchAll(/^\[(\d+)\]/gm)).map((m) => Number(m[1]))
+  const n = idx.length ? Math.max(...idx) + 1 : 1
+  const a = Math.max(0, Math.min(n - 1, Math.floor(n / 3) - 1))
+  const b = Math.max(a, Math.min(n - 1, Math.floor((n * 2) / 3) - 1))
+  const parts =
+    n >= 3
+      ? [
+          { role: '钩子', summary: '用一个常见疑问引出话题', from: 0, to: a },
+          { role: '观点', summary: '给出核心看法并解释原因', from: a + 1, to: b },
+          { role: '收尾', summary: '落到可执行的提醒并提示风险', from: b + 1, to: n - 1 },
+        ]
+      : [{ role: '观点', summary: '直接讲清核心看法', from: 0, to: n - 1 }]
+  return JSON.stringify({
+    hook: { type: '提问', from: 0, to: Math.min(a, n - 1), note: '先抛出观众心里的疑问，再给答案（mock）' },
+    sections: parts,
+    reusable: ['先抛疑问再给结论', '用一句话解释原因，不堆术语'],
+    forbidden: ['原作者的第一人称经历', '具体收益数字'],
+  })
+}
+
 function mockCopyChat(user: string): string {
   const range = /字数区间：(\d+)–(\d+) 字/.exec(user)
   const min = range ? Number(range[1]) : 135

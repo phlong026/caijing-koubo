@@ -39,6 +39,7 @@ import {
   type Section,
 } from './constants.js'
 import { getPersonaById } from './persona-bridge.js'
+import { structureRefFor } from './structure.js'
 import { assertApprovedEditConfirmed } from './service.js'
 import { insertVersion, listComplianceWords, storedPrompt } from './repo.js'
 
@@ -273,6 +274,7 @@ export async function assembleForCopy(
       sampleScript: ip.sampleScript,
     },
     topic: await topicAngle(copy, persona),
+    structureRef: await structureRefFor(copy),
     template: { name: template.name, prompt: template.prompt, structureHint: template.structureHint },
     style: { name: style.name, prompt: style.prompt },
     durationTier: opts.durationTier,
