@@ -7,8 +7,9 @@ import { logApiCall, type CallProvider } from '../../modules/metrics/call-log.js
  * 文案二创专用模型接入（独立于百炼，互不干扰）。
  *
  * 设计要点（FR-G4 / AC-G7）：
- *  - **优先走 COPY_LLM_* 配置**：`COPY_LLM_BASE_URL` + `COPY_LLM_API_KEY` + `COPY_LLM_MODEL`。
- *    未配置时自动回退到百炼（DASHSCOPE_*），保证旧环境与 mock 兜底零改动。
+ *  - **走 COPY_LLM_* 配置**：`COPY_LLM_API_KEY` 必填；`COPY_LLM_BASE_URL` / `COPY_LLM_MODEL`
+ *    已内置默认值（CCG 中转 + claude-opus-5.5），界面与 .env 均可覆盖。
+ *    不回退百炼——文案模型与百炼是两套独立模型，未配 Key 即视为未启用（mock 兜底见 chat）。
  *  - 自动识别两种协议：
  *      anthropic  → `POST {base}/messages`，头 `x-api-key` + `anthropic-version`，
  *                   system 单独传参（Claude 不接受 system 角色消息）；
@@ -46,8 +47,6 @@ export interface ResolvedLlm {
   protocol: Protocol
   timeoutMs: number
   unitPrice: number
-  /** 是否走了「二创专用」配置（false = 回退百炼） */
-  dedicated: boolean
 }
 
 const ANTHROPIC_DEFAULT_VERSION = '2023-06-01'
@@ -63,6 +62,8 @@ function guessProtocol(baseUrl: string, model: string): Protocol {
   // auto：先看 baseurl，再看模型名
   if (/anthropic|\/messages\b/i.test(baseUrl) && !/compatible-mode/i.test(baseUrl)) return 'anthropic'
   if (/^claude/i.test(model) && /anthropic/i.test(baseUrl)) return 'anthropic'
+  // 以 /v1 结尾的 base 是 OpenAI 兼容路由惯例（如 CCG 中转），即使模型名是 claude 也先走 openai
+  if (/\/v1\/?$/i.test(baseUrl)) return 'openai'
   if (/^claude[-_]/i.test(model)) return 'anthropic'
   return 'openai'
 }
@@ -75,36 +76,19 @@ function usable(v: string | undefined | null): boolean {
 
 export function resolveLlm(): ResolvedLlm | null {
   const cfg = config.copyLlm
-  // P0-4：未获合规批准时不启用第三方中转，直接走下面的百炼回退
-  const dedicated = usable(cfg.baseUrl) && usable(cfg.apiKey) && cfg.complianceApproved
-  if (dedicated) {
-    const model = usable(cfg.model) ? cfg.model : 'claude-sonnet-4-5'
-    const baseUrl = normalizeBase(cfg.baseUrl)
-    return {
-      provider: 'copy_llm',
-      baseUrl,
-      apiKey: cfg.apiKey,
-      model,
-      protocol: guessProtocol(baseUrl, model),
-      timeoutMs: cfg.timeoutMs,
-      unitPrice: cfg.unitPrice,
-      dedicated: true,
-    }
+  // 不回退百炼：文案模型与百炼是两套独立模型，未配 Key 即视为未启用
+  if (!usable(cfg.apiKey)) return null
+  const model = usable(cfg.model) ? cfg.model : 'claude-opus-5.5'
+  const baseUrl = normalizeBase(cfg.baseUrl)
+  return {
+    provider: 'copy_llm',
+    baseUrl,
+    apiKey: cfg.apiKey,
+    model,
+    protocol: guessProtocol(baseUrl, model),
+    timeoutMs: cfg.timeoutMs,
+    unitPrice: cfg.unitPrice,
   }
-  // 回退百炼（原有行为不变）
-  if (usable(config.dashscope.apiKey)) {
-    return {
-      provider: 'dashscope',
-      baseUrl: normalizeBase(config.dashscope.baseUrl),
-      apiKey: config.dashscope.apiKey,
-      model: config.dashscope.llmModel,
-      protocol: 'openai',
-      timeoutMs: config.dashscope.timeoutMs,
-      unitPrice: config.dashscope.llmUnitPrice,
-      dedicated: false,
-    }
-  }
-  return null
 }
 
 export function hasCopyLlm(): boolean {
@@ -114,8 +98,8 @@ export function hasCopyLlm(): boolean {
 /** 展示用模型标识：mock 时带 (mock) 后缀，便于区分 */
 export function currentModelLabel(): string {
   const r = resolveLlm()
-  if (!r) return `${config.copyLlm.model || config.dashscope.llmModel}(mock)`
-  return r.dedicated ? r.model : `${r.model}${r.provider === 'dashscope' ? '' : ''}`
+  if (!r) return `${config.copyLlm.model}(mock)`
+  return r.model
 }
 
 /* ── 主调用 ──────────────────────────────────────────────────────── */
@@ -140,7 +124,7 @@ export async function chat(
   const refId = ref.id ?? null
 
   if (!resolved) {
-    if (!config.mockFallback) throw new Error('未配置文案模型（COPY_LLM_API_KEY / DASHSCOPE_API_KEY 均为空）')
+    if (!config.mockFallback) throw new Error('未配置文案模型（COPY_LLM_API_KEY 为空）')
     const content = mockChat(messages)
     await logApiCall({
       provider: 'dashscope',
@@ -151,7 +135,7 @@ export async function chat(
       durationMs: Date.now() - started,
       cost: 0,
     })
-    return { content, cost: 0, mock: true, provider: 'mock', model: `${config.copyLlm.model || 'mock'}(mock)` }
+    return { content, cost: 0, mock: true, provider: 'mock', model: `${config.copyLlm.model}(mock)` }
   }
 
   try {
@@ -201,9 +185,8 @@ export async function chat(
       }
     }
 
-    // 场景 B：协议猜错时换一种再试一次（仅二创专用配置 + 开关打开）
+    // 场景 B：协议猜错时换一种再试一次（开关打开即启用）
     const canRetry =
-      resolved.dedicated &&
       config.copyLlm.autoFallbackProtocol &&
       (e?.status === 404 || e?.status === 400 || e?.status === 405 || e?.status === 415)
     if (canRetry) {
