@@ -17,16 +17,21 @@
           placeholder="如：宏观与市场解读、资产配置框架"
         />
       </a-form-item>
-      <a-form-item label="表达风格">
+      <a-form-item label="默认表达风格（文案工坊自动带出）">
+        <a-select v-model="draft.defaultStyleId" allow-clear placeholder="不设置则用该生产线的第一个风格">
+          <a-option v-for="s in lineStyles" :key="s.id" :value="s.id">{{ s.name }}</a-option>
+        </a-select>
+      </a-form-item>
+      <a-form-item label="表达补充说明（选填）">
         <a-auto-complete
           v-model="draft.expressionStyle"
           :data="opt('expressionStyles')"
           :max-length="600"
-          placeholder="如：沉稳克制、数据先行"
+          placeholder="如：沉稳克制、数据先行；文案语气以默认表达风格为准"
         />
       </a-form-item>
 
-      <a-form-item label="内容方向（最多 8 项，每项 ≤20 字）">
+      <a-form-item label="内容方向（话题范围，最多 8 项，每项 ≤20 字）">
         <a-input-tag
           v-model="draft.contentDirections"
           :max-tag-count="8"
@@ -40,39 +45,34 @@
       </a-form-item>
 
       <a-form-item
-        label="内容配比（最多 6 项；填比例则全部必填且合计 100）"
+        label="选题方法（勾选这个人物做的内容，选题与文案会自动带出）"
         :validate-status="mixError ? 'error' : undefined"
-        :help="mixError"
+        :help="mixError || methodHint"
       >
-        <div v-for="(m, i) in draft.contentMix" :key="i" class="flex items-center gap-2 mb-1.5">
-          <a-input
-            v-model="m.label"
-            :max-length="20"
-            placeholder="标签，如：知识科普"
-            class="flex-1"
-            :input-attrs="{ 'aria-label': `配比标签 ${i + 1}` }"
-          />
-          <a-input-number
-            v-model="m.ratio"
-            :min="0"
-            :max="100"
-            :precision="0"
-            placeholder="比例%"
-            class="!w-[110px]"
-            :input-attrs="{ 'aria-label': `配比比例 ${i + 1}` }"
-          />
-          <a-button type="text" status="danger" :aria-label="`移除配比 ${i + 1}`" @click="draft.contentMix.splice(i, 1)"
-            ><icon-delete
-          /></a-button>
+        <div class="w-full">
+          <div v-for="row in methodRows" :key="row.method.id" class="flex items-center gap-2 mb-1.5 min-h-[32px]">
+            <a-checkbox
+              :model-value="!!row.entry"
+              :disabled="!row.entry && draft.methodMix.length >= MAX_METHODS"
+              @change="toggleMethod(row.method.id)"
+              >{{ row.method.name }}</a-checkbox
+            >
+            <span v-if="isOptIn(row.method)" class="mw-subtle">素人默认不使用，勾选后开启</span>
+            <a-input-number
+              v-if="row.entry"
+              v-model="row.entry.ratio"
+              :min="1"
+              :max="100"
+              :precision="0"
+              placeholder="比例%（选填）"
+              class="!w-[150px] ml-auto"
+              :input-attrs="{ 'aria-label': `${row.method.name} 比例` }"
+            />
+          </div>
+          <p v-if="legacyUnmatched.length" class="mw-subtle mt-1">
+            旧配比项「{{ legacyUnmatched.join('、') }}」没有对应的选题方法，保存时移入内容方向。
+          </p>
         </div>
-        <a-button
-          size="small"
-          type="outline"
-          :disabled="draft.contentMix.length >= 6"
-          @click="draft.contentMix.push({ label: '', ratio: undefined })"
-        >
-          <template #icon><icon-plus /></template>添加
-        </a-button>
       </a-form-item>
 
       <a-collapse :default-active-key="[]" :bordered="false" class="mb-3">
@@ -170,6 +170,8 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { savePersonaProfile, type IpProfile, type PersonaDetail, type PersonaOptions } from '@/api/personas'
+import { getPersonaMethods, getTopicTemplates, type PersonaMethods, type TopicTemplate } from '@/api/topics'
+import { copyApi, type StyleOption } from '@/api/copy'
 import { AUTH_STATUS, fmtDate, isApiCode, PLATFORM_LABEL, toastError } from './shared'
 
 const props = defineProps<{ persona: PersonaDetail; options: PersonaOptions | null }>()
@@ -190,10 +192,18 @@ interface Draft {
   sampleScript: string
   forbiddenClaims: string[]
   contentDirections: string[]
-  contentMix: Array<{ label: string; ratio?: number }>
+  /** 勾选的选题方法（顺序 = 勾选顺序，比例相同时先勾选的优先） */
+  methodMix: Array<{ methodId: string; ratio?: number }>
+  defaultStyleId: string
 }
 
+/** 人物开启的选题方法以后端识别结果为准（含旧标签识别）；未加载完成前只认带 methodId 的项 */
+const personaMethods = ref<PersonaMethods | null>(null)
+const methods = ref<TopicTemplate[]>([])
+const styles = ref<StyleOption[]>([])
+
 function fromProfile(p: IpProfile): Draft {
+  const pm = personaMethods.value
   return {
     role: p.role ?? '',
     serviceScope: p.serviceScope ?? '',
@@ -204,7 +214,12 @@ function fromProfile(p: IpProfile): Draft {
     sampleScript: p.sampleScript ?? '',
     forbiddenClaims: [...(p.forbiddenClaims ?? [])],
     contentDirections: [...(p.contentDirections ?? [])],
-    contentMix: (p.contentMix ?? []).map((m) => ({ label: m.label, ratio: m.ratio })),
+    methodMix: pm
+      ? pm.configured
+        ? pm.items.map((x) => ({ methodId: x.methodId, ratio: x.ratio ?? undefined }))
+        : []
+      : (p.contentMix ?? []).filter((m) => m.methodId).map((m) => ({ methodId: m.methodId!, ratio: m.ratio })),
+    defaultStyleId: p.defaultStyleId ?? '',
   }
 }
 
@@ -218,9 +233,7 @@ function norm(d: Draft): string {
     ...d,
     forbiddenClaims: d.forbiddenClaims.map((s) => s.trim()).filter(Boolean),
     contentDirections: d.contentDirections.map((s) => s.trim()).filter(Boolean),
-    contentMix: d.contentMix
-      .filter((m) => m.label.trim())
-      .map((m) => ({ label: m.label.trim(), ratio: m.ratio ?? null })),
+    methodMix: d.methodMix.map((m) => ({ methodId: m.methodId, ratio: m.ratio ?? null })),
   })
 }
 const baseline = ref(norm(draft))
@@ -231,6 +244,8 @@ watch(
   () => [props.persona.id, props.persona.profileRevision] as const,
   ([id], [prevId]) => {
     // 换人物：无条件重置；同一人物版本变化：仅在没有未保存修改时同步，避免轮询冲掉正在编辑的内容
+    // 换人物时先清掉上一个人物的方法识别结果，否则会把 A 的勾选套到 B 上
+    if (id !== prevId) personaMethods.value = null
     if (id !== prevId || !dirty.value) reset()
   },
 )
@@ -239,6 +254,59 @@ function reset(): void {
   Object.assign(draft, fromProfile(props.persona.ipProfile))
   baseline.value = norm(draft)
 }
+
+// 选题方法、风格与人物的方法识别结果：换人物或保存后重新加载，加载完且无未保存修改时同步草稿
+async function loadMethodOptions(): Promise<void> {
+  const personaId = props.persona.id
+  try {
+    const [list, opts, pm] = await Promise.all([
+      methods.value.length ? Promise.resolve(methods.value) : getTopicTemplates(),
+      styles.value.length ? Promise.resolve(null) : copyApi.options(),
+      getPersonaMethods([props.persona.id]),
+    ])
+    // 请求期间已切到别的人物：丢弃过期结果
+    if (props.persona.id !== personaId) return
+    methods.value = list
+    if (opts) styles.value = opts.styles
+    personaMethods.value = pm[personaId] ?? null
+    if (!dirty.value) reset()
+  } catch (e) {
+    toastError(e)
+  }
+}
+watch(() => [props.persona.id, props.persona.profileRevision] as const, loadMethodOptions, { immediate: true })
+
+const lineStyles = computed(() => styles.value.filter((s) => !s.line || s.line === props.persona.line))
+const methodRows = computed(() =>
+  methods.value.map((method) => ({ method, entry: draft.methodMix.find((m) => m.methodId === method.id) })),
+)
+const legacyUnmatched = computed(() => personaMethods.value?.unmatched ?? [])
+
+/** 与后端 OPT_IN_BY_LINE 一致：素人矩阵的产品推荐需主动勾选（这里只做提示） */
+function isOptIn(m: TopicTemplate): boolean {
+  return props.persona.line === 'persona' && m.builtin === 'product'
+}
+
+/** 与后端内容配比上限一致 */
+const MAX_METHODS = 6
+
+function toggleMethod(id: string): void {
+  const i = draft.methodMix.findIndex((m) => m.methodId === id)
+  if (i >= 0) draft.methodMix.splice(i, 1)
+  else draft.methodMix.push({ methodId: id })
+}
+
+const methodHint = computed(() => {
+  if (!draft.methodMix.length) {
+    return props.persona.line === 'persona'
+      ? '未勾选时：可用全部方法（不含产品推荐），按人物配置生成时用默认方法'
+      : '未勾选时：可用全部方法，按人物配置生成时用默认方法'
+  }
+  if (draft.methodMix.length >= MAX_METHODS) return `最多勾选 ${MAX_METHODS} 个选题方法`
+  return draft.methodMix.some((m) => m.ratio)
+    ? '按人物配置生成时，按比例轮换方法'
+    : '按人物配置生成时，在勾选的方法间轮换'
+})
 
 function opt(key: 'roles' | 'serviceScopes' | 'expressionStyles'): string[] {
   const o = props.options?.ipOptions as Record<string, string[]> | undefined
@@ -254,10 +322,10 @@ function addDirection(d: string): void {
 }
 
 const mixError = computed(() => {
-  const items = draft.contentMix.filter((m) => m.label.trim())
+  const items = draft.methodMix
   const withRatio = items.filter((m) => m.ratio !== undefined && m.ratio !== null)
   if (!withRatio.length) return ''
-  if (withRatio.length !== items.length) return '填写了比例的话，所有配比项都需要填写比例'
+  if (withRatio.length !== items.length) return '填写了比例的话，所有勾选的方法都需要填写比例'
   const sum = withRatio.reduce((a, m) => a + Number(m.ratio), 0)
   return sum === 100 ? '' : `比例合计需为 100（当前 ${sum}）`
 })
@@ -295,11 +363,23 @@ async function save(): Promise<void> {
   }
   saving.value = true
   try {
-    const clean = JSON.parse(norm(draft)) as Record<string, unknown>
-    // 比例统一还原：null 表示未填
-    clean.contentMix = (clean.contentMix as Array<{ label: string; ratio: number | null }>).map((m) =>
-      m.ratio === null ? { label: m.label } : m,
-    )
+    const { methodMix, defaultStyleId, contentDirections, ...rest } = JSON.parse(norm(draft)) as Draft & {
+      methodMix: Array<{ methodId: string; ratio: number | null }>
+    }
+    const nameOf = (id: string) => methods.value.find((m) => m.id === id)?.name ?? id
+    // 对不上选题方法的旧配比标签移入内容方向（话题范围），不丢信息；超过 8 项时提示被截掉的部分
+    const merged = [...new Set([...contentDirections, ...legacyUnmatched.value])]
+    if (merged.length > 8) Message.warning(`内容方向最多 8 项，未保留：${merged.slice(8).join('、')}`)
+    const clean = {
+      ...rest,
+      contentDirections: merged.slice(0, 8),
+      contentMix: methodMix.map((m) => ({
+        label: nameOf(m.methodId),
+        methodId: m.methodId,
+        ...(m.ratio === null ? {} : { ratio: m.ratio }),
+      })),
+      defaultStyleId: defaultStyleId || undefined,
+    }
     const r = await savePersonaProfile(props.persona.id, clean, props.persona.rev)
     Message.success(r.changed ? `已保存，生成人物版本` : '内容没有变化')
     baseline.value = norm(draft)

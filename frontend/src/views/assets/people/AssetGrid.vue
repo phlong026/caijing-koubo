@@ -65,10 +65,19 @@
             {{ a.quality.soft.map((s) => s.message).join('；') }}
           </div>
           <div class="mt-1.5 flex items-center gap-1 flex-wrap">
-            <a-button v-if="a.status === 'pending_review'" size="mini" type="primary" @click="$emit('approve', a)"
+            <!-- 审核裁决与后端 ROLE_RULES 对齐：仅 reviewer / admin（四眼原则由服务端兜底） -->
+            <a-button
+              v-if="a.status === 'pending_review' && canReview"
+              size="mini"
+              type="primary"
+              @click="$emit('approve', a)"
               >通过</a-button
             >
-            <a-button v-if="a.status === 'pending_review'" size="mini" status="danger" @click="$emit('reject', a)"
+            <a-button
+              v-if="a.status === 'pending_review' && canReview"
+              size="mini"
+              status="danger"
+              @click="$emit('reject', a)"
               >驳回</a-button
             >
             <a-button
@@ -90,9 +99,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { assetFileUrl, type PersonaAsset } from '@/api/personas'
+import { useAuthStore } from '@/stores/auth'
 import { ASSET_STATUS, fmtDuration, fmtSize } from './shared'
+
+const auth = useAuthStore()
+/** 素材审核（POST /persona-assets/:id/review）后端限 reviewer / admin */
+const canReview = computed(() => auth.hasRole('reviewer', 'admin'))
 
 const props = withDefaults(
   defineProps<{

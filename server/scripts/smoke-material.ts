@@ -231,6 +231,10 @@ const gOk = await api(
 check('创建关键词组成功', gOk.status === 200 && gOk.data?.keywords?.length === 2, gOk.raw)
 const groupId = gOk.data?.id
 
+// GET 列表断言（a96b1f1 修复回归锚点：ORDER BY 引用不存在列曾致恒 500）
+const groupList = await api('GET', '/material-keyword-groups')
+check('关键词组列表可读（GET 200 含新建组）', groupList.status === 200 && (groupList.data ?? []).some((g: any) => g.id === groupId), groupList.raw)
+
 const gPatch = await api('PATCH', `/material-keyword-groups/${groupId}`, { name: '冒烟组（改）', sort: 5 }, 'admin')
 check('编辑关键词组成功', gPatch.status === 200 && gPatch.data?.name === '冒烟组（改）', gPatch.raw)
 

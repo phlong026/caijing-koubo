@@ -76,6 +76,8 @@ export async function registerPublishRoutes(app: FastifyInstance): Promise<void>
     const s = publishEngineStatus()
     return ok({
       engine: s,
+      // PU2/PU3：真实引擎平移明细（前端可提示「该平台暂走模拟」）
+      realEngine: s.realEngine,
       limits: {
         dailyLimitPerAccount: config.publish.dailyLimitPerAccount,
         confirmTimeoutMs: config.publish.confirmTimeoutMs,

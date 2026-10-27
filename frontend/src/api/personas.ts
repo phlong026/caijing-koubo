@@ -18,7 +18,10 @@ export interface IpProfile {
   factualBackground?: string
   sampleScript?: string
   contentDirections?: string[]
-  contentMix?: Array<{ label: string; ratio?: number }>
+  /** 选题方法配比：methodId 引用选题方法；旧数据只有 label */
+  contentMix?: Array<{ label: string; ratio?: number; methodId?: string }>
+  /** 默认表达风格（同生产线的文案风格） */
+  defaultStyleId?: string
 }
 
 /** 列表项（GET /personas，FR-X1：默认仅 usable） */
@@ -158,7 +161,7 @@ export interface PersonaOptions {
   platformLabels: Record<string, string>
   voiceLanguages: Array<{ code: string; label: string }>
   consentTextVersion: string
-  consentTexts: Record<string, string>
+  consentTexts: Record<string, { title: string; body: string }>
   hifly: { configured: boolean; mock: boolean; baseUrl: string; credit: number | null; creditError: string | null }
   storage: { oss: boolean; mode: 'oss' | 'local' }
 }

@@ -44,7 +44,10 @@
       </a-form-item>
 
       <a-checkbox v-model="form.agree" class="consent">
-        <span class="text-[12.5px] leading-5">{{ consentText }}</span>
+        <span class="text-[12.5px] leading-5">
+          <strong class="block mb-0.5">{{ consentDoc.title }}</strong
+          >{{ consentDoc.body }}
+        </span>
       </a-checkbox>
     </a-form>
 
@@ -81,10 +84,12 @@ let idemKey = ''
 let consentId = ''
 
 const auths = computed(() => usableAuthorizations(props.persona.authorizations, 'portrait'))
-const consentText = computed(
+const consentDoc = computed<{ title: string; body: string }>(
   () =>
-    props.options?.consentTexts?.AVATAR_CLONE ??
-    '我确认已获得肖像权人的书面授权，同意将该素材提交给第三方数字人服务制作口播分身，并仅用于授权范围内的内容生产。',
+    props.options?.consentTexts?.AVATAR_CLONE ?? {
+      title: '口播分身制作授权确认',
+      body: '我确认已获得肖像权人的书面授权，同意将该素材提交给第三方数字人服务制作口播分身，并仅用于授权范围内的内容生产。',
+    },
 )
 const canSubmit = computed(() => !!form.authId && !!form.name.trim() && form.agree && !submitting.value)
 

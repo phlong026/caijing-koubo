@@ -15,6 +15,11 @@ export interface Topic {
   personaIds: string[]
   status: TopicStatus
   batchId: string | null
+  /** 生成时用的选题方法 */
+  methodId: string | null
+  methodName: string | null
+  /** 按哪个人物的人设生成 */
+  originPersonaId: string | null
   newsTitle: string | null
   sentAt: string | null
   createdBy: string | null
@@ -41,8 +46,21 @@ export interface TopicTemplate {
   content: string
   isDefault: boolean
   builtin: string | null
+  /** 对应的文案工坊内容模板 */
+  copyTemplateId: string | null
   createdBy: string | null
   updatedAt: string | null
+}
+
+/** 选题方法取值：按每个人物配置的选题方法自动分配 */
+export const AUTO_METHOD = 'auto'
+
+/** 人物开启的选题方法（configured=false：人物未勾选，items 为默认可用范围） */
+export interface PersonaMethods {
+  configured: boolean
+  items: Array<{ methodId: string; ratio: number | null }>
+  /** 旧配比里对应不上选题方法的标签 */
+  unmatched: string[]
 }
 
 export interface TopicQuery {
@@ -85,11 +103,22 @@ export function getTopicTemplates() {
   return apiGet<TopicTemplate[]>('/topic-templates')
 }
 
-export function createTopicTemplate(payload: { name: string; content: string; isDefault?: boolean }) {
+export interface TopicTemplatePayload {
+  name: string
+  content: string
+  isDefault?: boolean
+  copyTemplateId?: string
+}
+
+export function getPersonaMethods(personaIds: string[]) {
+  return apiGet<Record<string, PersonaMethods>>('/topics/persona-methods', { personaIds: personaIds.join(',') })
+}
+
+export function createTopicTemplate(payload: TopicTemplatePayload) {
   return apiPost<TopicTemplate>('/topic-templates', payload)
 }
 
-export function updateTopicTemplate(id: string, payload: { name?: string; content?: string; isDefault?: boolean }) {
+export function updateTopicTemplate(id: string, payload: Partial<TopicTemplatePayload>) {
   return apiPut<TopicTemplate>(`/topic-templates/${encodeURIComponent(id)}`, payload)
 }
 

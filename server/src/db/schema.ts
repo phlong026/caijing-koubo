@@ -110,6 +110,8 @@ export const TABLES: TableDef[] = [
       { name: 'persona_ids', type: 'json', nullable: true },
       vc('status', 16, { def: 'candidate' }),
       vc('batch_id', 40, { nullable: true }),
+      vc('method_id', 40, { nullable: true }), // 生成时用的选题方法（送入文案工坊时带出对应文案模板）
+      vc('origin_persona_id', 40, { nullable: true }), // 按哪个人物的人设生成（改派提示用）
       dt('sent_at'),
       vc('created_by', 64, { nullable: true }),
       dt('created_at'),
@@ -151,6 +153,7 @@ export const TABLES: TableDef[] = [
       { name: 'content', type: 'text' },
       tint('is_default', 0),
       vc('builtin', 32, { nullable: true }),
+      vc('copy_template_id', 40, { nullable: true }), // 对应的文案工坊内容模板
       vc('created_by', 64, { nullable: true }),
       dt('created_at'),
       dt('updated_at'),

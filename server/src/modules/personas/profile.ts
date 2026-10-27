@@ -23,6 +23,7 @@ const LIMITS = {
   forbiddenClaim: 200,
   direction: 20,
   mixLabel: 20,
+  refId: 40,
 } as const
 
 const MAX_DIRECTIONS = 8
@@ -85,6 +86,8 @@ function stringList(
 export interface ContentMixItem {
   label: string
   ratio?: number
+  /** 引用的选题方法（topic_prompt_template.id）；旧数据没有，按 label 识别 */
+  methodId?: string
 }
 
 function contentMix(value: unknown): ContentMixItem[] {
@@ -93,7 +96,11 @@ function contentMix(value: unknown): ContentMixItem[] {
   let anyRatio = false
   for (const item of arr) {
     const o = (item ?? {}) as Record<string, unknown>
-    const label = singleLine('内容配比', o.label, LIMITS.mixLabel)
+    const methodId = singleLine('选题方法', o.methodId ?? o.method_id, LIMITS.refId)
+    // 引用选题方法的项，label 只是显示名（方法名可长达 128 字），截断即可；自由填写的旧标签仍严格校验
+    const label = methodId
+      ? singleLine('内容配比', String(o.label ?? '').trim().slice(0, LIMITS.mixLabel), LIMITS.mixLabel)
+      : singleLine('内容配比', o.label, LIMITS.mixLabel)
     if (!label) continue
     const rawRatio = o.ratio
     let ratio: number | undefined
@@ -105,7 +112,7 @@ function contentMix(value: unknown): ContentMixItem[] {
       ratio = n
       anyRatio = true
     }
-    out.push(ratio === undefined ? { label } : { label, ratio })
+    out.push({ label, ...(methodId ? { methodId } : {}), ...(ratio === undefined ? {} : { ratio }) })
     if (out.length > MAX_MIX) throw err.badRequest(`内容配比最多 ${MAX_MIX} 项`, { max: MAX_MIX })
   }
   if (anyRatio) {
@@ -137,6 +144,7 @@ export function normalizeProfileInput(raw: unknown): IpProfile {
       itemMax: LIMITS.direction,
     }),
     contentMix: contentMix(o.contentMix ?? o.content_mix),
+    defaultStyleId: singleLine('默认表达风格', o.defaultStyleId ?? o.default_style_id, LIMITS.refId) || undefined,
     forbiddenClaims: stringList('禁用表达', o.forbiddenClaims ?? o.forbidden_claims, {
       max: MAX_FORBIDDEN,
       itemMax: LIMITS.forbiddenClaim,
@@ -165,6 +173,7 @@ export function profileToDb(profile: IpProfile): Record<string, unknown> {
   if (profile.sampleScript !== undefined) out.sample_script = profile.sampleScript
   if (profile.contentDirections?.length) out.content_directions = profile.contentDirections
   if (profile.contentMix?.length) out.content_mix = profile.contentMix
+  if (profile.defaultStyleId) out.default_style_id = profile.defaultStyleId
   return out
 }
 
