@@ -696,9 +696,23 @@ export async function acceptVariant(args: VariantArgs): Promise<{ generationId: 
     .filter(Boolean)
     .join('\n')
 
+  const styleId = (copy.settings as Record<string, string> | null)?.styleId
+  const style = styleId ? await getStyle(styleId, db) : null
+  const ip = persona.ipProfile
   const assembled = assembleVariantPrompt({
-    personaName: persona.name,
-    line: persona.line,
+    persona: {
+      name: persona.name,
+      line: persona.line,
+      role: ip.role,
+      serviceScope: ip.serviceScope,
+      targetAudience: ip.targetAudience,
+      expressionStyle: ip.expressionStyle,
+      forbiddenClaims: ip.forbiddenClaims,
+      audienceNeeds: ip.audienceNeeds,
+      factualBackground: ip.factualBackground,
+      sampleScript: ip.sampleScript,
+    },
+    style: style?.enabled ? { name: style.name, prompt: style.prompt } : null,
     sectionLabel: target.label,
     sectionText: target.text,
     kinds,

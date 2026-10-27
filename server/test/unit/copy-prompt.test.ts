@@ -5,6 +5,7 @@ import {
   assembleVariantPrompt,
   parseDraftJson,
   parseVariantJson,
+  renderPersonaBlock,
   type AssembleInput,
 } from '../../src/modules/copy/prompt.js'
 import { candidateUser } from '../../src/modules/copy/candidates.js'
@@ -107,8 +108,7 @@ describe('assemblePrompt（FR-G3 提示词组装）', () => {
 describe('assembleVariantPrompt（FR-G5 段落变体）', () => {
   it('包含原段落与编号后的变体类型；无上下文时省略上下文块', () => {
     const r = assembleVariantPrompt({
-      personaName: '张经理',
-      line: 'manager',
+      persona: { name: '张经理', line: 'manager' },
       sectionLabel: '段落1',
       sectionText: '原始文本',
       kinds: ['口语化', '更简洁'],
@@ -118,7 +118,31 @@ describe('assembleVariantPrompt（FR-G5 段落变体）', () => {
     expect(r.user).toContain('--- 原始段落开始 ---\n\n原始文本\n\n--- 原始段落结束 ---')
     expect(r.user).toContain('1) 口语化  2) 更简洁')
     expect(r.user).not.toContain('全文上下文')
+    expect(r.user).not.toContain('【表达风格】')
     expect(r.promptHash).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('带人物档案（含禁用表达）与选定风格，与整稿生成的人物块一致', () => {
+    const persona = {
+      name: '张经理',
+      line: 'manager',
+      role: '理财经理',
+      targetAudience: '35 岁以上稳健型客户',
+      forbiddenClaims: ['保本', '稳赚'],
+    }
+    const r = assembleVariantPrompt({
+      persona,
+      style: { name: '稳健专业', prompt: '语气克制，先讲风险再讲方法' },
+      sectionLabel: '段落2',
+      sectionText: '原始文本',
+      kinds: ['口语化'],
+      context: '标题：定投入门',
+    })
+    expect(r.user).toContain(renderPersonaBlock(persona))
+    expect(r.user).toContain('禁用表达（必须严格遵守）：保本；稳赚')
+    expect(r.user).toContain('【表达风格】\n风格：稳健专业\n语气克制，先讲风险再讲方法')
+    expect(r.user).toContain('全文上下文')
+    expect(r.system).toContain('不得违反人物身份、禁用表达与表达风格')
   })
 })
 

@@ -101,6 +101,22 @@ export interface AssembleInput {
   source: SourceBlockInput
 }
 
+export type PersonaInput = AssembleInput['persona']
+
+/** 人物 IP 档案块：整稿生成与段落变体共用，保证两处看到的人设一致 */
+export function renderPersonaBlock(persona: PersonaInput): string {
+  const p: string[] = [`【人物档案】`, `- 称呼：${persona.name}`, `- 生产线：${persona.line}`]
+  if (persona.role) p.push(`- 身份角色：${persona.role}`)
+  if (persona.serviceScope) p.push(`- 内容范围：${persona.serviceScope}`)
+  if (persona.targetAudience) p.push(`- 目标受众：${persona.targetAudience}`)
+  if (persona.expressionStyle) p.push(`- 表达补充说明（参考，语气以【表达风格】为准）：${persona.expressionStyle}`)
+  if (persona.audienceNeeds) p.push(`- 受众需求：${persona.audienceNeeds}`)
+  if (persona.factualBackground) p.push(`- 事实背景（仅按相关性引用，不得扩写为个人经历）：${persona.factualBackground}`)
+  if (persona.sampleScript) p.push(`- 代表口播（只学句式与语气，不移植其中经历与数字）：${persona.sampleScript}`)
+  if (persona.forbiddenClaims?.length) p.push(`- 禁用表达（必须严格遵守）：${persona.forbiddenClaims.join('；')}`)
+  return p.join('\n')
+}
+
 export interface AssembledPrompt {
   system: string
   user: string
@@ -125,16 +141,7 @@ export function assemblePrompt(input: AssembleInput): AssembledPrompt {
   const blocks: string[] = []
 
   // ② 人物 IP 档案块（数据）
-  const p: string[] = [`【人物档案】`, `- 称呼：${persona.name}`, `- 生产线：${persona.line}`]
-  if (persona.role) p.push(`- 身份角色：${persona.role}`)
-  if (persona.serviceScope) p.push(`- 内容范围：${persona.serviceScope}`)
-  if (persona.targetAudience) p.push(`- 目标受众：${persona.targetAudience}`)
-  if (persona.expressionStyle) p.push(`- 表达补充说明（参考，语气以【表达风格】为准）：${persona.expressionStyle}`)
-  if (persona.audienceNeeds) p.push(`- 受众需求：${persona.audienceNeeds}`)
-  if (persona.factualBackground) p.push(`- 事实背景（仅按相关性引用，不得扩写为个人经历）：${persona.factualBackground}`)
-  if (persona.sampleScript) p.push(`- 代表口播（只学句式与语气，不移植其中经历与数字）：${persona.sampleScript}`)
-  if (persona.forbiddenClaims?.length) p.push(`- 禁用表达（必须严格遵守）：${persona.forbiddenClaims.join('；')}`)
-  blocks.push(p.join('\n'))
+  blocks.push(renderPersonaBlock(persona))
 
   // ②b 选题要求：爆款选题定下的角度，避免同一资讯的不同选题写成同一篇
   const topicBlock = buildTopicBlock(topic)
@@ -248,24 +255,29 @@ function buildTopicBlock(topic: AssembleInput['topic']): string | null {
   return lines.join('\n')
 }
 
-/** AI 变体提示词（FR-G5）：针对指定段落生成 2 个候选 */
+/**
+ * AI 变体提示词（FR-G5）：针对指定段落生成 2 个候选。
+ * 带人物档案（含禁用表达）与本文案选定的表达风格，变体不会脱离人设和整篇语气；
+ * 风格缺失（未生成过 / 已停用）时只带人设。
+ */
 export function assembleVariantPrompt(input: {
-  personaName: string
-  line: string
+  persona: PersonaInput
+  style?: { name: string; prompt: string } | null
   sectionLabel: string
   sectionText: string
   kinds: string[]
   context: string
 }): { system: string; user: string; promptText: string; promptHash: string } {
-  const { personaName, line, sectionLabel, sectionText, kinds, context } = input
+  const { persona, style, sectionLabel, sectionText, kinds, context } = input
   const system = `${SYSTEM_RULES}
 
 【本次任务】只改写一个段落，输出 JSON：{"variants":[{"kind":"类型名","text":"改写后的段落文本"}]}。
-不得改变该段落承担的信息功能，不得新增无依据的事实、数字或经历；不得出现收益承诺与绝对化表述。
+不得改变该段落承担的信息功能，不得新增无依据的事实、数字或经历；不得出现收益承诺与绝对化表述；变体类型只调整表达，不得违反人物身份、禁用表达与表达风格。
 text 只写可直接朗读的改写文案，不添加「开场」「中间」「收尾」等结构标志、段落标题或编号。`
 
   const user = [
-    `【人物】${personaName}（${line}）`,
+    renderPersonaBlock(persona),
+    style ? ['【表达风格】', `风格：${style.name}`, style.prompt].join('\n') : '',
     `【待改写段落】段落名：${sectionLabel}`,
     '--- 原始段落开始 ---',
     sectionText,
