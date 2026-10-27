@@ -616,6 +616,21 @@ if (!genOnly) {
     check('稿号互不重复', new Set(nos).size === nos.length && nos.length === 3, nos)
     check('未编辑的空白初始稿在生成后自动移除', !nos.includes(1), nos)
 
+    // 段落变体：提示词带人物档案与本文案选定的表达风格（变体不脱离人设）
+    const vDraft = done?.drafts?.[0]
+    const vg = vDraft
+      ? await req('POST', `/copy/${multi.copyId}/drafts/${vDraft.id}/variants`, { sectionIndex: 0, kinds: ['口语化'] })
+      : null
+    if (vg?.data?.generationId) {
+      const vDone = await waitGen(vg.data.generationId)
+      check('段落变体生成成功', vDone?.status === 'done' && (vDone?.variants ?? []).length >= 1, vDone?.status)
+      const vp = String(vDone?.prompt ?? '')
+      check('变体提示词带人物档案', vp.includes('【人物档案】') && vp.includes('生产线：'), vp.slice(0, 120))
+      check('变体提示词带本文案选定的表达风格', vp.includes('【表达风格】'), vp.slice(0, 120))
+    } else {
+      check('段落变体请求被接受', false, vg?.error)
+    }
+
     // 审核桩接口守卫：非法关卡名被拒；已裁决的审核单不再接受进度回写
     const aiDraft = done?.drafts?.[0]
     const cur = aiDraft ? await req('GET', `/copy/${multi.copyId}/drafts/${aiDraft.id}`) : null
