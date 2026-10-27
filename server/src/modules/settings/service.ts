@@ -3,7 +3,7 @@
  *
  * 值以「环境变量等价的字符串」存 app_setting，语义与 .env 完全一致；
  * 保存成功后同步热写入 config 对象，所有读 config 的代码立即拿到新值
- * （连接类 / 调度类字段见 catalog 的 restart / readonly 标记）。
+ * （启动时固化的字段见 catalog 的 restart 标记）。
  * 优先级：app_setting（界面保存）> .env > 代码默认值。
  */
 import { upsert, type Db } from '../../db/index.js'
