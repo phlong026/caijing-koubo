@@ -162,6 +162,7 @@ function originLabel(o: VersionOrigin): string {
     manual_save: '手动保存',
     restore: '版本恢复',
     submit: '提交审核',
+    review: '校对台审定',
   }
   return map[o] ?? o
 }
@@ -172,6 +173,7 @@ function originColor(o: VersionOrigin): string {
     manual_save: 'gray',
     restore: 'purple',
     submit: 'green',
+    review: 'orangered',
   }
   return map[o] ?? 'gray'
 }

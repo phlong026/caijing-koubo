@@ -214,6 +214,16 @@ export const config = {
   },
 
   /**
+   * 校对台（外部内容审核平台，机审 + 人工初审/终审）。配置 BASE_URL 即启用：
+   * 文案提交后送校对台，后台轮询进度，通过后以校对台返回的文案作为审核通过版本；启用后审核桩不再推进新单。
+   */
+  jiaoduitai: {
+    baseUrl: str('JIAODUITAI_BASE_URL', ''),
+    timeoutMs: num('JIAODUITAI_TIMEOUT_MS', 15000),
+    pollMs: num('JIAODUITAI_POLL_MS', 15000),
+  },
+
+  /**
    * 文案二创专用模型（与百炼并行、互不覆盖）。
    * 三个必填项（BASE_URL / API_KEY / MODEL）齐备时启用，否则自动回退百炼 DASHSCOPE_*。
    * 适用于 Claude 原生协议或任何 OpenAI 兼容中转。
@@ -495,6 +505,10 @@ export function ossConfigIssues(): string[] {
 /** FinStep 资讯接口是否可用（无 Key 时该源整体不启用，不影响其它资讯源） */
 export function hasFinStep(): boolean {
   return !!config.finstep.apiKey
+}
+/** 校对台审核平台是否已接入（未配置时沿用审核桩 / 人工复核） */
+export function hasJiaoduitai(): boolean {
+  return !!config.jiaoduitai.baseUrl
 }
 /** 飞影 HiFly 是否已配置（无 Key 时 mock 兜底，人物库克隆链路仍可联调） */
 export function hasHifly(): boolean {

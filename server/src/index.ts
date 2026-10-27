@@ -182,6 +182,9 @@ async function main(): Promise<void> {
   await registerCutModule().catch((e) => logger.error({ err: (e as Error).message }, 'cut.module.register_failed'))
   // 审核桩在进程内推进，重启后续推未走完三关的桩审核单（P2-19）
   await resumeStubSubmissions().catch((e) => logger.error({ err: (e as Error).message }, 'review.stub.resume_scan_failed'))
+  // 校对台审核：补送未送出的审核单并轮询在审进度（未配置 JIAODUITAI_BASE_URL 时不启动）
+  const { startJiaoduitaiSync } = await import('./modules/copy/jiaoduitai-sync.js')
+  startJiaoduitaiSync()
 
   // P2-13c：临时文件每日清理（启动时先跑一次）
   const { cleanupTempFiles } = await import('./modules/copy/article.js')

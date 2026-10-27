@@ -349,6 +349,7 @@ const GATE_LABELS: Record<string, string> = {
   gate3: '第 3 关 · 风险提示追加',
   pending_manual: '待人工复核',
   manual: '人工复核',
+  external: '校对台审核',
   approved: '审核通过',
   rejected: '已退回',
 }

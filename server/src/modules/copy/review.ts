@@ -1,5 +1,5 @@
 import { getDb, type Db } from '../../db/index.js'
-import { config } from '../../config.js'
+import { config, hasJiaoduitai } from '../../config.js'
 import { err } from '../../errors.js'
 import { logger } from '../../log.js'
 import { newId } from '../../lib/util.js'
@@ -93,6 +93,8 @@ export async function submitForReview(
 
   const hash = contentHash(draft.title, draft.sections)
   const template = await resolveTemplateForCopy(copy, db)
+  // 接入校对台后新单由校对台审核，审核桩只推进存量桩单
+  const useStub = config.copy.reviewStubEnabled && !hasJiaoduitai()
 
   // 2) 事务：锁定版本 + 审核单 + 状态
   const now = toDb(utcNow())
@@ -148,7 +150,7 @@ export async function submitForReview(
       `INSERT INTO \`review_submission\`
         (\`id\`, \`copy_id\`, \`copy_version_id\`, \`status\`, \`gate_results\`, \`appended_risk_text\`, \`is_stub\`, \`created_at\`, \`updated_at\`)
        VALUES (?, ?, ?, 'submitted', '[]', NULL, ?, ?, ?)`,
-      [submissionId, copyId, versionId, config.copy.reviewStubEnabled ? 1 : 0, now, now],
+      [submissionId, copyId, versionId, useStub ? 1 : 0, now, now],
     )
 
     await t.run(
@@ -170,8 +172,12 @@ export async function submitForReview(
     detail: { versionId, versionNo, submissionId, draftId, riskHint: template?.riskHint ?? null },
   })
 
-  // 3) 审核桩开启时异步模拟三关（不阻塞响应）；关闭时审核单停在 submitted，等真实审核模块回写
-  if (config.copy.reviewStubEnabled) {
+  // 3) 校对台已接入：立即送审（失败由后台轮询补送）；否则审核桩开启时异步模拟三关（不阻塞响应）
+  if (hasJiaoduitai()) {
+    void import('./jiaoduitai-sync.js')
+      .then((m) => m.sendSubmission(submissionId))
+      .catch((e) => logger.error({ err: (e as Error).message, submissionId }, 'jiaoduitai.send_failed'))
+  } else if (useStub) {
     void advanceStub(submissionId, template?.riskHint ?? DEFAULT_RISK_HINT).catch((e) => {
       logger.error({ err: (e as Error).message, submissionId }, 'review.stub.advance_failed')
     })
@@ -322,6 +328,8 @@ export interface ReviewResultInput {
   reason?: string | null
   riskPoints?: string[] | null
   appendedRiskText?: string | null
+  /** 审核方返回了修改后的文案时，通过的是该新版本；缺省为提交版本 */
+  approvedVersionId?: string | null
   operator?: string
 }
 
@@ -354,6 +362,7 @@ export async function onReviewResult(input: ReviewResultInput): Promise<{ copyId
   }
 
   if (input.result === 'approved') {
+    const approvedVersionId = input.approvedVersionId ?? sub.copyVersionId
     await db.tx(async (t) => {
       const w = await t.run(
         `UPDATE \`review_submission\` SET \`status\` = 'approved', \`decided_by\` = ?,
@@ -366,7 +375,7 @@ export async function onReviewResult(input: ReviewResultInput): Promise<{ copyId
       await t.run(
         `UPDATE \`copy\` SET \`status\` = 'approved', \`approved_version_id\` = ?, \`review_gate\` = 'approved',
           \`reject_reason\` = NULL, \`body\` = ?, \`updated_at\` = ? WHERE \`id\` = ?`,
-        [sub.copyVersionId, await plainTextOfVersion(sub.copyVersionId, t), now, sub.copyId],
+        [approvedVersionId, await plainTextOfVersion(approvedVersionId, t), now, sub.copyId],
       )
     })
     await recordOperation({
@@ -374,7 +383,7 @@ export async function onReviewResult(input: ReviewResultInput): Promise<{ copyId
       action: 'copy.approved',
       targetType: 'copy',
       targetId: sub.copyId,
-      detail: { submissionId: sub.id, versionId: sub.copyVersionId },
+      detail: { submissionId: sub.id, versionId: approvedVersionId, submittedVersionId: sub.copyVersionId },
     })
     return { copyId: sub.copyId, status: 'approved' }
   }
@@ -440,6 +449,12 @@ export async function manualDecision(input: ManualDecisionInput): Promise<{ copy
   if (!sub) throw err.notFound('审核单不存在')
   if (!MANUAL_REVIEWABLE.includes(sub.status as (typeof MANUAL_REVIEWABLE)[number])) {
     throw err.invalidState(`审核单当前状态（${sub.status}）不接受人工裁决`, { status: sub.status })
+  }
+  // 校对台在审的单以校对台结果为准；仅「已通过但未返回文案」时由人工兜底
+  if (sub.externalReviewNo && sub.externalStatus !== 'approved') {
+    throw err.invalidState(`该文案正在校对台审核（审核单 ${sub.externalReviewNo}），请在校对台处理`, {
+      externalReviewNo: sub.externalReviewNo,
+    })
   }
   const version = await getVersion(sub.copyVersionId, db)
   if (version?.createdBy && version.createdBy === input.operator) {
@@ -567,6 +582,11 @@ export async function withdrawReview(
   const sub = await getSubmission(copy.reviewSubmissionId, db)
   if (!sub) throw err.notFound('审核单不存在')
 
+  if (sub.externalReviewNo) {
+    throw err.withdrawNotAllowed('已送校对台审核，平台不支持撤回，请等待审核结果', {
+      externalReviewNo: sub.externalReviewNo,
+    })
+  }
   if (!WITHDRAWABLE_STATUSES.includes(sub.status as never)) {
     if (sub.status === 'pending_manual') {
       throw err.withdrawNotAllowed('已进入人工复核，无法撤回，请等待审核结果', {

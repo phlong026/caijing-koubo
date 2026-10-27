@@ -89,6 +89,7 @@ export const GATE_LABELS: Record<string, string> = {
   gate3: '第 3 关 · 风险提示追加',
   pending_manual: '待人工复核',
   manual: '人工复核', // 人工退回时 rejected_gate 的取值
+  external: '校对台审核', // 校对台驳回 / 拒收时 rejected_gate 的取值
   approved: '审核通过',
   rejected: '已退回',
   withdrawn: '已撤回',

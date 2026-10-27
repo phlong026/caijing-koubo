@@ -869,6 +869,8 @@ export const TABLES: TableDef[] = [
       { name: 'reason', type: 'text', nullable: true },
       vc('decided_by', 64, { nullable: true }),
       tint('is_stub', 1),
+      vc('external_review_no', 32, { nullable: true }), // 校对台审核单号（R+日期-时分秒）
+      vc('external_status', 24, { nullable: true }), // 校对台最新 status 原值
       dt('created_at'),
       dt('updated_at'),
     ],
