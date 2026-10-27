@@ -270,19 +270,19 @@ export async function runGeneration(batchId: string): Promise<void> {
         logger.info({ batchId, newsId: news.id, personaId: persona.id }, 'topic.subtask_skipped_done')
         continue
       }
-      // ④ 历史去重：同一资讯的历史角度（跨批次/跨人物）+ 该人物已送入文案的历史选题，提示模型避开
+      // ④ 历史去重（提示词层软约束）：同一资讯的历史角度（跨批次/跨人物）+ 该人物已送入
+      // 文案的历史选题，让模型避开。不做落库硬过滤——补齐/重试场景下模型（尤其 mock）
+      // 可能重复给题，硬过滤会让数量永远补不满；同批幂等由事务内的 titles 集合保证。
       const historyRows = await db.all<{ title: string }>(
         "SELECT `title` FROM `topic` WHERE `source_id` = ? OR (`origin_persona_id` = ? AND `status` = 'sent') ORDER BY `created_at` DESC LIMIT 60",
         [news.id, persona.id],
       )
-      const skipTitles = new Set<string>([
-        ...historyRows.map((r) => r.title.trim()),
-        ...previous.map((r) => r.title.trim()),
-      ])
+      const avoid = [
+        ...new Set([...historyRows.map((r) => r.title.trim()), ...previous.map((r) => r.title.trim())]),
+      ].slice(0, 40)
       try {
         // P1-6：人物档案与合规约束固定追加，不依赖模板占位符；
         // 模板缺失时用带约束的兜底提示词，不再是「无合规约束的一句话」。
-        const avoid = [...skipTitles].slice(0, 40)
         const userContent = [
           fillPersona(template?.content ?? FALLBACK_TEMPLATE, persona),
           personaBlock(persona),
@@ -335,8 +335,6 @@ export async function runGeneration(batchId: string): Promise<void> {
           for (const t of parsed) {
             if (!needed) break
             if (titles.has(t.title.trim())) continue
-            // ④ 生成结果再过滤一次：模型没避开的历史标题不落库
-            if (skipTitles.has(t.title.trim())) continue
             // ③ 启发式打分落库，供候选列表按评分排序挑选
             const s = scoreTopic(t)
             await createTopic({
