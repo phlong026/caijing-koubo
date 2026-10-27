@@ -213,17 +213,61 @@ try {
     assert.match(copy?.rejectReason ?? '', /正文超长/)
   })
 
-  await test('409：平台已有本单（上次送审未落库）时接管单号；单号已被别的审核单占用时退回', async () => {
+  await test('409：本单首次送审就撞到平台已有单（他人建的）时不接管，退回并提示改标题', async () => {
     const a = await seed()
+    submitReply = { status: 409, body: { error: '稿件存在在审单据', existing_review_no: 'R20261027-080000' } }
+    await sendSubmission(a.subId)
+    const sub = await getSubmission(a.subId)
+    assert.equal(sub?.externalReviewNo, null)
+    const copy = await getCopy(a.copyId)
+    assert.equal(copy?.status, 'rejected')
+    assert.match(copy?.rejectReason ?? '', /修改标题/)
+  })
+
+  await test('409：本单上次送审结果未知（5xx / 超时）时接管单号；单号已被别的审核单占用时退回', async () => {
+    const a = await seed()
+    submitReply = { status: 502, body: { error: '网关超时' } }
+    await sendSubmission(a.subId)
+    assert.equal((await getSubmission(a.subId))?.status, 'submitted')
     submitReply = { status: 409, body: { error: '稿件存在在审单据', existing_review_no: 'R20261027-090000' } }
     await sendSubmission(a.subId)
     assert.equal((await getSubmission(a.subId))?.externalReviewNo, 'R20261027-090000')
 
     const b = await seed()
+    submitReply = { status: 502, body: { error: '网关超时' } }
+    await sendSubmission(b.subId)
+    submitReply = { status: 409, body: { error: '稿件存在在审单据', existing_review_no: 'R20261027-090000' } }
     await sendSubmission(b.subId)
     const copy = await getCopy(b.copyId)
     assert.equal(copy?.status, 'rejected')
     assert.match(copy?.rejectReason ?? '', /修改标题/)
+  })
+
+  await test('本地落结果失败时不写终态标记，下一轮轮询重试且不重复建版本', async () => {
+    const s = await seedSent()
+    const reviewed = `${s.title}\n\n修订后的开头。\n\n修订后的结尾。`
+    setRemote(s.reviewNo, { status: 'approved', content_text: reviewed })
+    // 让 onReviewResult 失败：copy 当前审核单不是本单
+    await db.run('UPDATE `copy` SET `review_submission_id` = ? WHERE `id` = ?', ['sub_other', s.copyId])
+    await assert.rejects(syncSubmission(s.subId), /不是当前文案的审核单/)
+    assert.equal((await getSubmission(s.subId))?.externalStatus, 'machine_reviewing')
+
+    await db.run('UPDATE `copy` SET `review_submission_id` = ? WHERE `id` = ?', [s.subId, s.copyId])
+    await runJiaoduitaiSync()
+    const copy = await getCopy(s.copyId)
+    assert.equal(copy?.status, 'approved')
+    assert.equal((await getSubmission(s.subId))?.externalStatus, 'approved')
+    const reviewVersions = await db.get<{ c: number }>(
+      "SELECT COUNT(*) AS c FROM `copy_version` WHERE `copy_id` = ? AND `origin` = 'review'",
+      [s.copyId],
+    )
+    assert.equal(Number(reviewVersions?.c), 1)
+
+    const r = await seedSent()
+    setRemote(r.reviewNo, { status: 'rejected', status_label: '驳回' })
+    await db.run('UPDATE `copy` SET `review_submission_id` = ? WHERE `id` = ?', ['sub_other', r.copyId])
+    await assert.rejects(syncSubmission(r.subId), /不是当前文案的审核单/)
+    assert.notEqual((await getSubmission(r.subId))?.externalStatus, 'rejected')
   })
 
   console.log(`${passed} jiaoduitai groups passed`)

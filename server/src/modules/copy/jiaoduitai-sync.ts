@@ -17,6 +17,8 @@ import { onReviewResult } from './review.js'
  */
 
 const OPERATOR = 'jiaoduitai'
+/** 送审请求已发出但结果未知（超时 / 5xx）：平台上可能已经建了单 */
+const SENDING = 'sending'
 const TERMINAL_EXTERNAL = ['approved', 'rejected']
 const ref = (sub: SubmissionRow) => ({ type: 'review_submission', id: sub.id })
 
@@ -53,13 +55,23 @@ async function ensurePendingManual(sub: SubmissionRow, reason: string): Promise<
 async function rejectLocally(sub: SubmissionRow, reason: string, external: string | null): Promise<void> {
   const ready = await ensurePendingManual(sub, '校对台审核结束')
   if (!ready) return
-  await getDb().run('UPDATE `review_submission` SET `external_status` = ? WHERE `id` = ?', [external, sub.id])
   await onReviewResult({ submissionId: sub.id, result: 'rejected', rejectedGate: 'external', reason, operator: OPERATOR })
+  // 终态标记必须在本地裁决落库之后写：裁决失败时不写，下一轮轮询会重试
+  if (external) await markExternal(sub.id, external)
+}
+
+async function markExternal(submissionId: string, status: string): Promise<void> {
+  await getDb().run('UPDATE `review_submission` SET `external_status` = ? WHERE `id` = ?', [status, submissionId])
 }
 
 /* ── 送审 ─────────────────────────────────────────────────────────── */
 
+/**
+ * 409 时能否接管平台已有单号。平台查询接口无法证明那张单是谁建的，所以只在
+ * 本单之前确实发出过送审请求、结果未知时才接管；首次送审就 409 说明是别人（其它系统 / 同名文案）的单。
+ */
 async function canAdopt(sub: SubmissionRow, title: string | null, reviewNo: string): Promise<boolean> {
+  if (sub.externalStatus !== SENDING) return false
   const db = getDb()
   const owner = await db.get<{ id: string }>('SELECT `id` FROM `review_submission` WHERE `external_review_no` = ?', [reviewNo])
   if (owner) return owner.id === sub.id
@@ -80,8 +92,15 @@ export async function sendSubmission(submissionId: string): Promise<void> {
     return
   }
 
+  // 先记下「送审已发出」，请求超时 / 5xx 后下一轮遇到 409 才知道平台上那张单可能是本单
+  await getDb().run(
+    "UPDATE `review_submission` SET `external_status` = ? WHERE `id` = ? AND `status` = 'submitted' AND `external_review_no` IS NULL",
+    [SENDING, sub.id],
+  )
+
   let reviewNo: string
   let label: string
+  let externalStatus: string | null = null
   try {
     const r = await submitText(
       { submitter: version.createdBy || config.defaultOperator, contentText: toSubmitText(version.title, version.sections) },
@@ -89,13 +108,13 @@ export async function sendSubmission(submissionId: string): Promise<void> {
     )
     reviewNo = r.review_no
     label = r.status_label || r.status
+    externalStatus = r.status
   } catch (e) {
     if (!(e instanceof JiaoduitaiError) || !e.permanent) {
       logger.warn({ submissionId, err: (e as Error).message }, 'jiaoduitai.send_retry_later')
       return
     }
-    // 409 + 已有单号：多半是上次送审成功但本地未落库（超时 / 重启）。只在确定是本单时接管：
-    // 该单号没被其它审核单占用，且没有别的同标题文案也在等送审（否则分不清平台上那张是谁的）
+    // 409 + 已有单号：可能是上次送审成功但本地未落库（超时 / 重启），条件见 canAdopt
     if (e.httpStatus === 409 && e.existingReviewNo && (await canAdopt(sub, version.title, e.existingReviewNo))) {
       reviewNo = e.existingReviewNo
       label = '沿用校对台已有在审单'
@@ -111,9 +130,9 @@ export async function sendSubmission(submissionId: string): Promise<void> {
   const now = toDb(utcNow())
   const results = [...sub.gateResults, gateResult('gate1', 'pass', `已送校对台（审核单 ${reviewNo}）：${label}`)]
   const w = await db.run(
-    `UPDATE \`review_submission\` SET \`external_review_no\` = ?, \`status\` = 'gate1', \`gate_results\` = ?, \`updated_at\` = ?
+    `UPDATE \`review_submission\` SET \`external_review_no\` = ?, \`external_status\` = ?, \`status\` = 'gate1', \`gate_results\` = ?, \`updated_at\` = ?
      WHERE \`id\` = ? AND \`status\` = 'submitted' AND \`external_review_no\` IS NULL`,
-    [reviewNo, JSON.stringify(results), now, sub.id],
+    [reviewNo, externalStatus, JSON.stringify(results), now, sub.id],
   )
   if (!w.affectedRows) {
     // 送审期间被撤回或人工接管：平台上的单不会自动取消，留日志便于在校对台处理
@@ -169,7 +188,7 @@ async function applyApproved(sub: SubmissionRow, r: ReviewByNo): Promise<void> {
     // 不能把未经确认的原稿当成审核后文案放行：转人工复核，由审核员在工作台裁决
     logger.error({ submissionId: sub.id, reviewNo: sub.externalReviewNo }, 'jiaoduitai.approved_without_text')
     const ready = await ensurePendingManual(sub, '校对台已通过，但未返回审核后文案，请人工复核')
-    if (ready) await getDb().run("UPDATE `review_submission` SET `external_status` = 'approved' WHERE `id` = ?", [sub.id])
+    if (ready) await markExternal(sub.id, 'approved')
     return
   }
 
@@ -180,8 +199,13 @@ async function applyApproved(sub: SubmissionRow, r: ReviewByNo): Promise<void> {
   }
   const parsed = parseReviewedText(text, submitted)
   const hash = contentHash(parsed.title, parsed.sections)
-  let approvedVersionId = submitted.id
-  if (hash !== submitted.contentHash) {
+  // 上一轮已建过同内容的审定版本（随后本地裁决失败）时复用，避免重试时重复建版本
+  const existing = await getDb().get<{ id: string }>(
+    "SELECT `id` FROM `copy_version` WHERE `copy_id` = ? AND `origin` = 'review' AND `content_hash` = ? LIMIT 1",
+    [sub.copyId, hash],
+  )
+  let approvedVersionId = existing?.id ?? submitted.id
+  if (!existing && hash !== submitted.contentHash) {
     const v = await insertVersion({
       copyId: sub.copyId,
       draftId: submitted.draftId,
@@ -199,8 +223,8 @@ async function applyApproved(sub: SubmissionRow, r: ReviewByNo): Promise<void> {
 
   const ready = await ensurePendingManual(sub, '校对台审核结束')
   if (!ready) return
-  await getDb().run("UPDATE `review_submission` SET `external_status` = 'approved' WHERE `id` = ?", [sub.id])
   await onReviewResult({ submissionId: sub.id, result: 'approved', approvedVersionId, operator: OPERATOR })
+  await markExternal(sub.id, 'approved')
   logger.info({ submissionId: sub.id, reviewNo: sub.externalReviewNo, approvedVersionId }, 'jiaoduitai.approved')
 }
 
