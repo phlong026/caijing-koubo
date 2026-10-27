@@ -183,6 +183,8 @@ export function registerAuthGuard(app: FastifyInstance): void {
       req.operator = user.username
     }
     if (PUBLIC_ROUTES.has(key)) return
+    // 桌面/单端口部署的前端静态资源（GET 非 /api）：匿名可加载，数据仍由各 API 的登录校验保护
+    if (config.staticDir && req.method === 'GET' && !req.url.startsWith('/api')) return
     if (!user) throw err.unauthorized()
     const roles = ROLE_RULES[key]
     if (roles && !roles.includes(user.role)) {

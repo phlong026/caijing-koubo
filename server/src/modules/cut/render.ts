@@ -28,7 +28,7 @@ async function detectSilences(input: string, noiseDb: number, minSilenceMs: numb
   const { spawn } = await import('node:child_process')
   const args = ['-i', input, ...silencedetectArgs(noiseDb, minSilenceMs)]
   return new Promise((resolve, reject) => {
-    const p = spawn('ffmpeg', ['-hide_banner', '-nostdin', ...args], { windowsHide: true })
+    const p = spawn(config.ffmpegPath, ['-hide_banner', '-nostdin', ...args], { windowsHide: true })
     let stderr = ''
     const timer = setTimeout(() => {
       p.kill()

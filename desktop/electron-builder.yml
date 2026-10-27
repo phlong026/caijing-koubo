@@ -1,0 +1,53 @@
+# 桌面版打包配置（mac dmg / win nsis）。
+# 前置（打包机执行一次）：
+#   1. server:  cd server && npm ci && npm run build   （dist 产物）
+#   2. 前端:    cd frontend && npm ci && npm run build （frontend/dist）
+#   3. ffmpeg:  cd desktop && npm run fetch:ffmpeg     （desktop/resources/<平台>/）
+#   4. 打包:    cd desktop && npm run dist:mac / dist:win
+appId: com.caijing.matrixworkshop
+productName: 矩阵工场
+copyright: 内部使用
+directories:
+  output: release
+# 直接使用本地已装好的 Electron dist（缓存 zip 曾因网络中断损坏；dist 本身完整可用）
+electronDist: node_modules/electron/dist
+files:
+  - main.mjs
+  - package.json
+asar: true
+extraResources:
+  # 后端：dist 产物 + 运行依赖（打包前 prune 到只留 dependencies）
+  - from: ../server/dist
+    to: server/dist
+  # 剪辑字体目录（含 README，字体文件由运营放置后随包分发）
+  - from: ../server/assets
+    to: server/assets
+  # 生产依赖（npm pkg:build 脚本同步到 .build/server-node，剔除 devDependencies）
+  - from: .build/server-node
+    to: server/node_modules
+  # 前端静态产物（由桌面服务同源托管）
+  - from: ../frontend/dist
+    to: web
+mac:
+  category: public.app-category.business
+  target:
+    - dmg
+  # 内部分发免签名：不注入开发者证书
+  identity: null
+  extraResources:
+    - from: resources/mac-arm64
+      to: bin
+      filter:
+        - ffmpeg
+win:
+  target:
+    - nsis
+  extraResources:
+    - from: resources/win-x64
+      to: bin
+      filter:
+        - ffmpeg.exe
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true

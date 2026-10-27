@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import fs from 'node:fs'
+import fsp from 'node:fs/promises'
+import path from 'node:path'
 import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify'
 import cors from '@fastify/cors'
 import multipart from '@fastify/multipart'
@@ -6,7 +9,7 @@ import { config } from './config.js'
 import { logger } from './log.js'
 import { ApiError, isApiError } from './errors.js'
 import { getDb } from './db/index.js'
-import { redis, queueStats, getQueueBackend } from './queue/index.js'
+import { getRedis, queueStats, getQueueBackend } from './queue/index.js'
 import { registerRoutes } from './routes.js'
 import { toDb, utcNow } from './lib/time.js'
 import { UPLOAD_LIMITS } from './modules/personas/types.js'
@@ -17,7 +20,32 @@ export function ok<T>(data: T): { ok: true; data: T } {
   return { ok: true as const, data }
 }
 
-export async function buildApp(): Promise<FastifyInstance> {
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.map': 'application/json',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.txt': 'text/plain; charset=utf-8',
+}
+
+export async function buildApp(opts: { staticDir?: string } = {}): Promise<FastifyInstance> {
   const app = Fastify({
     logger: false,
     bodyLimit: 2 * 1024 * 1024,
@@ -95,7 +123,28 @@ export async function buildApp(): Promise<FastifyInstance> {
     })
   })
 
+  // 前端静态托管（桌面/单端口部署）：GET 非 /api 未命中时回 index.html（SPA history 路由）。
+  // 手写而非 @fastify/static：Electron 内置 Node 20 不支持 require() ESM-only 依赖
+  // （该插件链上的 content-disposition 等），自己读文件 + mime 最可控。
+  const staticRoot = opts.staticDir ? path.resolve(opts.staticDir) : null
   app.setNotFoundHandler(async (req, reply) => {
+    if (staticRoot && req.method === 'GET' && !req.url.startsWith('/api')) {
+      const rel = decodeURIComponent(req.url.split('?')[0].split('#')[0])
+      // 路径穿越防护：normalize 后必须仍在 staticRoot 内
+      let file = path.join(staticRoot, path.normalize(rel).replace(/^([.]{2}[\\/])+/, ''))
+      if (!file.startsWith(staticRoot)) file = path.join(staticRoot, 'index.html')
+      try {
+        const st = await fsp.stat(file)
+        if (!st.isFile()) throw new Error('not a file')
+      } catch {
+        file = path.join(staticRoot, 'index.html') // SPA history 路由回退
+      }
+      reply.header('content-type', MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream')
+      // 带 hash 的构建产物可长缓存；index.html 必须每次校验
+      if (file.startsWith(path.join(staticRoot, 'assets'))) reply.header('cache-control', 'public, max-age=31536000, immutable')
+      else reply.header('cache-control', 'no-cache')
+      return reply.send(fs.createReadStream(file))
+    }
     return reply.status(404).send({
       ok: false,
       error: { code: 'not_found', message: `接口不存在：${req.method} ${req.url}` },
@@ -107,14 +156,17 @@ export async function buildApp(): Promise<FastifyInstance> {
     // ⚠️ redis.ping() 在连接断开时**不会 reject**，而是挂在 ioredis 的无限重连上，
     // 导致 /health 永远不返回（表现为 http=000）。必须自己加超时。
     let redisUp = false
-    try {
-      redisUp =
-        (await Promise.race([
-          redis.ping(),
-          new Promise<never>((_, rej) => setTimeout(() => rej(new Error('redis ping timeout')), 1500)),
-        ])) === 'PONG'
-    } catch {
-      redisUp = false
+    // memory 后端（桌面模式）不建 Redis 连接，直接视为不可用
+    if (getQueueBackend() === 'redis') {
+      try {
+        redisUp =
+          (await Promise.race([
+            getRedis().ping(),
+            new Promise<never>((_, rej) => setTimeout(() => rej(new Error('redis ping timeout')), 1500)),
+          ])) === 'PONG'
+      } catch {
+        redisUp = false
+      }
     }
     let dbUp = false
     let dialect = 'unknown'

@@ -7,7 +7,7 @@ Object.assign(process.env,{DB_DRIVER:'sqlite',DB_SQLITE_PATH:join(temp,'test.db'
 const {initDb,closeAll}=await import('../src/db/index.js')
 const {runMigrations}=await import('../src/db/migrate.js')
 const {buildApp}=await import('../src/app.js')
-const {redis}=await import('../src/queue/index.js')
+const {getRedis}=await import('../src/queue/index.js')
 const db=await initDb();await runMigrations();const app=await buildApp()
 let passed=0
 async function req(method:string,path:string,body?:unknown,status=200){const r=await app.inject({method:method as any,url:'/api'+path,headers:{'x-operator':'workspace-regression'},...(body===undefined?{}:{payload:body as any})});assert.equal(r.statusCode,status,r.body);return r.json().data}
@@ -91,7 +91,7 @@ try{
  pass('uploaded Markdown preserves heading levels and paragraph counts')
  console.log(`${passed} workspace regression groups passed`)
 }finally{
- await app.close();redis.disconnect();await closeAll()
+ await app.close();getRedis().disconnect();await closeAll()
  if(!resolve(temp).startsWith(resolve(tmpdir())+sep))throw new Error('Unexpected test directory')
  rmSync(temp,{recursive:true,force:true})
 }

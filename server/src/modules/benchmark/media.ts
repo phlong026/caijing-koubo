@@ -5,7 +5,7 @@ import { err } from '../../errors.js'
 import { getVideoById } from './videos.js'
 import { fetchVideoDetail } from '../../integrations/tikhub/client.js'
 import { config } from '../../config.js'
-import { getQueueBackend, redis } from '../../queue/index.js'
+import { getQueueBackend, getRedis } from '../../queue/index.js'
 
 type PlaybackEntry = { url: string; title: string; expires: number }
 
@@ -19,7 +19,7 @@ const playbackKey = (id: string) => `${config.queuePrefix}:playback:${id}`
 
 async function getPlayback(id: string): Promise<PlaybackEntry | null> {
   if (getQueueBackend() === 'redis') {
-    const raw = await redis.get(playbackKey(id)).catch(() => null)
+    const raw = await getRedis().get(playbackKey(id)).catch(() => null)
     if (raw) {
       try {
         return JSON.parse(raw) as PlaybackEntry
@@ -36,7 +36,7 @@ async function getPlayback(id: string): Promise<PlaybackEntry | null> {
 
 async function setPlayback(id: string, entry: PlaybackEntry): Promise<void> {
   if (getQueueBackend() === 'redis') {
-    await redis.set(playbackKey(id), JSON.stringify(entry), 'PX', PLAYBACK_TTL_MS).catch(() => undefined)
+    await getRedis().set(playbackKey(id), JSON.stringify(entry), 'PX', PLAYBACK_TTL_MS).catch(() => undefined)
     return
   }
   if (localPlayback.size >= 50) localPlayback.delete(localPlayback.keys().next().value!)

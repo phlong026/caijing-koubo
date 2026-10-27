@@ -29,15 +29,38 @@ export function setQueueBackend(b: QueueBackend): void {
   logger.warn({ backend: b }, b === 'memory' ? 'queue.backend_memory：使用进程内队列（不持久化、单实例）' : 'queue.backend_redis')
 }
 
-/** BullMQ 连接：maxRetriesPerRequest 必须为 null（长任务要求） */
-export const redis = new Redis({
-  host: config.redis.host,
-  port: config.redis.port,
-  password: config.redis.password || undefined,
-  db: config.redis.db,
-  maxRetriesPerRequest: null,
-  enableReadyCheck: true,
-})
+/**
+ * 惰性创建的 BullMQ 连接：maxRetriesPerRequest 必须为 null（长任务要求）。
+ * QUEUE_BACKEND=memory（桌面模式）时不 import 就不连；首次真正用到才建连。
+ */
+let _redis: Redis | null = null
+export function getRedis(): Redis {
+  if (_redis) return _redis
+  const r = new Redis({
+    host: config.redis.host,
+    port: config.redis.port,
+    password: config.redis.password || undefined,
+    db: config.redis.db,
+    maxRetriesPerRequest: null,
+    enableReadyCheck: true,
+  })
+  r.on('error', (e: Error) => {
+    const now = Date.now()
+    if (now - lastRedisErrorLog > 60_000) {
+      lastRedisErrorLog = now
+      logger.error({ err: e.message, host: config.redis.host, port: config.redis.port }, 'redis.error')
+    }
+  })
+  r.on('ready', () => {
+    redisHealthy = true
+    logger.info({ host: config.redis.host, port: config.redis.port }, 'redis.connected')
+  })
+  r.on('close', () => {
+    redisHealthy = false
+  })
+  _redis = r
+  return r
+}
 
 /**
  * Redis 连接健康标记。
@@ -48,24 +71,11 @@ export const redis = new Redis({
 let redisHealthy = false
 let lastRedisErrorLog = 0
 
-redis.on('error', (e: Error) => {
-  const now = Date.now()
-  if (now - lastRedisErrorLog > 60_000) {
-    lastRedisErrorLog = now
-    logger.error({ err: e.message, host: config.redis.host, port: config.redis.port }, 'redis.error')
-  }
-})
-redis.on('ready', () => {
-  redisHealthy = true
-  logger.info({ host: config.redis.host, port: config.redis.port }, 'redis.connected')
-})
-redis.on('close', () => {
-  redisHealthy = false
-})
+
 
 /** Redis 当前是否可用（供路由层决定是否走队列） */
 export function isRedisHealthy(): boolean {
-  return redisHealthy && redis.status === 'ready'
+  return redisHealthy && getRedis().status === 'ready'
 }
 
 export const QUEUE_NAMES = {
@@ -105,7 +115,7 @@ export function getQueue(name: QueueName): Queue {
     queueMap.set(
       key,
       new Queue(name, {
-        connection: redis as any,
+        connection: getRedis() as any,
         prefix: config.queuePrefix,
         defaultJobOptions: { removeOnComplete: 500, removeOnFail: 1000 },
       }),
@@ -115,7 +125,7 @@ export function getQueue(name: QueueName): Queue {
 }
 
 export function getQueueEvents(name: QueueName): QueueEvents {
-  return new QueueEvents(name, { connection: redis as any, prefix: config.queuePrefix })
+  return new QueueEvents(name, { connection: getRedis() as any, prefix: config.queuePrefix })
 }
 
 /**
@@ -193,16 +203,17 @@ export async function pruneStaleRepeatKeys(
   const base = `${config.queuePrefix}:${queueName}:repeat:${schedulerId}`
   const cutoff = Date.now() - olderThanMs
   try {
-    const keys = await redis.keys(`${base}:*`)
+    const r = getRedis()
+    const keys = await r.keys(`${base}:*`)
     const stale: string[] = []
     for (const k of keys) {
-      const raw = await redis.hget(k, 'timestamp')
+      const raw = await r.hget(k, 'timestamp')
       const ts = raw ? Number(raw) : Number.NaN
       // 没有 timestamp 字段的（老格式）也一并视为可清理
       if (!Number.isFinite(ts) || ts < cutoff) stale.push(k)
     }
     if (!stale.length) return 0
-    await redis.del(...stale)
+    await r.del(...stale)
     logger.info({ queue: queueName, schedulerId, pruned: stale.length }, 'queue.repeat_pruned')
     return stale.length
   } catch (e) {
@@ -268,7 +279,7 @@ export function registerWorker(
   }
   if (workerMap.has(queueName)) return workerMap.get(queueName)!
   const worker = new Worker(queueName, processor as any, {
-    connection: redis as any,
+    connection: getRedis() as any,
     prefix: config.queuePrefix,
     concurrency: opts.concurrency ?? 1,
     limiter: opts.limiter,
@@ -314,6 +325,10 @@ export async function closeQueues(): Promise<void> {
   for (const q of queueMap.values()) await q.close().catch(() => {})
   workerMap.clear()
   queueMap.clear()
+  if (_redis) {
+    await _redis.quit().catch(() => undefined)
+    _redis = null
+  }
 }
 
 /**
@@ -332,18 +347,19 @@ export async function warnIfQueuePrefixShared(): Promise<void> {
       ? `mysql:${config.db.host}:${config.db.port}/${config.db.database}`
       : `sqlite:${config.db.sqlitePath}`
   const key = `${config.queuePrefix}:instance:${instanceId}`
+  const r = getRedis()
   if (!stopHeartbeat) {
-    stopHeartbeat = startHeartbeat(redis, key, dbTag, (e) => {
+    stopHeartbeat = startHeartbeat(r, key, dbTag, (e) => {
       logger.debug({ err: String(e) }, 'queue.instance_heartbeat_failed')
     })
   }
   try {
     // 列出同前缀下的其他实例心跳
-    const keys = await redis.keys(`${config.queuePrefix}:instance:*`)
+    const keys = await r.keys(`${config.queuePrefix}:instance:*`)
     const others: string[] = []
     for (const k of keys) {
       if (k === key) continue
-      const v = await redis.get(k)
+      const v = await r.get(k)
       if (v && v !== dbTag) others.push(`${k.replace(`${config.queuePrefix}:instance:`, 'pid=')}=>${v}`)
     }
     if (others.length) {

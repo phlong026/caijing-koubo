@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process'
+import { config } from '../../../config.js'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { config } from '../../../config.js'
 import { normalizeGeneratedVideo } from '../../../media/inspect.js'
 import type { MaterialReplacement } from '../types.js'
 
@@ -35,7 +35,7 @@ const TIMEOUT_MS = 600_000
 
 function runFfmpeg(args: string[], timeoutMs = TIMEOUT_MS): Promise<void> {
   return new Promise((resolve, reject) => {
-    const p = spawn('ffmpeg', ['-y', '-v', 'error', '-nostdin', ...args], { windowsHide: true })
+    const p = spawn(config.ffmpegPath, ['-y', '-v', 'error', '-nostdin', ...args], { windowsHide: true })
     let stderr = ''
     const timer = setTimeout(() => {
       p.kill()
