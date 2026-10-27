@@ -99,7 +99,10 @@ try {
       '--host',
       '127.0.0.1',
     ],
-    { cwd: frontendRoot, env: { ...process.env, VITE_PROXY_TARGET: `http://127.0.0.1:${apiPort}` } },
+    {
+      cwd: frontendRoot,
+      env: { ...process.env, VITE_PROXY_TARGET: `http://127.0.0.1:${apiPort}`, VITE_ENABLE_REVIEW_WORKBENCH: '1' },
+    },
   )
   await waitHttp(`${base}/`, 60_000)
   await waitHttp(`${base}/api/health`, 10_000)
