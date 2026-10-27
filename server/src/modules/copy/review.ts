@@ -55,6 +55,7 @@ export async function submitForReview(
   draftId: string,
   rev: number | null,
   operator: string,
+  opts: { stubRejectAt?: StubRejectSim | null } = {},
 ): Promise<SubmitResult> {
   const db = getDb()
   const copy = await requireCopy(copyId, db)
@@ -178,7 +179,7 @@ export async function submitForReview(
       .then((m) => m.sendSubmission(submissionId))
       .catch((e) => logger.error({ err: (e as Error).message, submissionId }, 'jiaoduitai.send_failed'))
   } else if (useStub) {
-    void advanceStub(submissionId, template?.riskHint ?? DEFAULT_RISK_HINT).catch((e) => {
+    void advanceStub(submissionId, template?.riskHint ?? DEFAULT_RISK_HINT, opts.stubRejectAt).catch((e) => {
       logger.error({ err: (e as Error).message, submissionId }, 'review.stub.advance_failed')
     })
   }
@@ -225,7 +226,13 @@ export async function resumeStubSubmissions(): Promise<number> {
   return rows.length
 }
 
-async function advanceStub(submissionId: string, riskHint: string): Promise<void> {
+/** 审核桩联调：在指定关卡模拟自动审核不通过（§9.8 场景 4「第 2 关退回」） */
+export interface StubRejectSim {
+  gate: 'gate1' | 'gate2' | 'gate3'
+  reason?: string | null
+}
+
+async function advanceStub(submissionId: string, riskHint: string, rejectAt?: StubRejectSim | null): Promise<void> {
   const db = getDb()
   const stepMs = Math.max(0, config.copy.reviewStubStepMs)
 
@@ -244,6 +251,17 @@ async function advanceStub(submissionId: string, riskHint: string): Promise<void
     if (sub.status !== g.entry) continue
 
     if (stepMs) await new Promise((r) => setTimeout(r, stepMs))
+    if (rejectAt?.gate === g.gate) {
+      // 走与真实审核模块相同的退回回写；期间被撤回则因状态不符被拒，桩就此结束
+      await onReviewResult({
+        submissionId,
+        result: 'rejected',
+        rejectedGate: g.gate,
+        reason: rejectAt.reason?.trim() || `${GATE_LABELS[g.gate]}未通过（审核桩联调模拟）`,
+        operator: 'review-stub',
+      }).catch((e) => logger.info({ submissionId, err: (e as Error).message }, 'review.stub.reject_skipped'))
+      return
+    }
     const results = [...sub.gateResults, gateResult(g.gate, 'pass', g.reason)]
     const nextStatus = g.gate === 'gate3' ? 'pending_manual' : g.gate
 
@@ -320,6 +338,11 @@ export async function onReviewProgress(submissionId: string, gate: string, resul
 
 /* ── 审核结果回写（FR-R5 / AC-R5）────────────────────────────────── */
 
+/** 进行中的审核单状态：可以被退回 */
+const IN_PROGRESS_STATUSES = ['submitted', 'gate1', 'gate2', 'gate3', 'pending_manual']
+/** 退回关卡的合法取值（manual = 人工复核退回；external = 校对台驳回 / 拒收） */
+const REJECT_GATES = ['gate1', 'gate2', 'gate3', 'manual', 'external']
+
 export interface ReviewResultInput {
   submissionId: string
   copyVersionId?: string | null
@@ -339,16 +362,27 @@ export async function onReviewResult(input: ReviewResultInput): Promise<{ copyId
   if (!sub) throw err.notFound('审核单不存在')
   if (sub.status === 'withdrawn') throw err.invalidState('该审核单已撤回，结果不再回写')
 
-  // P1-8①：裁决只允许处理**待人工复核**的审核单，且它必须是该 copy 当前的审核单。
-  // 之前不校验，已退回的旧审核单可以再被「通过」，gate1 的审核单可以跳过后续关卡直接通过，
-  // 结果会把已撤回/已修订的 copy 改回 approved 并绑定旧版本。
-  // 说明：真实审核模块按契约回写时也走本接口；若对方在 gate1/gate2 阶段就给出结果，
-  // 需要产品确认是否放宽——当前按「不跳过关卡」的保守策略实现。
-  if (sub.status !== 'pending_manual') {
-    throw err.invalidState(
-      `审核单当前状态（${sub.status}）不接受裁决，仅「待人工复核」可回写结果`,
-      { status: sub.status, submissionId: sub.id },
-    )
+  // P1-8① 决策（2026-10-17）：
+  //  - 「通过」只能在待人工复核时给出，不允许跳过关卡；
+  //  - 「退回」可以在任一进行中的关卡给出（第 1~3 关自动审核不通过即退回，§9.8 场景 4）。
+  // 且审核单必须是该 copy 当前的审核单，避免旧单把已撤回 / 已修订的 copy 改回 approved。
+  if (input.result === 'approved' && sub.status !== 'pending_manual') {
+    throw err.invalidState(`审核单当前状态（${sub.status}）不能直接通过，仅「待人工复核」可给出通过结论`, {
+      status: sub.status,
+      submissionId: sub.id,
+    })
+  }
+  if (input.result === 'rejected' && !IN_PROGRESS_STATUSES.includes(sub.status)) {
+    throw err.invalidState(`审核单当前状态（${sub.status}）已结束，不再接受退回`, {
+      status: sub.status,
+      submissionId: sub.id,
+    })
+  }
+  if (input.copyVersionId && input.copyVersionId !== sub.copyVersionId) {
+    throw err.invalidState('回写的版本与审核单锁定的版本不一致', {
+      expected: sub.copyVersionId,
+      provided: input.copyVersionId,
+    })
   }
 
   const now = toDb(utcNow())
@@ -391,7 +425,12 @@ export async function onReviewResult(input: ReviewResultInput): Promise<{ copyId
   // 退回：status=rejected，解锁可编辑；原因必填（FR-R5）
   const reason = String(input.reason ?? '').trim()
   if (!reason) throw err.badRequest('退回必须填写原因')
-  const rejectedGate = input.rejectedGate ?? 'manual'
+  // 未指明关卡时取审核单当前所处的关卡；待人工复核阶段退回记为 manual
+  const rejectedGate =
+    input.rejectedGate ?? (sub.status === 'pending_manual' ? 'manual' : sub.status === 'submitted' ? 'gate1' : sub.status)
+  if (!REJECT_GATES.includes(rejectedGate)) {
+    throw err.badRequest(`rejectedGate 只能是 ${REJECT_GATES.join(' / ')}`, { rejectedGate })
+  }
 
   await db.tx(async (t) => {
     const results = [
@@ -403,8 +442,8 @@ export async function onReviewResult(input: ReviewResultInput): Promise<{ copyId
     const w = await t.run(
       `UPDATE \`review_submission\` SET \`status\` = 'rejected', \`rejected_gate\` = ?, \`reason\` = ?,
         \`gate_results\` = ?, \`decided_by\` = ?, \`updated_at\` = ?
-       WHERE \`id\` = ? AND \`status\` = 'pending_manual'`,
-      [rejectedGate, reason, JSON.stringify(results), input.operator ?? 'system', now, sub.id],
+       WHERE \`id\` = ? AND \`status\` = ?`,
+      [rejectedGate, reason, JSON.stringify(results), input.operator ?? 'system', now, sub.id, sub.status],
     )
     if (!w.affectedRows) throw err.invalidState('审核单状态已变化，裁决未生效')
     await t.run(

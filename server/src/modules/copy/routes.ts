@@ -57,6 +57,7 @@ import {
   onReviewResult,
   submitForReview,
   withdrawReview,
+  type StubRejectSim,
 } from './review.js'
 import { listPersonasForCopy } from './persona-bridge.js'
 import { getVersion, listVersions, getSubmission, getGeneration, listVariantsByGeneration } from './repo.js'
@@ -683,9 +684,20 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
 
   app.post('/copy/:id/submit', async (req) => {
     const { id } = req.params as { id: string }
-    const body = (req.body ?? {}) as { draftId?: string; rev?: number }
+    const body = (req.body ?? {}) as { draftId?: string; rev?: number; stubRejectAt?: string; stubRejectReason?: string }
     if (!body.draftId) throw err.badRequest('draftId 必填')
-    const r = await submitForReview(id, body.draftId, body.rev === undefined ? null : toInt(body.rev), req.operator)
+    // 审核桩联调参数（仅桩开启时有效）：在指定关卡模拟退回，用于 §9.8 场景 4
+    let stubRejectAt: StubRejectSim | null = null
+    if (body.stubRejectAt !== undefined) {
+      assertReviewStubEnabled()
+      if (!['gate1', 'gate2', 'gate3'].includes(body.stubRejectAt)) {
+        throw err.badRequest('stubRejectAt 只能是 gate1 / gate2 / gate3')
+      }
+      stubRejectAt = { gate: body.stubRejectAt as StubRejectSim['gate'], reason: body.stubRejectReason ?? null }
+    }
+    const r = await submitForReview(id, body.draftId, body.rev === undefined ? null : toInt(body.rev), req.operator, {
+      stubRejectAt,
+    })
     return ok(r)
   })
 

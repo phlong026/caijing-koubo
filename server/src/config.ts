@@ -204,11 +204,12 @@ export const config = {
     generateItemConcurrency: num('COPY_GENERATE_ITEM_CONCURRENCY', 3),
     llmRetry: num('COPY_LLM_RETRY', 1),
     /**
-     * 审核桩开关（W1）：开启时提交后自动模拟三关并开放人工裁决接口，仅供审核模块就绪前联调。
-     * 桩裁决接口虽已限定审核员角色，但会跳过真实三关，
-     * 因此生产环境默认关闭；关闭后审核单停在「已提交」，等待真实审核模块回写结果。
+     * 审核桩开关（W1）：开启时提交后自动模拟三关并开放人工裁决接口，仅供本地联调 / smoke。
+     * 桩裁决接口虽已限定审核员角色，但会跳过真实三关。
+     * 决策 D3（2026-10-17）：测试期间不开审核桩 → 所有环境缺省关闭，需显式 REVIEW_STUB_ENABLED=true；
+     * 关闭后审核单停在「已提交」，等真实审核（校对台）回写结果。
      */
-    reviewStubEnabled: bool('REVIEW_STUB_ENABLED', str('NODE_ENV', 'development') !== 'production'),
+    reviewStubEnabled: bool('REVIEW_STUB_ENABLED', false),
     /** 审核桩：每关模拟耗时（毫秒），smoke 可调小 */
     reviewStubStepMs: num('REVIEW_STUB_STEP_MS', 300),
   },
