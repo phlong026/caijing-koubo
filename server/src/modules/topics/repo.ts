@@ -23,6 +23,10 @@ export interface TopicRow {
   methodName: string | null
   /** 按哪个人物的人设生成；分配给其他人物时前端提示 */
   originPersonaId: string | null
+  /** 生成时启发式打分 0~100（辅助人工挑选；旧数据为 0/空） */
+  score: number | null
+  /** 打分依据明细 */
+  scoreReasons: string[] | null
   newsTitle: string | null
   sentAt: string | null
   createdBy: string | null
@@ -44,6 +48,8 @@ function mapTopic(r: Record<string, any>): TopicRow {
     methodId: r.method_id ?? null,
     methodName: r.method_name ?? null,
     originPersonaId: r.origin_persona_id ?? null,
+    score: r.score == null ? null : Number(r.score),
+    scoreReasons: jdec<string[] | null>(r.score_reasons, null),
     newsTitle: r.news_title ?? null,
     sentAt: fromDb(r.sent_at),
     createdBy: r.created_by ?? null,
@@ -123,13 +129,18 @@ export async function listTopics(q: Record<string, unknown>): Promise<PageResult
     params.push(String(q.batchId))
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
+  // sort=score：评分降序辅助人工挑选（旧数据/未打分为 -1 沉底），其余按时间倒序
+  const orderSql =
+    String(q.sort) === 'score'
+      ? 'ORDER BY COALESCE(t.`score`, -1) DESC, t.`created_at` DESC'
+      : 'ORDER BY t.`created_at` DESC'
   const total =
     (await db.get<{ c: number }>(`SELECT COUNT(*) AS c FROM \`topic\` t ${whereSql}`, params))?.c ?? 0
   const rows = await db.all<Record<string, any>>(
     `SELECT t.*, n.\`title\` AS news_title, m.\`name\` AS method_name
      FROM \`topic\` t LEFT JOIN \`news_item\` n ON n.\`id\` = t.\`source_id\`
      LEFT JOIN \`topic_prompt_template\` m ON m.\`id\` = t.\`method_id\`
-     ${whereSql} ORDER BY t.\`created_at\` DESC LIMIT ? OFFSET ?`,
+     ${whereSql} ${orderSql} LIMIT ? OFFSET ?`,
     [...params, p.limit, p.offset],
   )
   return pageResult(rows.map(mapTopic), total, p)
@@ -147,6 +158,8 @@ export interface CreateTopicInput {
   batchId?: string | null
   methodId?: string | null
   originPersonaId?: string | null
+  score?: number | null
+  scoreReasons?: string[] | null
   createdBy?: string | null
 }
 
@@ -160,8 +173,8 @@ export async function createTopic(input: CreateTopicInput, db = getDb()): Promis
     throw err.invalidState('非 benchmark 来源选题必须经 assigned 后由送入接口置为 sent')
   }
   await db.run(
-    `INSERT INTO \`topic\` (\`id\`, \`source\`, \`source_id\`, \`title\`, \`direction\`, \`hook\`, \`rationale\`, \`persona_ids\`, \`status\`, \`batch_id\`, \`method_id\`, \`origin_persona_id\`, \`created_by\`, \`created_at\`)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO \`topic\` (\`id\`, \`source\`, \`source_id\`, \`title\`, \`direction\`, \`hook\`, \`rationale\`, \`persona_ids\`, \`status\`, \`batch_id\`, \`method_id\`, \`origin_persona_id\`, \`score\`, \`score_reasons\`, \`created_by\`, \`created_at\`)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       input.source,
@@ -175,6 +188,8 @@ export async function createTopic(input: CreateTopicInput, db = getDb()): Promis
       input.batchId ?? null,
       input.methodId ?? null,
       input.originPersonaId ?? null,
+      input.score ?? null,
+      input.scoreReasons?.length ? jenc(input.scoreReasons) : null,
       input.createdBy ?? null,
       toDb(utcNow()),
     ],

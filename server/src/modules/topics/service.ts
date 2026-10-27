@@ -14,6 +14,7 @@ import {
   type TemplateRow,
 } from './repo.js'
 import { personaMethods, pickMethod } from './methods.js'
+import { scoreTopic } from './scoring.js'
 import { logger } from '../../log.js'
 import { err } from '../../errors.js'
 import { clamp, jdec } from '../../lib/util.js'
@@ -96,6 +97,44 @@ export function complianceBlock(p: Persona): string {
 
 /** 兜底提示词（模板缺失时使用）：同样带合规约束，不能是无约束的一句话 */
 const FALLBACK_TEMPLATE = '请基于下方资讯生成口播选题，包含 title / direction / hook / rationale。'
+
+/**
+ * ② 标题公式：代码固定追加（与人物档案块同策略，运营自建模板也生效）。
+ * 对齐同行标题工程：数字+悬念 / 身份代入 / 反常识纠偏 / 结论前置，禁震惊体。
+ */
+const TITLE_FORMULA_BLOCK = [
+  '【标题公式】title 必须是 24 字以内、口语可播的口播标题，优先套用以下结构之一：',
+  '- 数字+悬念：如「3 个信号」「2 个新变化」；',
+  '- 身份代入：如「如果你手里有…」「普通人该怎么看…」；',
+  '- 反常识/纠偏：如「别再…了」「其实…」；',
+  '- 结论前置：先给一句判断，再留悬念。',
+  '禁止「惊！」「速看」式夸张震惊体，不得出现收益承诺类表述。',
+].join('\n')
+
+/**
+ * ① 对标爆款参考（few-shot）：取互动量最高的爆款标题注入提示词，
+ * 让模型学习已验证的切入角度与标题结构。同行方法论的「对标拆解法」，
+ * 数据来自对标模块的爆款判定（is_hot）。无爆款数据时返回空串、不注入。
+ */
+async function hotExamplesBlock(): Promise<string> {
+  const db = getDb()
+  const rows = await db.all<{ title: string; author: string | null; interact: number }>(
+    `SELECT v.\`title\`, COALESCE(NULLIF(v.\`author_nickname\`, ''), a.\`nickname\`) AS author, v.\`interact_total\` AS interact
+     FROM \`benchmark_video\` v LEFT JOIN \`benchmark_account\` a ON a.\`id\` = v.\`account_id\`
+     WHERE v.\`is_hot\` = 1 AND COALESCE(v.\`title\`, '') != ''
+       AND NOT EXISTS (SELECT 1 FROM \`benchmark_account\` demo WHERE demo.\`id\` = v.\`account_id\` AND demo.\`added_by\` = 'smoke' AND demo.\`nickname\` LIKE '示例账号_%')
+       AND COALESCE(v.\`author_nickname\`, '') NOT LIKE '示例账号_%'
+     ORDER BY v.\`interact_total\` DESC LIMIT 5`,
+  )
+  if (!rows.length) return ''
+  const lines = rows.map(
+    (r, i) => `${i + 1}. 《${sanitizeText(r.title, 80)}》—— ${r.author || '对标账号'}（互动 ${r.interact}）`,
+  )
+  return [
+    '【对标爆款参考】以下是对标账号验证过的爆款标题，只学习其切入角度与标题结构，禁止照抄原文：',
+    ...lines,
+  ].join('\n')
+}
 
 export interface ParsedTopic {
   title: string
@@ -189,6 +228,8 @@ export async function runGeneration(batchId: string): Promise<void> {
   const defaultTemplate = await getDefaultTemplate()
   const chosen: TemplateRow | null =
     batch.templateId && batch.templateId !== AUTO_METHOD ? await getTemplate(batch.templateId) : null
+  // ① 对标爆款参考整批取一次（生成中途数据不变）；无爆款数据时为空串
+  const hotExamples = await hotExamplesBlock()
 
   /**
    * 每个「资讯 × 人物」组合用哪个选题方法（结果只取决于序号，队列重试时不变）：
@@ -229,17 +270,31 @@ export async function runGeneration(batchId: string): Promise<void> {
         logger.info({ batchId, newsId: news.id, personaId: persona.id }, 'topic.subtask_skipped_done')
         continue
       }
+      // ④ 历史去重：同一资讯的历史角度（跨批次/跨人物）+ 该人物已送入文案的历史选题，提示模型避开
+      const historyRows = await db.all<{ title: string }>(
+        "SELECT `title` FROM `topic` WHERE `source_id` = ? OR (`origin_persona_id` = ? AND `status` = 'sent') ORDER BY `created_at` DESC LIMIT 60",
+        [news.id, persona.id],
+      )
+      const skipTitles = new Set<string>([
+        ...historyRows.map((r) => r.title.trim()),
+        ...previous.map((r) => r.title.trim()),
+      ])
       try {
         // P1-6：人物档案与合规约束固定追加，不依赖模板占位符；
         // 模板缺失时用带约束的兜底提示词，不再是「无合规约束的一句话」。
+        const avoid = [...skipTitles].slice(0, 40)
         const userContent = [
           fillPersona(template?.content ?? FALLBACK_TEMPLATE, persona),
           personaBlock(persona),
           complianceBlock(persona),
+          hotExamples,
           buildNewsBlock([news]),
-          `已存在选题（不要重复）：${previous.map((r) => r.title).join("；")}`,
+          TITLE_FORMULA_BLOCK,
+          `已存在选题（不要重复，请避开这些角度与措辞）：${avoid.length ? avoid.join('；') : '（暂无）'}`,
           `【输出要求】请生成 ${remaining} 条互不重复的选题，JSON 结构：\n{"topics":[{"title":"","direction":"","hook":"","rationale":""}]}`,
-        ].join('\n\n')
+        ]
+          .filter(Boolean)
+          .join('\n\n')
         const messages: ChatMessage[] = [
           {
             role: 'system',
@@ -280,11 +335,16 @@ export async function runGeneration(batchId: string): Promise<void> {
           for (const t of parsed) {
             if (!needed) break
             if (titles.has(t.title.trim())) continue
+            // ④ 生成结果再过滤一次：模型没避开的历史标题不落库
+            if (skipTitles.has(t.title.trim())) continue
+            // ③ 启发式打分落库，供候选列表按评分排序挑选
+            const s = scoreTopic(t)
             await createTopic({
               source: 'news', sourceId: news.id, title: t.title,
               direction: t.direction, hook: t.hook, rationale: t.rationale,
               personaIds: [persona.id], status: 'assigned', batchId,
               methodId: template?.id ?? null, originPersonaId: persona.id,
+              score: s.score, scoreReasons: s.reasons,
               createdBy: batch.createdBy,
             }, tx)
             titles.add(t.title.trim())
