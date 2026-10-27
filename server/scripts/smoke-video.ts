@@ -226,6 +226,8 @@ const packItems = await api('GET', `/material-packs/${packId}/items`)
 check('素材条目探测（时长/图片识别）', (packItems.data ?? []).length === 3 && (packItems.data ?? []).filter((x: any) => x.isImage).length === 1, packItems.data)
 const kg = await api('POST', '/material-keyword-groups', { name: 'e2e 关键词组', keywords: ['费用', '收益', '费率'], packIds: [packId], durationMinMs: 500, durationMaxMs: 2000 })
 check('创建关键词组', kg.status === 200, kg.raw)
+const kgList = await api('GET', '/material-keyword-groups')
+check('关键词组列表（视频创作页加载即调用）', kgList.status === 200 && (kgList.data ?? []).some((g: any) => g.id === kg.data?.id), kgList.raw)
 
 const preview = await api('POST', '/video/mixcut/preview', { copyId, keywordGroupIds: [kg.data.id] })
 check('匹配预览（纯计算命中）', preview.status === 200 && (preview.data?.matches ?? []).length >= 2, preview.data?.matches)

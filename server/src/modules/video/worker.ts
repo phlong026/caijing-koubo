@@ -42,6 +42,10 @@ export function registerVideoWorker(): void {
 }
 
 export async function scheduleVideoPollSweep(): Promise<void> {
+  // 周期 job 投到独立队列，必须有消费者：缺了它 waiting 永不推进、生成中永不轮询（smoke 手动调 runVideoSweep 掩盖过）
+  registerWorker(QUEUE_NAMES.videoPollSweep, async () => {
+    await runVideoSweep().catch((e) => logger.error({ err: (e as Error).message }, 'video.sweep_failed'))
+  })
   await scheduleRepeatable(QUEUE_NAMES.videoPollSweep, 'video-poll-sweep', config.video.pollIntervalMs, 'sweep')
   await runVideoSweep().catch((e) => logger.warn({ err: (e as Error).message }, 'video.sweep.boot_failed'))
 }

@@ -52,3 +52,37 @@ jobs:
       # ESLint + Prettier 格式检查（P3-1）
       - run: npm run lint
       - run: npm run build
+
+  # 浏览器端到端：隔离后端（临时 SQLite + 内存队列 + 第三方 mock）+ Vite + Playwright Chromium，
+  # 跑人物库（32 项）与主链路 选题→文案→审核→视频→剪辑→复审→发布→任务中心（28 项）
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            frontend/package-lock.json
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: npm ci
+        working-directory: server
+      - run: npm ci
+        working-directory: frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: npm run e2e
+        working-directory: frontend
+        env:
+          E2E_ARTIFACTS: e2e-artifacts
+      - name: Upload screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: frontend/e2e-artifacts
+          if-no-files-found: ignore

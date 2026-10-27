@@ -22,7 +22,9 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
 const BASE = process.env.E2E_BASE || 'http://127.0.0.1:5173'
 const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'people-e2e-'))
 const FX = path.join(OUT, 'fx')
-const SHOTS = path.join(OUT, 'shots')
+const SHOTS = process.env.E2E_ARTIFACTS
+  ? path.resolve(process.env.E2E_ARTIFACTS, 'people-library')
+  : path.join(OUT, 'shots')
 fs.mkdirSync(FX, { recursive: true })
 fs.mkdirSync(SHOTS, { recursive: true })
 
@@ -98,13 +100,26 @@ await ctx.addInitScript((t) => {
 }, tokens.ops)
 await ctx.addCookies([{ name: 'mw_token', value: tokens.ops, url: BASE }])
 const page = await ctx.newPage()
-/** 以审核员身份执行一段操作（四眼原则），结束后切回运营 */
+/**
+ * 切换登录身份：换令牌与媒体 Cookie 后重载页面（登录态在内存里，只改 localStorage 页面仍是原身份），
+ * 再选回当前验收人物。核验 / 审核按钮按角色渲染，所以必须真切身份。
+ */
+async function switchTo(token) {
+  await page.evaluate((t) => localStorage.setItem('mw_token', t), token)
+  await ctx.addCookies([{ name: 'mw_token', value: token, url: BASE }])
+  await page.reload()
+  await page.locator('.people-card', { hasText: NAME }).first().click({ timeout: 15000 })
+  await page.waitForFunction((n) => document.querySelector('.people-detail')?.innerText.includes(n), NAME, {
+    timeout: 8000,
+  })
+}
+/** 以审核员身份执行一段操作（四眼原则），结束后切回运营；调用方在 fn 内外各自重新打开所需 Tab / 抽屉 */
 async function asReviewer(fn) {
-  await page.evaluate((t) => localStorage.setItem('mw_token', t), tokens.reviewer)
+  await switchTo(tokens.reviewer)
   try {
     return await fn()
   } finally {
-    await page.evaluate((t) => localStorage.setItem('mw_token', t), tokens.ops)
+    await switchTo(tokens.ops)
   }
 }
 page.setDefaultTimeout(12000)
@@ -122,6 +137,13 @@ page.on('response', (r) => {
     apiFailures.push(`${r.status()} ${r.request().method()} ${u.replace(BASE, '')}`)
 })
 
+/** 失败原因：首行 + Playwright 调用日志末尾几行（谁挡住了点击、元素是否可见 / 可用），CI 上看不到截图时靠它定位 */
+function failureText(e) {
+  const lines = String(e?.message ?? e).split('\n')
+  const log = lines.filter((l) => /^\s+- /.test(l)).slice(-4)
+  return [lines[0].slice(0, 300), ...log.map((l) => l.trim().slice(0, 300))].join('\n     ')
+}
+
 let pass = 0
 let fail = 0
 const fails = []
@@ -133,7 +155,7 @@ async function step(name, fn) {
   } catch (e) {
     fail++
     fails.push(name)
-    console.log(`  ❌ ${name}\n     ${String(e.message).split('\n')[0].slice(0, 300)}`)
+    console.log(`  ❌ ${name}\n     ${failureText(e)}`)
     await page.screenshot({ path: path.join(SHOTS, `fail-${fails.length}.png`), fullPage: true }).catch(() => {})
   }
 }
@@ -144,8 +166,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const detail = () => page.locator('.people-detail')
 const toast = (text) => page.locator('.arco-message', { hasText: text }).first()
 
+/**
+ * 切详情 Tab。字体较宽时（如 CI 的文泉驿）五个 Tab 放不下，Arco 会出现左右滚动箭头，
+ * 已滚到右侧时首个 Tab 被左箭头盖住——像用户一样先点箭头把它滚出来再点。
+ */
 async function tab(name) {
-  await detail().locator('.arco-tabs-tab', { hasText: name }).first().click()
+  const target = detail().locator('.arco-tabs-tab', { hasText: name }).first()
+  for (let i = 0; i < 6; i++) {
+    try {
+      await target.click({ timeout: 1500 })
+      await sleep(300)
+      return
+    } catch {
+      // 目标在左箭头左侧（或被它盖住）就往左滚，否则往右滚
+      const left = detail().locator('.arco-tabs-nav-button-left').first()
+      const [t, l] = await Promise.all([target.boundingBox(), left.boundingBox().catch(() => null)])
+      const side = l && t && t.x < l.x + l.width ? 'left' : 'right'
+      const arrow = detail().locator(`.arco-tabs-nav-button-${side}:not(.arco-tabs-nav-button-disabled)`).first()
+      if (await arrow.isVisible().catch(() => false)) await arrow.click().catch(() => {})
+    }
+  }
+  await target.click()
   await sleep(300)
 }
 
@@ -235,11 +276,16 @@ await step('上传并核验授权后人物变为可用', async () => {
   await drawer.locator('input[type=file]').setInputFiles(path.join(FX, 'auth.pdf'))
   await drawer.getByRole('button', { name: '上传授权' }).click()
   await toast('已上传').waitFor({ timeout: 8000 })
-  await asReviewer(async () => {
-    await drawer.getByRole('button', { name: '核验通过' }).click()
-    await toast('已核验通过').waitFor({ timeout: 8000 })
-  })
+  // 运营不渲染核验 / 驳回（与后端 ROLE_RULES 对齐）
+  await drawer.getByText('待核验').first().waitFor({ timeout: 8000 })
+  expect((await drawer.getByRole('button', { name: '核验通过' }).count()) === 0, '运营不应看到核验通过')
   await page.keyboard.press('Escape')
+  await asReviewer(async () => {
+    await detail().getByRole('button', { name: '授权管理' }).click()
+    await page.locator('.arco-drawer:visible').last().getByRole('button', { name: '核验通过' }).first().click()
+    await toast('已核验通过').waitFor({ timeout: 8000 })
+    await page.keyboard.press('Escape')
+  })
   await page.waitForFunction(
     () => !document.querySelector('.people-detail')?.innerText.includes('授权待核验，人物不可用'),
     null,
@@ -253,12 +299,16 @@ await step('驳回授权必须填写原因（空提交被拦）', async () => {
   await drawer.locator('input[type=file]').setInputFiles(path.join(FX, 'auth.pdf'))
   await drawer.getByRole('button', { name: '上传授权' }).click()
   await toast('已上传').waitFor({ timeout: 8000 })
-  await drawer.getByRole('button', { name: '驳回' }).first().click()
-  const modal = page.locator('.arco-modal:visible').last()
-  await modal.getByRole('button', { name: '确认' }).click()
-  await page.getByText('请填写原因').first().waitFor({ timeout: 4000 })
-  await modal.getByRole('button', { name: /取消|Cancel/ }).click()
   await page.keyboard.press('Escape')
+  await asReviewer(async () => {
+    await detail().getByRole('button', { name: '授权管理' }).click()
+    await page.locator('.arco-drawer:visible').last().getByRole('button', { name: '驳回' }).first().click()
+    const modal = page.locator('.arco-modal:visible').last()
+    await modal.getByRole('button', { name: '确认' }).click()
+    await page.getByText('请填写原因').first().waitFor({ timeout: 4000 })
+    await modal.getByRole('button', { name: /取消|Cancel/ }).click()
+    await page.keyboard.press('Escape')
+  })
 })
 
 console.log('\n[4] 形象照片')
@@ -269,10 +319,13 @@ await step('上传照片 → 处理 → 待审核 → 通过 → 设为封面', 
     .first()
     .setInputFiles([path.join(FX, 'photo1.jpg')])
   await detail().getByText('待审核').first().waitFor({ timeout: 40000 })
+  expect((await detail().getByRole('button', { name: '通过', exact: true }).count()) === 0, '运营不应看到素材审核按钮')
   await asReviewer(async () => {
-    await detail().getByRole('button', { name: '通过' }).first().click()
+    await tab('形象照片')
+    await detail().getByRole('button', { name: '通过', exact: true }).first().click()
     await detail().getByText('已通过').first().waitFor({ timeout: 8000 })
   })
+  await tab('形象照片')
   await detail().getByRole('button', { name: '设为封面' }).first().click()
   await toast('已设为封面').waitFor({ timeout: 8000 })
 })
@@ -307,9 +360,12 @@ await step('上传分身素材 → 转码质检 → 审核通过', async () => {
     .setInputFiles([path.join(FX, 'avatar.mp4')])
   await detail().getByText('待审核').first().waitFor({ timeout: 90000 })
   await asReviewer(async () => {
-    await detail().getByRole('button', { name: '通过' }).first().click()
-    await detail().getByRole('button', { name: '制作分身' }).first().waitFor({ timeout: 8000 })
+    await tab('口播分身')
+    await detail().getByRole('button', { name: '通过', exact: true }).first().click()
+    await detail().getByText('已通过').first().waitFor({ timeout: 8000 })
   })
+  await tab('口播分身')
+  await detail().getByRole('button', { name: '制作分身' }).first().waitFor({ timeout: 8000 })
 })
 await step('制作分身：未勾选确认文本时提交按钮禁用', async () => {
   await detail().getByRole('button', { name: '制作分身' }).first().click()
@@ -398,11 +454,14 @@ await step('版本历史抽屉可打开且含多个版本', async () => {
   const n = await drawer.getByText(/^v\d+$/).count()
   expect(n >= 2, `版本数 ${n}`)
   await page.keyboard.press('Escape')
+  // 等抽屉（含遮罩）真正关闭，否则下一步的点击可能落在正在淡出的遮罩上
+  await page.locator('.arco-drawer-mask:visible').waitFor({ state: 'detached', timeout: 6000 })
 })
 await step('账号绑定：保存 1 个账号；第 2 个共享账号合法', async () => {
   await tab('IP 定位')
   await detail().getByRole('button', { name: '管理', exact: true }).click()
-  const modal = page.locator('.arco-modal:visible').last()
+  const modal = page.locator('.arco-modal:visible', { hasText: '添加账号' }).last()
+  await modal.waitFor({ timeout: 8000 })
   await modal.getByRole('button', { name: '添加账号' }).click()
   await modal.getByLabel('第 1 个账号标识').fill(`acct-${Date.now()}`)
   await modal.getByLabel('第 1 个账号显示名').fill('主账号')

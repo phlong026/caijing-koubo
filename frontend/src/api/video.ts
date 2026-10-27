@@ -298,7 +298,9 @@ export function createVideoJob(
   return apiPost('/video/jobs', input, { 'Idempotency-Key': idempotencyKey })
 }
 
-export function listVideoJobs(query?: Record<string, QueryValue>): Promise<{ items: JobSummary[]; total: number }> {
+export function listVideoJobs(
+  query?: Record<string, QueryValue>,
+): Promise<{ items: Array<JobSummary & { copyTitle: string | null }>; total: number }> {
   return apiGet('/video/jobs', query)
 }
 
