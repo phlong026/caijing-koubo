@@ -51,7 +51,6 @@
           <div class="mt-3 flex items-center gap-2 flex-wrap">
             <span class="text-[15px] font-semibold">{{ p.name }}</span>
             <LineTag :line="p.line" />
-            <span v-if="p.isStub" class="mw-tag mw-tag-gray">示例</span>
           </div>
           <div class="mw-subtle mt-1 truncate">{{ subtitle(p) }}</div>
 

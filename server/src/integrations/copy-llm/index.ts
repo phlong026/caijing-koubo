@@ -262,12 +262,16 @@ export async function chat(
 }
 
 /** 识别「中转不支持 json_object」类错误（各家措辞不同，用特征词兜住） */
-function isJsonModeUnsupported(e: any): boolean {
+export function isJsonModeUnsupported(e: any): boolean {
   const msg = String(e?.message ?? '')
   if (!msg) return false
   return (
     /json object mode|json_object|response_format/i.test(msg) ||
-    /JSON mode .*not support|not support.*JSON mode|compatible .*route/i.test(msg)
+    /JSON mode .*not support|not support.*JSON mode|compatible .*route/i.test(msg) ||
+    // new-api 系中转（如 CCG AI）：请求参数超出所有渠道能力时不报 400 而报
+    // 503 no usable channel（code=get_channel_failed）——先按参数问题降级重试；
+    // 若真是通道瞬断，这次重试失败后仍会如实报错，无副作用。
+    (e?.status === 503 && /no usable channel|get_channel_failed/i.test(msg))
   )
 }
 

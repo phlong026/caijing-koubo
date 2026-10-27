@@ -22,6 +22,9 @@ const OPERATORS: Role[] = ['ops', 'admin'] // 发布管理：运营 / 管理员�
 
 /** 方法 + Fastify 路由模板（含 /api 前缀）→ 允许的角色 */
 export const ROLE_RULES: Record<string, Role[]> = {
+  // 系统设置：含各服务密钥（脱敏回显），仅管理员可看可改
+  'GET /api/settings': ADMINS,
+  'PUT /api/settings': ADMINS,
   // 人物库：授权核验 / 撤销、素材审核（审核员职责，四眼原则在服务层再校验）
   'POST /api/persona-authorizations/:id/verify': REVIEWERS,
   'POST /api/persona-authorizations/:id/revoke': REVIEWERS,

@@ -6,6 +6,7 @@ import { jwtSecret } from './modules/auth/tokens.js'
 import { config, hasOss, ossConfigIssues } from './config.js'
 import { logger } from './log.js'
 import { closeQueues, setQueueBackend, warnIfQueuePrefixShared } from './queue/index.js'
+import { loadStartupSettings } from './modules/settings/service.js'
 import { registerNewsJobs, triggerFetch } from './modules/news/jobs.js'
 import { registerTopicJobs } from './modules/topics/jobs.js'
 import { registerBenchmarkJobs } from './modules/benchmark/sweep.js'
@@ -93,6 +94,8 @@ async function main(): Promise<void> {
   installGlobalHandlers()
   const db = await initDb()
   await runMigrations(db)
+  // 用户中心保存的系统设置覆盖 .env：在一切消费方（OSS 自检 / 队列注册 / 服务注册）之前应用
+  await loadStartupSettings(db)
   // 素材库 ML1/FR-F5：扫描 CUT_FONTS_DIR，手工放置的字体同步为未启用记录（幂等，失败不阻断启动）
   await bootstrapFonts().catch((e) => logger.warn({ err: (e as Error).message }, 'material.font.bootstrap_failed'))
   // P0-1：令牌密钥自检（生产缺失直接拒绝启动）+ 首个管理员
@@ -182,6 +185,9 @@ async function main(): Promise<void> {
   await registerCutModule().catch((e) => logger.error({ err: (e as Error).message }, 'cut.module.register_failed'))
   // 审核桩在进程内推进，重启后续推未走完三关的桩审核单（P2-19）
   await resumeStubSubmissions().catch((e) => logger.error({ err: (e as Error).message }, 'review.stub.resume_scan_failed'))
+  // 校对台审核：补送未送出的审核单并轮询在审进度（未配置 JIAODUITAI_BASE_URL 时不启动）
+  const { startJiaoduitaiSync } = await import('./modules/copy/jiaoduitai-sync.js')
+  startJiaoduitaiSync()
 
   // P2-13c：临时文件每日清理（启动时先跑一次）
   const { cleanupTempFiles } = await import('./modules/copy/article.js')
