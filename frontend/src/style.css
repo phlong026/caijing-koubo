@@ -1281,10 +1281,6 @@ summary:focus-visible {
   background: #609775;
   border-radius: 50%;
 }
-.research-source-badge.is-demo {
-  color: #9b782d;
-  border-color: #e8dbb7;
-}
 .research-overview-metrics {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

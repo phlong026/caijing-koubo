@@ -29,6 +29,11 @@ describe('normalizeShareInput（分享输入归一化）', () => {
     expect(normalizeShareInput(shareText)).toBe('https://v.douyin.com/abc123/')
   })
 
+  it('真实主页分享文本：短链后跟乱码尾巴（$8 CA1473 0@8.com :1pm）不受干扰', () => {
+    const raw = '9- 长按复制此条消息，打开抖音搜索，查看TA的更多作品。 https://v.douyin.com/_IDuTvVom8s/ $8 CA1473 0@8.com :1pm'
+    expect(normalizeShareInput(raw)).toBe('https://v.douyin.com/_IDuTvVom8s/')
+  })
+
   it('多个 URL 取第一个', () => {
     expect(normalizeShareInput('看 https://v.douyin.com/aaa/ 和 https://www.douyin.com/bbb')).toBe('https://v.douyin.com/aaa/')
   })

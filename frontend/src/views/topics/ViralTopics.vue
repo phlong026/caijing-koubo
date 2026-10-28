@@ -298,14 +298,9 @@
               <h2>从真实作品，找到值得做的选题。</h2>
               <p>先验证表现，再拆解表达，让内容创作有据可依。</p>
             </div>
-            <span class="research-source-badge" :class="{ 'is-demo': overview?.provider.mode !== 'live' }"
-              ><i />{{
-                overview?.provider.mode === 'live'
-                  ? 'TikHub 真实数据'
-                  : overview?.provider.mode === 'demo'
-                    ? '演示数据模式'
-                    : '数据源待配置'
-              }}</span
+            <!-- 只在接通真实数据源时展示标识；未配置/演示态不渲染任何「演示」字样 -->
+            <span v-if="overview?.provider.mode === 'live'" class="research-source-badge"
+              ><i />TikHub 真实数据</span
             >
           </div>
           <div class="research-overview-metrics">
