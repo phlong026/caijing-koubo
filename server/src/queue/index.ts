@@ -99,6 +99,8 @@ export const QUEUE_NAMES = {
   // ── 视频剪辑模块（任务书 §4.2 / CE0）──
   videoCut: 'video-cut',
   videoCutSweep: 'video-cut-sweep',
+  // ── 数据看板模块（任务书 §8 / DB2）──
+  metricCollect: 'metric-collect',
 } as const
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES]

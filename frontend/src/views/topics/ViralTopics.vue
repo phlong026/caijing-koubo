@@ -225,7 +225,14 @@
                     ><template #icon><icon-archive /></template
                   ></a-button>
                 </div>
-                <div v-if="c.methodName || c.direction || c.score" class="topics-direction">
+                <div
+                  v-if="c.source === 'data_backfeed' || c.methodName || c.direction || c.score"
+                  class="topics-direction"
+                >
+                  <template v-if="c.source === 'data_backfeed'"
+                    ><span>来源</span
+                    ><span class="mw-tag mw-tag-purple">{{ TOPIC_SOURCE_LABELS.data_backfeed }}</span></template
+                  >
                   <template v-if="c.methodName"
                     ><span>方法</span><span class="mw-tag mw-tag-blue">{{ c.methodName }}</span></template
                   >
@@ -299,9 +306,7 @@
               <p>先验证表现，再拆解表达，让内容创作有据可依。</p>
             </div>
             <!-- 只在接通真实数据源时展示标识；未配置/演示态不渲染任何「演示」字样 -->
-            <span v-if="overview?.provider.mode === 'live'" class="research-source-badge"
-              ><i />TikHub 真实数据</span
-            >
+            <span v-if="overview?.provider.mode === 'live'" class="research-source-badge"><i />TikHub 真实数据</span>
           </div>
           <div class="research-overview-metrics">
             <div>
@@ -559,7 +564,9 @@
             @change="accModal.previewed = null"
           />
           <template #extra>
-            <span class="mw-subtle">支持抖音主页链接或手机分享文本（自动提取短链）；短链会自动还原，非白名单域名将被拒绝。</span>
+            <span class="mw-subtle"
+              >支持抖音主页链接或手机分享文本（自动提取短链）；短链会自动还原，非白名单域名将被拒绝。</span
+            >
           </template>
         </a-form-item>
         <a-form-item>
@@ -614,7 +621,9 @@
         <a-form-item label="视频分享链接" required>
           <a-input v-model="linkModal.url" placeholder="https://www.douyin.com/video/7..." allow-clear />
           <template #extra>
-            <span class="mw-subtle">无需先建立监控关系；支持直接粘贴手机分享文本（自动提取短链），短链会自动还原。</span>
+            <span class="mw-subtle"
+              >无需先建立监控关系；支持直接粘贴手机分享文本（自动提取短链），短链会自动还原。</span
+            >
           </template>
         </a-form-item>
       </a-form>
@@ -772,7 +781,14 @@ import { getResearchOverview, type ResearchOverview } from '@/api/benchmark'
 import { ApiError } from '@/api/client'
 import { getNewsDetail, type NewsItem } from '@/api/news'
 import type { Account, AccountPreview, BenchVideo, ExtractStatus, VideoScript } from '@/api/benchmark'
-import { AUTO_METHOD, getPersonaMethods, type PersonaMethods, type Topic, type TopicTemplate } from '@/api/topics'
+import {
+  AUTO_METHOD,
+  getPersonaMethods,
+  TOPIC_SOURCE_LABELS,
+  type PersonaMethods,
+  type Topic,
+  type TopicTemplate,
+} from '@/api/topics'
 import { copyApi, type TemplateOption } from '@/api/copy'
 import { CAT_CLASS, useNewsStore } from '@/stores/news'
 import { useTopicStore, type CandidateFilter } from '@/stores/topics'

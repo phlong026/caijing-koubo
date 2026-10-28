@@ -426,6 +426,38 @@ export const config = {
   },
 
   /**
+   * 数据看板（任务书 v1.1 / v1.2）。
+   * 一期回采以 CSV 手动导入为准，创作者中心自动回采为接口占位（Q1：PROVIDER_UNAVAILABLE）。
+   */
+  analytics: {
+    /** 爆款判定基准窗口（天）与样本门槛（Q2：90 天 / 5 条） */
+    hotWindowDays: num('ANALYTICS_HOT_WINDOW_DAYS', 90),
+    hotMinSamples: num('ANALYTICS_HOT_MIN_SAMPLES', 5),
+    hotMultiplier: num('ANALYTICS_HOT_MULTIPLIER', 3),
+    /** T+1 / T+7 窗口延迟（小时）：finished_at + 延迟 即窗口到期 */
+    t1DelayHours: num('ANALYTICS_T1_DELAY_HOURS', 24),
+    t7DelayHours: num('ANALYTICS_T7_DELAY_HOURS', 168),
+    /** 采集任务扫描周期（毫秒，默认 30 分钟） */
+    sweepIntervalMs: num('ANALYTICS_SWEEP_INTERVAL_MS', 30 * 60_000),
+    /** 单轮扫描处理的最大记录数 */
+    sweepBatch: num('ANALYTICS_SWEEP_BATCH', 200),
+    /** CSV 导入大小上限（MB，Q8 / FR-M1） */
+    csvMaxMb: num('ANALYTICS_CSV_MAX_MB', 2),
+    /** 不匹配行占比达到该阈值整单拒绝（§3.2，防错平台/错账号批量脏数据） */
+    unmatchedRejectRatio: num('ANALYTICS_UNMATCHED_REJECT_RATIO', 0.8),
+    /** 选题方向占比阈值（FR-M8，默认 60%） */
+    directionThreshold: num('ANALYTICS_DIRECTION_THRESHOLD', 0.6),
+    /** 特征统计最少爆款样本数（低于此值不产出建议，仅展示样本量） */
+    minHotSamplesForSuggest: num('ANALYTICS_MIN_HOT_SAMPLES', 3),
+    /** 看板可选时间范围上限（天） */
+    maxDays: num('ANALYTICS_MAX_DAYS', 90),
+    /** 对标监控间隔降档序列（FR-M9：24 → 6 → 2，封顶 2） */
+    benchmarkLadder: [24, 6, 2],
+    /** 一期自动回采 Provider：csv = 仅手动导入；creator = 创作者中心（未实现，占位） */
+    provider: str('ANALYTICS_PROVIDER', 'csv') as 'csv' | 'creator',
+  },
+
+  /**
    * 登录与权限（P0-1）。
    * 操作人一律取自登录令牌，不再信任请求头 X-Operator。
    * 生产环境必须配置 AUTH_JWT_SECRET（≥32 字符），否则拒绝启动。

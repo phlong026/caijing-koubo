@@ -88,6 +88,15 @@ export const ROLE_RULES: Record<string, Role[]> = {
   'POST /api/material-keyword-groups': ADMINS,
   'PATCH /api/material-keyword-groups/:id': ADMINS,
   'DELETE /api/material-keyword-groups/:id': ADMINS,
+  // 数据看板（任务书 §6）：导入回采数据 / 确认特征偏好 / 处理建议 / 对标降档 = 运营+管理员；
+  // 手动触发采集只给管理员（会打外部 Provider，一期虽未启用也按高成本接口管理）
+  'POST /api/analytics/metrics/import': OPERATORS,
+  'POST /api/analytics/metrics/collect': ADMINS,
+  'POST /api/analytics/features/confirm': OPERATORS,
+  'POST /api/analytics/suggestions/refresh': OPERATORS,
+  'POST /api/analytics/suggestions/:id/confirm': OPERATORS,
+  'POST /api/analytics/suggestions/:id/dismiss': OPERATORS,
+  'POST /api/analytics/benchmark-priority': OPERATORS,
 }
 
 /**

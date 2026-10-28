@@ -1,8 +1,19 @@
 import { apiDel, apiGet, apiPatch, apiPost, apiPut, type PageResult } from './client'
 
-export type TopicSource = 'news' | 'benchmark' | 'manual' | 'article' | 'feedback'
+/** 数据反哺（看板建议确认后生成，走 news 同款状态机：candidate → assigned → sent） */
+export type TopicSource = 'news' | 'benchmark' | 'manual' | 'article' | 'feedback' | 'data_backfeed'
 export type TopicStatus = 'candidate' | 'assigned' | 'sent' | 'archived'
 export type BatchStatus = 'running' | 'done' | 'failed'
+
+/** 来源展示文案（列表 tag 用；benchmark/manual 等沿用各自业务入口的既有叫法） */
+export const TOPIC_SOURCE_LABELS: Record<TopicSource, string> = {
+  news: '资讯',
+  benchmark: '对标',
+  manual: '手动',
+  article: '文章',
+  feedback: '反馈',
+  data_backfeed: '数据反哺',
+}
 
 export interface Topic {
   id: string

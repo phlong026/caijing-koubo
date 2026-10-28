@@ -1325,6 +1325,74 @@ export const TABLES: TableDef[] = [
     indexes: [{ name: 'idx_bgm_enabled', cols: ['enabled'] }],
     comment: '轻量 BGM 库（EC6 过渡实现，素材库立项后迁移）',
   },
+  // ── 数据看板（任务书 §4，三张新表）────────────────────────────────
+  {
+    name: 'metric_snapshot',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('publish_log_id', 40),
+      vc('platform', 16),
+      vc('account_id', 40),
+      vc('window', 4), // t1 | t7
+      big('plays', 0),
+      big('likes', 0),
+      big('comments', 0),
+      big('shares', 0),
+      big('collects', 0),
+      big('fans_gained', 0),
+      // Q5：平台缺项置 null 不补 0（补 0 会拉低均值造成误判）
+      { name: 'completion_rate', type: 'decimal', len: 6, scale: 4, nullable: true },
+      // 爆款标记：1 爆款 / 0 非爆款 / null 样本不足（DB3）
+      { name: 'is_hot', type: 'tinyint', nullable: true },
+      { name: 'account_avg_plays', type: 'bigint', nullable: true },
+      dt('captured_at'),
+      vc('source', 16, { def: 'csv' }), // csv | provider
+      dt('created_at'),
+    ],
+    uniques: [['publish_log_id', 'window']],
+    indexes: [
+      { name: 'idx_msnip_acct', cols: ['account_id', 'captured_at'] },
+      { name: 'idx_msnip_window', cols: ['window', 'captured_at'] },
+    ],
+    comment: '数据看板：T+1/T+7 回采快照（一条发布内容 × 一个窗口 = 一行，FR-M2）',
+  },
+  {
+    name: 'backfeed_suggestion',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('kind', 16, { def: 'topic' }), // topic | benchmark
+      { name: 'basis', type: 'json' }, // 统计依据（维度 / 取值 / 占比 / 样本量）
+      { name: 'payload', type: 'json' }, // 建议内容（标题 / 方向 / 说明）
+      vc('status', 16, { def: 'pending' }), // pending | confirmed | dismissed
+      vc('topic_id', 40, { nullable: true }),
+      vc('decided_by', 64, { nullable: true }),
+      dt('decided_at'),
+      dt('created_at'),
+    ],
+    indexes: [
+      { name: 'idx_bsug_status', cols: ['status', 'created_at'] },
+      { name: 'idx_bsug_topic', cols: ['topic_id'] },
+    ],
+    comment: '数据看板：反哺建议（FR-M8：待确认 → 人工确认 → 进入选题候选）',
+  },
+  {
+    name: 'preference_profile',
+    pk: 'id',
+    cols: [
+      vc('id', 40),
+      vc('window_basis', 4, { def: 't1' }), // t1 | t7
+      { name: 'profile', type: 'json' }, // 五维度结论
+      int('sample_count', 0),
+      { name: 'basis_text', type: 'text' }, // 注入文案（≤ maxInstructions）
+      vc('status', 16, { def: 'active' }), // active | archived（active 业务唯一，A2）
+      vc('confirmed_by', 64, { nullable: true }),
+      dt('created_at'),
+    ],
+    indexes: [{ name: 'idx_pprofile_status', cols: ['status', 'created_at'] }],
+    comment: '数据看板：已确认的爆款特征偏好（copy 生成未显式传 instructions 时注入 basis_text）',
+  },
   {
     name: 'app_setting',
     pk: 'k',

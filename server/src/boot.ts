@@ -190,6 +190,11 @@ export async function bootServer(opts: BootOpts = {}): Promise<{ port: number }>
   // 视频剪辑模块：video-cut worker + video-cut-sweep + 启动 reconcile（FR-J3）+ 媒体环境探测（AC-0.2）
   const { registerCutModule } = await import('./modules/cut/index.js')
   await registerCutModule().catch((e) => logger.error({ err: (e as Error).message }, 'cut.module.register_failed'))
+  // 数据看板模块：T+1/T+7 采集任务（一期 Provider 未启用，到期记录登记为 pending 等 CSV 补录）
+  const { registerAnalyticsModule } = await import('./modules/analytics/index.js')
+  await registerAnalyticsModule().catch((e) =>
+    logger.error({ err: (e as Error).message }, 'analytics.module.register_failed'),
+  )
   // 审核桩在进程内推进，重启后续推未走完三关的桩审核单（P2-19）
   await resumeStubSubmissions().catch((e) => logger.error({ err: (e as Error).message }, 'review.stub.resume_scan_failed'))
   // 校对台审核：补送未送出的审核单并轮询在审进度（未配置 JIAODUITAI_BASE_URL 时不启动）

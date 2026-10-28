@@ -44,6 +44,19 @@ import { assertApprovedEditConfirmed } from './service.js'
 import { insertVersion, listComplianceWords, storedPrompt } from './repo.js'
 
 /**
+ * 数据看板偏好注入（FR-M7）：取 active preference_profile 的 basis_text。
+ * 看板模块异常或没有 active 档案时一律返回 null —— 生成链路不因数据看板不可用而失败（AC-R1）。
+ */
+async function injectedInstructions(): Promise<string | null> {
+  try {
+    const { instructionsFromProfile } = await import('../analytics/features.js')
+    return await instructionsFromProfile()
+  } catch {
+    return null
+  }
+}
+
+/**
  * 文案引擎（W2 / FR-G1~G7）。
  * 规则要点：
  *  - 生成**永远产出新稿**，不覆盖任何已有稿（W5）；
@@ -142,7 +155,12 @@ export async function acceptGeneration(args: GenerateArgs): Promise<GenerateAcce
   }
 
   const durationSeconds = validateDuration(args.durationTier, args.durationSeconds)
-  const instructions = args.instructions ? String(args.instructions).trim().slice(0, config.copy.maxInstructions) : null
+  // 用户显式填写优先；未填时注入数据看板已确认的爆款特征偏好（FR-M7 / §3.3）。
+  // 无 active 档案时 instructions 为 null，行为与接入前完全一致（AC-R1）。
+  // 注意：注入值只进本次生成记录与提示词，不回写 copy.settings——否则偏好更新后
+  // 前端会一直回填旧文案，被误判成「用户显式要求」。
+  const explicitInstructions = args.instructions ? String(args.instructions).trim().slice(0, config.copy.maxInstructions) : null
+  const instructions = explicitInstructions ?? (await injectedInstructions())
 
   // 4) 组装提示词与快照
   const ip = persona.ipProfile
@@ -213,11 +231,11 @@ export async function acceptGeneration(args: GenerateArgs): Promise<GenerateAcce
     durationTier: args.durationTier,
     durationSeconds,
     count,
-    instructions,
+    instructions: explicitInstructions,
   }
   await db.tx(async tx => {
     const fresh = await requireCopy(copy.id, tx)
-    await updateCopy(copy.id, { settings: jenc({ ...fresh.settings, templateId: settings.templateId, styleId: settings.styleId, durationTier: settings.durationTier, durationSeconds: settings.durationSeconds, count, instructions }), updated_at: toDb(utcNow()) }, tx)
+    await updateCopy(copy.id, { settings: jenc({ ...fresh.settings, templateId: settings.templateId, styleId: settings.styleId, durationTier: settings.durationTier, durationSeconds: settings.durationSeconds, count, instructions: explicitInstructions }), updated_at: toDb(utcNow()) }, tx)
   })
 
   // 6) 入队（jobId 用 generationId，天然去重）
@@ -717,6 +735,8 @@ export async function acceptVariant(args: VariantArgs): Promise<{ generationId: 
     sectionText: target.text,
     kinds,
     context,
+    // 与整稿生成同口径：未显式填写时注入已确认的爆款特征偏好（无档案时为空串，行为不变）
+    instructions: await injectedInstructions(),
   })
 
   const generationId = newId('gen')

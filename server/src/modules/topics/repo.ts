@@ -4,7 +4,13 @@ import { fromDb, toDb, utcNow } from '../../lib/time.js'
 import { err } from '../../errors.js'
 import { assertPersonasUsable } from '../personas/repo.js'
 
-export type TopicSource = 'news' | 'benchmark' | 'manual' | 'article' | 'feedback'
+/**
+ * 选题来源。
+ * `data_backfeed` = 数据看板反哺（任务书 §12）：走与 news / manual 相同的状态机
+ * （candidate → assigned → sent），**不可**走 benchmark 的「创建即 sent」——
+ * 反哺建议需人工确认后进入候选池，再由运营分配人物送文案。
+ */
+export type TopicSource = 'news' | 'benchmark' | 'manual' | 'article' | 'feedback' | 'data_backfeed'
 export type TopicStatus = 'candidate' | 'assigned' | 'sent' | 'archived'
 
 export interface TopicRow {
@@ -67,13 +73,17 @@ const ALLOWED: Record<TopicStatus, TopicStatus[]> = {
 
 /**
  * 分来源规则：
- * ① news/manual/article 必须经 assigned 才能 sent；
+ * ① news/manual/article/**data_backfeed** 必须经 assigned 才能 sent；
  * ② benchmark 由 FR-B7 原子创建即为 sent（不经 candidate/assigned），不算非法跳变。
  */
 export function assertTransition(current: TopicStatus, next: TopicStatus, source: TopicSource): void {
   if (current === next) return
   if (source === 'benchmark' && current === 'sent') {
     throw err.invalidState('benchmark 来源选题已送入文案工坊，不可变更')
+  }
+  if (source === 'data_backfeed' && current === 'candidate' && next === 'sent') {
+    // 数据反哺选题与资讯来源同款：必须先在候选池里分配人物，不能直接送入
+    throw err.invalidState('数据反哺选题需先分配人物（assigned）后才能送入文案工坊')
   }
   if (!ALLOWED[current]?.includes(next)) {
     throw err.invalidState(`非法状态跳变：${current} → ${next}（来源 ${source}）`)

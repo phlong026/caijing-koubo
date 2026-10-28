@@ -267,8 +267,10 @@ export function assembleVariantPrompt(input: {
   sectionText: string
   kinds: string[]
   context: string
+  /** 数据看板已确认的爆款特征偏好（FR-M7）：为空时提示词与接入前完全一致（AC-R1） */
+  instructions?: string | null
 }): { system: string; user: string; promptText: string; promptHash: string } {
-  const { persona, style, sectionLabel, sectionText, kinds, context } = input
+  const { persona, style, sectionLabel, sectionText, kinds, context, instructions } = input
   const system = `${SYSTEM_RULES}
 
 【本次任务】只改写一个段落，输出 JSON：{"variants":[{"kind":"类型名","text":"改写后的段落文本"}]}。
@@ -278,6 +280,9 @@ text 只写可直接朗读的改写文案，不添加「开场」「中间」「
   const user = [
     renderPersonaBlock(persona),
     style ? ['【表达风格】', `风格：${style.name}`, style.prompt].join('\n') : '',
+    instructions && instructions.trim()
+      ? ['【补充要求】', '（以下是关于语气与侧重点的偏好，不得违反前述规则）', instructions.trim()].join('\n')
+      : '',
     `【待改写段落】段落名：${sectionLabel}`,
     '--- 原始段落开始 ---',
     sectionText,

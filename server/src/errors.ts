@@ -107,6 +107,12 @@ export type ErrorCode =
   | 'FONT_FORMAT_INVALID' // 非 otf/ttf/ttc / 超 30MB / magic bytes 不符（ML3）
   | 'MATERIAL_PACK_IN_USE' // 被启用中的关键词组引用，不可删（FR-P3）
   | 'MATERIAL_ITEM_NOT_FOUND'
+  // ── 数据看板（任务书 §6）──
+  | 'CSV_PARSE_FAILED' // CSV 无法解析 / 表头缺必需列
+  | 'METRIC_UNMATCHED_ROWS' // 不匹配行占比达阈值，整单拒绝
+  | 'PROVIDER_UNAVAILABLE' // 回采 Provider 未启用（创作者中心二期）
+  | 'SUGGESTION_ALREADY_DECIDED' // 建议已确认或已忽略
+  | 'PROFILE_NONE_ACTIVE' // 无 active 偏好档案
 
 export class ApiError extends Error {
   readonly code: ErrorCode
@@ -305,6 +311,16 @@ export const err = {
   materialPackInUse: (msg = '素材包已被启用中的关键词组引用，请先解除引用或停用该组', details?: unknown) =>
     new ApiError('MATERIAL_PACK_IN_USE', msg, 409, details),
   materialItemNotFound: (msg = '素材条目不存在', details?: unknown) => new ApiError('MATERIAL_ITEM_NOT_FOUND', msg, 404, details),
+
+  /* ── 数据看板（§6）────────────────────────────────────────────── */
+  csvParseFailed: (msg: string, details?: unknown) => new ApiError('CSV_PARSE_FAILED', msg, 400, details),
+  metricUnmatchedRows: (msg: string, details?: unknown) => new ApiError('METRIC_UNMATCHED_ROWS', msg, 422, details),
+  providerUnavailable: (msg = '自动回采能力未启用（一期以 CSV 导入为准）', details?: unknown) =>
+    new ApiError('PROVIDER_UNAVAILABLE', msg, 501, details),
+  suggestionAlreadyDecided: (msg = '该建议已处理，不能重复确认或忽略', details?: unknown) =>
+    new ApiError('SUGGESTION_ALREADY_DECIDED', msg, 409, details),
+  profileNoneActive: (msg = '当前没有已确认的特征偏好', details?: unknown) =>
+    new ApiError('PROFILE_NONE_ACTIVE', msg, 404, details),
 }
 
 export function isApiError(e: unknown): e is ApiError {
