@@ -113,14 +113,13 @@ export async function runArchiveStage(jobId: string): Promise<void> {
   } catch (e) {
     // 终态清理在 save_failed 恢复后再做；此处保留临时目录便于排障与重试
     const message = e instanceof Error ? e.message : '成片保存失败'
-    const code = e instanceof MediaValidationFailed ? 'VIDEO_SAVE_FAILED' : 'VIDEO_SAVE_FAILED'
     const moved = await casTransition(db, jobId, ['downloading', 'verifying'], 'save_failed', {
-      errorCode: code,
+      errorCode: 'VIDEO_SAVE_FAILED',
       errorDetail: message.slice(0, 4000),
       statusMessage: '视频已生成，但保存失败，请重试下载',
     })
     if (moved) {
-      await appendJobEvent({ jobId, fromPhase: job.phase, toPhase: 'save_failed', errorCode: code, detail: { message, downloaded } }, db)
+      await appendJobEvent({ jobId, fromPhase: job.phase, toPhase: 'save_failed', errorCode: 'VIDEO_SAVE_FAILED', detail: { message, downloaded } }, db)
     }
     return
   }

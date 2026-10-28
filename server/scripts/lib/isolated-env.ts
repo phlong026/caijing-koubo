@@ -72,6 +72,9 @@ export async function bootIsolated(opts: IsolatedEnvOptions = {}): Promise<Isola
       TIKHUB_API_KEY: '',
       FINSTEP_API_KEY: '',
       SATURN_NEWS_MCP_KEY: '',
+      // 校对台必须一并隔离：reviewMode() 优先级为校对台 > 审核桩 > 人工，
+      // 本机 .env 若配了 JIAODUITAI_BASE_URL 会让审核桩失效（smoke 全线挂）并打真实外部接口
+      JIAODUITAI_BASE_URL: '',
       OSS_ACCESS_KEY_ID: '',
       OSS_ACCESS_KEY_SECRET: '',
       OSS_BUCKET: '',
