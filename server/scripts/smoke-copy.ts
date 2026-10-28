@@ -1,21 +1,33 @@
 /**
  * 文案工坊自动化回归（AC-G2 / G4 / E2 / R1 / R2 / R8 / AC-G5 防注入）。
- * 用法：先启动 server（npm run dev），再执行 npm run smoke:copy
+ * 用法：npm run smoke:copy ——默认自起隔离环境（审核桩 + mock LLM + 全新临时库）
  * 可选环境变量：
- *   BASE              默认 http://127.0.0.1:8787/api
- *   SMOKE_GEN_TIMEOUT 单次生成等待上限（ms），默认 240000（真实模型 3 份约 60–90 秒）
+ *   BASE / SMOKE_BASE  指向已启动的服务（test:integration 编排传入；设置后不再自起隔离环境）
+ *   SMOKE_GEN_TIMEOUT  单次生成等待上限（ms），隔离 mock 默认 30000
  *   SMOKE_INJECT_ONLY=1 只跑防注入用例集
  *
- * 说明：脚本会长期反复跑在同一份库上，所有标题/关键词都带时间戳前缀，
- * 断言只依赖本次产生的数据，避免历史数据污染结论（AC-G5 用例集本身是幂等的）。
+ * 注意：不要把 BASE 指向接入了校对台的 dev 服务——审核模式优先级为校对台 > 审核桩，
+ * 桩相关断言（stubRejectAt / 进度回写 / 重提关卡）在真实审核模式下必然失败；
+ * 且真实模型生成内容不稳定，防注入断言同样只对 mock 可靠。
+ * 说明：所有标题/关键词都带时间戳前缀，断言只依赖本次产生的数据（AC-G5 用例集本身是幂等的）。
  */
 import { readFileSync } from 'node:fs'
 import { authHeader, initSmokeAuth } from './lib/smoke-auth.js'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { bootIsolated, type IsolatedEnv } from './lib/isolated-env.js'
 
-const BASE = process.env.BASE ?? process.env.SMOKE_BASE ?? 'http://127.0.0.1:8787/api'
+const externalBase = process.env.BASE ?? process.env.SMOKE_BASE ?? ''
+const env: IsolatedEnv | null = externalBase ? null : await bootIsolated({ env: { LOG_LEVEL: 'warn' } })
+if (!externalBase && !process.env.SMOKE_GEN_TIMEOUT) process.env.SMOKE_GEN_TIMEOUT = '30000'
+
+const BASE = externalBase || env!.base
 await initSmokeAuth(BASE)
+/** 退出前收掉自起的隔离服务（提前 exit 的路径也走这里，避免进程残留） */
+async function exitWith(code: number): Promise<never> {
+  await env?.shutdown()
+  process.exit(code)
+}
 const GEN_TIMEOUT_MS = Number(process.env.SMOKE_GEN_TIMEOUT ?? 240000)
 
 let passed = 0
@@ -111,8 +123,8 @@ async function saveDraft(copyId: string, draftId: string, title: string, section
 console.log('\n[0] 前置检查')
 const options = await req('GET', '/copy/options')
 if (options.status !== 200 || !options.data) {
-  console.log(`  ❌ 无法访问 ${BASE}/copy/options，请先启动 server（npm run dev）`)
-  process.exit(1)
+  console.log(`  ❌ 无法访问 ${BASE}/copy/options，隔离环境启动失败或外部服务不可用`)
+  await exitWith(1)
 }
 // 只用可用人物（测试库里可能残留授权待核验的人物）
 const personas: any[] = (options.data.personas ?? []).filter((p: any) => p.usable ?? p.enabled)
@@ -733,7 +745,7 @@ try {
   casesDoc = JSON.parse(readFileSync(caseFile, 'utf8'))
 } catch (e) {
   console.log(`  ❌ 读取用例集失败：${(e as Error).message}`)
-  process.exit(1)
+  await exitWith(1)
 }
 const cases: any[] = Array.isArray(casesDoc.cases) ? casesDoc.cases : []
 check(`用例集入库且 ≥ ${casesDoc.minCases ?? 8} 条`, cases.length >= (casesDoc.minCases ?? 8), cases.length)
@@ -914,4 +926,4 @@ if (markRes.ok && markRes.data?.id) await req('DELETE', `/compliance-words/${mar
 /* ─────────────────────────── 汇总 ─────────────────────────── */
 
 console.log(`\n${failed === 0 ? '✅ 全部通过' : `❌ 失败 ${failed} 项`}（通过 ${passed} / 失败 ${failed}）`)
-process.exit(failed === 0 ? 0 : 1)
+await exitWith(failed === 0 ? 0 : 1)
