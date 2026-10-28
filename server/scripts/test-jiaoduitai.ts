@@ -10,8 +10,13 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { disableEnvProxy, pathOf } from './lib/local-http.js'
 
 /* ── 假校对台 ──────────────────────────────────────────────────────── */
+
+// 只连本机假平台：清掉环境代理，否则 axios 会把回环请求交给代理，
+// 桩服务收到 absolute-form 的 request-target，按路径精确比对会误判 404（被当成平台拒收）。
+disableEnvProxy()
 
 interface Reply {
   status: number
@@ -22,6 +27,8 @@ let submitReply: Reply = { status: 200, body: {} }
 const resubmits: Array<{ reviewNo: string; submitter: string; content_text: string }> = []
 let resubmitReply: Reply = { status: 200, body: {} }
 const byNo = new Map<string, Record<string, unknown>>()
+/** 桩服务未匹配到的请求（脚手架缺陷信号，非业务结果） */
+const unmatched: string[] = []
 
 const server = createServer((req: IncomingMessage, res: ServerResponse) => {
   let raw = ''
@@ -31,12 +38,13 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       res.writeHead(r.status, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify(r.body))
     }
-    if (req.method === 'POST' && req.url === '/api/reviews/submit') {
+    const path = pathOf(req.url)
+    if (req.method === 'POST' && path === '/api/reviews/submit') {
       received.push(JSON.parse(raw))
       return send(submitReply)
     }
-    const m = /^\/api\/reviews\/by-no\/([^/]+)$/.exec(req.url ?? '')
-    const rm = /^\/api\/reviews\/by-no\/([^/]+)\/resubmit$/.exec(req.url ?? '')
+    const m = /^\/api\/reviews\/by-no\/([^/]+)$/.exec(path)
+    const rm = /^\/api\/reviews\/by-no\/([^/]+)\/resubmit$/.exec(path)
     if (req.method === 'POST' && rm) {
       const body = JSON.parse(raw) as { submitter: string; content_text: string }
       resubmits.push({ reviewNo: decodeURIComponent(rm[1]!), ...body })
@@ -46,6 +54,8 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       const r = byNo.get(decodeURIComponent(m[1]!))
       return send(r ? { status: 200, body: r } : { status: 404, body: { error: '审核单不存在' } })
     }
+    // 路径没匹配上是测试脚手架的问题，单独记下来，避免伪装成业务失败（「校对台拒收：not found」）
+    unmatched.push(`${req.method} ${path}`)
     send({ status: 404, body: { error: 'not found' } })
   })
 })
@@ -416,6 +426,10 @@ try {
     assert.equal(freshSub?.externalReviewNo, newNo)
     assert.notEqual(freshSub?.externalReviewNo, s.reviewNo)
   })
+
+  // 脚手架自检：所有请求都该被假平台的路径表接住；有漏网说明桩与客户端路径不一致，
+  // 否则会以「校对台拒收：not found」的形式伪装成业务失败（曾因环境代理改写 request-target 触发）。
+  assert.deepEqual(unmatched, [], `假校对台收到未匹配请求：${unmatched.join(', ')}`)
 
   console.log(`${passed} jiaoduitai groups passed`)
 } finally {

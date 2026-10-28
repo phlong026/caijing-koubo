@@ -324,7 +324,31 @@ console.log('\n[5] 特征沉淀五维度 / 确认偏好 / 单条 active')
   check('选题方向 top = 基金科普', dim('direction')?.top?.value === '基金科普', dim('direction')?.top)
   check('封面维度 top = 自定义封面', dim('cover')?.top?.value === '自定义封面', dim('cover')?.top)
   check('发布时间 top = 18-24 点', dim('publishTime')?.top?.value === '18-24 点', dim('publishTime')?.top)
-  check('钩子维度以「模板 × 方向」代理（Q3）', String(dim('hook')?.top?.value ?? '').includes('基金科普'), dim('hook')?.top)
+  // 造数未记录开场模板：钩子维度是「模板 × 方向」复合值，模板缺失时不能拿去抢 top
+  // （否则会反哺出「开场用『未记录模板 × 基金科普』」这种不可执行的建议）
+  check('钩子维度模板未记录时不参与 top', dim('hook')?.top === null, dim('hook')?.top)
+  check('钩子维度模板未记录时状态为「样本不足」', dim('hook')?.status === '样本不足', dim('hook')?.status)
+
+  // 正向分支：补上模板记录后，钩子按「模板 × 方向」沉淀（Q3）
+  const tplId = `tpl_sm_${stamp}`
+  await db.run('INSERT INTO `copy_template` (`id`, `name`, `is_builtin`, `created_at`, `updated_at`) VALUES (?, ?, 1, ?, ?)', [
+    tplId,
+    '稳健开场',
+    finFor(0),
+    finFor(0),
+  ])
+  const copyIds = Array.from({ length: 12 }, (_, i) => `copy_sm_${stamp}_${i + 1}`)
+  for (let i = 0; i < 3; i++) {
+    await db.run('UPDATE `copy` SET `settings` = ? WHERE `id` = ?', [JSON.stringify({ durationSeconds: 45, templateId: tplId }), copyIds[i]])
+  }
+  const ftHook = await api('GET', '/analytics/features?window=t1&days=30')
+  const hookDim = (ftHook.data?.dims ?? []).find((d: any) => d.key === 'hook')
+  check('钩子维度记录模板后按「模板 × 方向」沉淀', hookDim?.top?.value === '稳健开场 × 基金科普', hookDim?.top)
+  check('钩子维度记录模板后状态回到「待确认」', hookDim?.status === '待确认', hookDim?.status)
+  // 复原：让后续「确认偏好 / 反哺建议」仍以「钩子未知」的数据为准
+  for (let i = 0; i < 3; i++) {
+    await db.run('UPDATE `copy` SET `settings` = ? WHERE `id` = ?', [JSON.stringify({ durationSeconds: 45 }), copyIds[i]])
+  }
   check('未确认时状态为「待确认」', dim('duration')?.status === '待确认', dim('duration')?.status)
   check('返回可注入的依据文案', String(ft.data?.basisText ?? '').includes('侧重'), ft.data?.basisText)
 

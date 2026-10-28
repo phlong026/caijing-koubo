@@ -155,7 +155,11 @@ export function coverBucket(source: string | null | undefined): string {
   return COVER_LABELS[source] ?? source
 }
 
-/** 「未记录 / 未标注」不参与高表现取值竞争（避免脏数据抢 top） */
+/**
+ * 「未记录 / 未标注 / 已删除模板」不参与高表现取值竞争（避免脏数据抢 top）。
+ * 开场钩子维度是「模板 × 方向」的复合值，模板缺失时会拼成「未记录模板 × 基金科普」，
+ * 这类值同样不可用（不能反哺出「开场用未记录模板」这种建议），故按前缀判定。
+ */
 export function isUnknownValue(v: string): boolean {
-  return v === '未记录' || v === '未标注'
+  return v === '未标注' || v.startsWith('未记录') || v.startsWith('已删除模板')
 }

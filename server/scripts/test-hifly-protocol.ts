@@ -33,6 +33,10 @@ import { clearHiflyInjections, getMockHiflyClient, injectHifly } from '../src/in
 import { buildVendorTitle } from '../src/modules/personas/clone/short-ref.js'
 import { config } from '../src/config.js'
 import { isApiError } from '../src/errors.js'
+import { disableEnvProxy, pathOf } from './lib/local-http.js'
+
+// 只连本机假平台：清掉环境代理，避免 axios 把回环请求交给代理后桩服务匹配不到路径
+disableEnvProxy()
 
 // 独立临时库：让 api_call_log 落库成功，避免「数据库未初始化」噪音
 const temp = mkdtempSync(join(tmpdir(), 'hifly-protocol-'))
@@ -84,6 +88,9 @@ function startServer(
       }
       const u = new URL(req.url ?? '/', 'http://stub')
       const query = Object.fromEntries(u.searchParams.entries())
+      // 桩内统一用归一后的 path：环境代理转发时 request-target 可能是 absolute-form，
+      // 下面 handler 里的 req.url === PATHS.x 就会全部落空（表现为业务 404 而非网络错误）
+      req.url = pathOf(req.url)
       received.push({ path: u.pathname, method: req.method ?? '', query, body })
       handler(req, res, body)
     })

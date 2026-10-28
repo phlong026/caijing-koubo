@@ -163,9 +163,10 @@ export async function buildFeatures(
     const top = items.find((it) => !isUnknownValue(it.value)) ?? null
     const validSamples = values.filter((v) => !isUnknownValue(v)).length
     const status: FeatureDimStat['status'] =
-      hotTotal < config.analytics.minHotSamplesForSuggest
+      // top 为空说明该维度全是未知取值（未记录 / 未标注 / 已删除模板），没有可沉淀的内容
+      hotTotal < config.analytics.minHotSamplesForSuggest || !top
         ? '样本不足'
-        : activeDims[dim.key]?.value && activeDims[dim.key]?.value === top?.value
+        : activeDims[dim.key]?.value && activeDims[dim.key]?.value === top.value
           ? '已沉淀'
           : '待确认'
 
