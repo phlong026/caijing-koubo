@@ -647,7 +647,7 @@ export const useCopyStore = defineStore('copy', () => {
 
   /**
    * 估算总耗时（毫秒）。
-   * 依据：真实模型（claude-opus-5.5）单份约 45–60 秒；同批并发 3 份。
+   * 依据：真实模型（claude-opus-5-5）单份约 45–60 秒；同批并发 3 份。
    * 只作为**进度条的分母**使用，不参与任何业务判断，估偏了也只是条走得快/慢。
    * realtimeRatio 由历史完成记录动态修正（见下方 calibrate）。
    */

@@ -167,7 +167,7 @@ ASR_PRICE_PER_SEC=<按账单填写>
 # ── 文案二创模型（决策 D1：第三方中转 Claude；COPY_LLM_COMPLIANCE_APPROVED 缺省 true）──
 COPY_LLM_BASE_URL=https://ccg-cli.online/v1
 COPY_LLM_API_KEY=<key>
-COPY_LLM_MODEL=claude-opus-5.5
+COPY_LLM_MODEL=claude-opus-5-5
 
 # ── TikHub（场景 B）──
 TIKHUB_API_KEY=<TikHub 密钥>

@@ -250,7 +250,7 @@ export const config = {
   copyLlm: {
     baseUrl: str('COPY_LLM_BASE_URL', 'https://ccg-cli.online/v1'),
     apiKey: str('COPY_LLM_API_KEY', ''),
-    model: str('COPY_LLM_MODEL', 'claude-opus-5.5'),
+    model: str('COPY_LLM_MODEL', 'claude-opus-5-5'),
     /** auto | anthropic | openai：auto 时按 baseurl + 模型名猜，猜错会自动换协议重试一次 */
     protocol: str('COPY_LLM_PROTOCOL', 'auto') as 'auto' | 'anthropic' | 'openai',
     anthropicVersion: str('COPY_LLM_ANTHROPIC_VERSION', '2023-06-01'),
