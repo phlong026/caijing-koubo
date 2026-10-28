@@ -5,7 +5,7 @@ import { err } from '../../errors.js'
 
 /**
  * §2.4 防 SSRF：
- * - 只接受白名单域名（v.douyin.com / www.douyin.com / www.iesdouyin.com）
+ * - 只接受白名单域名（douyin.com / iesdouyin.com 及其子域）
  * - 跟随短链跳转最多 3 次且每一跳都校验域名
  * - 拒绝解析到内网 / 保留地址
  */
@@ -62,6 +62,26 @@ export async function assertUrlAllowed(urlStr: string): Promise<URL> {
   }
   await assertHostSafe(u.hostname)
   return u
+}
+
+/**
+ * 分享输入归一化：运营从手机/浏览器复制出来的往往不是干净 URL——
+ * 可能缺 https://（"douyin.com/user/..."）、或是整段分享文案夹着一条短链
+ * （"7.92 p@f.XZ ... https://v.douyin.com/xxx/ 复制此链接..."）。
+ * 这里只做字符串层面的提取/补协议，不做任何网络请求；域名安全仍由
+ * assertUrlAllowed 白名单把守（提取出的 URL 照样要过白名单）。
+ */
+export function normalizeShareInput(raw: string): string {
+  const s = String(raw ?? '').trim()
+  if (!s) return s
+  const asUrl = /^https?:\/\//.test(s)
+  if (asUrl) return s
+  // 整段分享文案：取第一处 http(s) 链接，去掉粘在尾部的中英文标点
+  const m = /(https?:\/\/[^\s，,。！!！?？;；）)"'”』】]+)/.exec(s)
+  if (m) return m[1].replace(/[.,;:)\"'”』】]+$/, '')
+  // 抖音官方裸域开头（无协议）：补全 https://
+  if (/^(?:[a-z0-9-]+\.)?(?:douyin|iesdouyin)\.com\//i.test(s)) return `https://${s}`
+  return s
 }
 
 /** 跟随短链跳转，最多 3 跳，每跳都校验域名与内网地址 */
@@ -136,7 +156,7 @@ export interface ParsedLink {
 
 /** 白名单校验 + 短链解析 + 提取标识（FR-B1 / FR-B8） */
 export async function parseUserOrVideoLink(rawUrl: string): Promise<ParsedLink> {
-  const finalUrl = await resolveFinalUrl(rawUrl)
+  const finalUrl = await resolveFinalUrl(normalizeShareInput(rawUrl))
   const secUid = extractSecUid(finalUrl)
   const videoId = extractVideoId(finalUrl)
   const kind: ParsedLink['kind'] = videoId ? 'video' : secUid ? 'user' : 'unknown'

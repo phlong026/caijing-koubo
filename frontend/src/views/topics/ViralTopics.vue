@@ -564,7 +564,7 @@
             @change="accModal.previewed = null"
           />
           <template #extra>
-            <span class="mw-subtle">支持抖音主页链接；短链会自动还原，非白名单域名将被拒绝。</span>
+            <span class="mw-subtle">支持抖音主页链接或手机分享文本（自动提取短链）；短链会自动还原，非白名单域名将被拒绝。</span>
           </template>
         </a-form-item>
         <a-form-item>
@@ -619,7 +619,7 @@
         <a-form-item label="视频分享链接" required>
           <a-input v-model="linkModal.url" placeholder="https://www.douyin.com/video/7..." allow-clear />
           <template #extra>
-            <span class="mw-subtle">无需先建立监控关系；仅支持白名单域名（抖音等），短链会自动还原。</span>
+            <span class="mw-subtle">无需先建立监控关系；支持直接粘贴手机分享文本（自动提取短链），短链会自动还原。</span>
           </template>
         </a-form-item>
       </a-form>

@@ -479,8 +479,9 @@ export const config = {
    */
   newsMockSource: bool('NEWS_MOCK_SOURCE', str('NODE_ENV', 'development') !== 'production'),
 
-  // §2.4 防 SSRF 白名单：与任务书 §2.4 的 3 个域名保持一致（P2-14）
-  linkWhitelist: ['v.douyin.com', 'www.douyin.com', 'www.iesdouyin.com'],
+  // §2.4 防 SSRF 白名单（P2-14 收窄后扩展）：官方裸域 + www/v 子域
+  // 官方裸域与 www 子域同源，均可安全放行；endsWith 匹配保证 douyin.com.evil.com 这类伪装域被拒
+  linkWhitelist: ['douyin.com', 'iesdouyin.com', 'v.douyin.com', 'www.douyin.com', 'www.iesdouyin.com'],
   maxRedirects: 3,
 }
 
