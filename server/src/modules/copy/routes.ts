@@ -36,6 +36,7 @@ import {
   deleteDraft,
   diffSections,
   getCopyDetail,
+  getReviewProgress,
   listGenerations,
   precheck,
   renameDraft,
@@ -747,6 +748,12 @@ export function registerCopyWorkshopRoutes(app: FastifyInstance): void {
   app.post('/copy/:id/withdraw', async (req) => {
     const { id } = req.params as { id: string }
     return ok(await withdrawReview(id, req.operator))
+  })
+
+  // 审核进度轻量查询（前端审核面板轮询用）：不带草稿/版本等重负载，无懒建稿副作用
+  app.get('/copy/:id/review-progress', async (req) => {
+    const { id } = req.params as { id: string }
+    return ok({ review: await getReviewProgress(id) })
   })
 
   app.get('/copy/:id/approved', async (req) => {

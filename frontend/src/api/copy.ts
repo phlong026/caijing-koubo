@@ -240,6 +240,8 @@ export interface Submission {
   channel?: ReviewMode
   /** 校对台审核单号（已送校对台时） */
   externalReviewNo?: string | null
+  /** 校对台最新状态原值（机审中/待初审/初审中…；未送出为 null） */
+  externalStatus?: string | null
   id: string
   copyId: string
   copyVersionId: string
@@ -595,6 +597,10 @@ export const copyApi = {
   },
   withdraw(copyId: string) {
     return apiPost<{ ok: true }>(`/copy/${copyId}/withdraw`)
+  },
+  /** 审核进度轻量查询（审核面板轮询用，不带详情重负载） */
+  reviewProgress(copyId: string) {
+    return apiGet<{ review: Submission | null }>(`/copy/${copyId}/review-progress`)
   },
   approved(copyId: string) {
     return apiGet<{

@@ -9,6 +9,7 @@ import {
   countDrafts,
   getCopy,
   getDraft,
+  getSubmission,
   insertDraft,
   insertVersion,
   latestVersionOfDraft,
@@ -18,6 +19,7 @@ import {
   updateCopy,
   type CopyRow,
   type DraftRow,
+  type SubmissionRow,
   type VersionRow,
 } from './repo.js'
 import {
@@ -269,6 +271,8 @@ export interface CopyDetail {
     copyVersionId: string
     isStub: boolean
     channel: 'stub' | 'jiaoduitai' | 'manual'
+    /** 校对台最新状态原值（机审中/待初审/初审中…；未送出为 null） */
+    externalStatus: string | null
     externalReviewNo: string | null
     versionNo: number
     status: string
@@ -301,6 +305,52 @@ export interface CopyDetail {
   generations: unknown[]
   variants: unknown[]
   article: unknown
+}
+
+/** 详情 / 进度接口共用的审核单序列化（含校对台原值状态，前端轮询进度用） */
+export function serializeReview(
+  submission: SubmissionRow,
+  ctx: { versionNo: number; submittedBy: string; copyRejectReason?: string | null },
+): CopyDetail['review'] {
+  return {
+    id: submission.id,
+    copyId: submission.copyId,
+    copyVersionId: submission.copyVersionId,
+    isStub: submission.isStub,
+    // 这张单的审核去向：桩单 / 已送校对台（或校对台已接入、等待补送）/ 人工复核
+    channel: submission.isStub
+      ? 'stub'
+      : submission.externalReviewNo || hasJiaoduitai()
+        ? 'jiaoduitai'
+        : 'manual',
+    externalReviewNo: submission.externalReviewNo,
+    externalStatus: submission.externalStatus,
+    versionNo: ctx.versionNo,
+    status: submission.status,
+    statusLabel: SUBMISSION_STATUS_LABELS[submission.status] ?? submission.status,
+    gates: submission.gateResults ?? [],
+    riskHint: submission.appendedRiskText ?? null,
+    rejectReason: submission.reason ?? ctx.copyRejectReason ?? null,
+    rejectedGate: submission.rejectedGate ?? null,
+    submittedBy: ctx.submittedBy,
+    submittedAt: submission.createdAt ?? '',
+    decidedAt: submission.decidedBy ? submission.updatedAt : null,
+  }
+}
+
+/** 审核进度轻量查询（前端轮询用）：只带审核单与版本号，不触发详情接口的懒建稿副作用 */
+export async function getReviewProgress(copyId: string): Promise<CopyDetail['review'] | null> {
+  const db = getDb()
+  const copy = await requireCopy(copyId, db)
+  const submission = copy.reviewSubmissionId ? await getSubmission(copy.reviewSubmissionId, db) : null
+  if (!submission) return null
+  const { listVersions } = await import('./repo.js')
+  const versions = await listVersions(copyId, undefined, db)
+  return serializeReview(submission, {
+    versionNo: versions.find((v) => v.id === submission.copyVersionId)?.versionNo ?? 0,
+    submittedBy: versions.find((v) => v.id === submission.copyVersionId)?.createdBy ?? '',
+    copyRejectReason: copy.rejectReason,
+  })
 }
 
 export async function getCopyDetail(copyId: string): Promise<CopyDetail> {
@@ -385,30 +435,12 @@ export async function getCopyDetail(copyId: string): Promise<CopyDetail> {
         }
       : null,
     review: submission
-      ? {
-          id: submission.id,
-          copyId: submission.copyId,
-          copyVersionId: submission.copyVersionId,
-          isStub: submission.isStub,
-          // 这张单的审核去向：桩单 / 已送校对台（或校对台已接入、等待补送）/ 人工复核
-          channel: submission.isStub
-            ? 'stub'
-            : submission.externalReviewNo || hasJiaoduitai()
-              ? 'jiaoduitai'
-              : 'manual',
-          externalReviewNo: submission.externalReviewNo,
-          versionNo: versions.find((v) => v.id === submission.copyVersionId)?.versionNo ?? 0,
-          status: submission.status,
-          statusLabel: SUBMISSION_STATUS_LABELS[submission.status] ?? submission.status,
-          gates: submission.gateResults ?? [],
-          riskHint: submission.appendedRiskText ?? null,
-          rejectReason: submission.reason ?? copy.rejectReason ?? null,
-          rejectedGate: submission.rejectedGate ?? null,
+      ? serializeReview(submission, {
           // 提交人取提交时锁定版本的 created_by（submit 写入的就是操作人），而不是文案创建人
+          versionNo: versions.find((v) => v.id === submission.copyVersionId)?.versionNo ?? 0,
           submittedBy: versions.find((v) => v.id === submission.copyVersionId)?.createdBy ?? '',
-          submittedAt: submission.createdAt ?? '',
-          decidedAt: submission.decidedBy ? submission.updatedAt : null,
-        }
+          copyRejectReason: copy.rejectReason,
+        })
       : null,
     persona: persona
       ? { id: persona.id, name: persona.name, line: persona.line, enabled: persona.enabled, ipProfile: persona.ipProfile }
