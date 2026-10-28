@@ -8,7 +8,7 @@ import { logApiCall, type CallProvider } from '../../modules/metrics/call-log.js
  *
  * 设计要点（FR-G4 / AC-G7）：
  *  - **走 COPY_LLM_* 配置**：`COPY_LLM_API_KEY` 必填；`COPY_LLM_BASE_URL` / `COPY_LLM_MODEL`
- *    已内置默认值（CCG 中转 + claude-opus-5.5），界面与 .env 均可覆盖。
+ *    已内置默认值（CCG 中转 + claude-opus-5-5），界面与 .env 均可覆盖。
  *    不回退百炼——文案模型与百炼是两套独立模型，未配 Key 即视为未启用（mock 兜底见 chat）。
  *  - 自动识别两种协议：
  *      anthropic  → `POST {base}/messages`，头 `x-api-key` + `anthropic-version`，
@@ -78,7 +78,7 @@ export function resolveLlm(): ResolvedLlm | null {
   const cfg = config.copyLlm
   // 不回退百炼：文案模型与百炼是两套独立模型，未配 Key 即视为未启用
   if (!usable(cfg.apiKey)) return null
-  const model = usable(cfg.model) ? cfg.model : 'claude-opus-5.5'
+  const model = usable(cfg.model) ? cfg.model : 'claude-opus-5-5'
   const baseUrl = normalizeBase(cfg.baseUrl)
   return {
     provider: 'copy_llm',
