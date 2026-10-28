@@ -712,9 +712,7 @@ export async function submitPreview(previewId: string): Promise<void> {
     const accept = await client.createAudioByTts({
       voiceId: voice.vendorVoiceId,
       text: String(row.text ?? ''),
-      speechRate: voice.speechRate,
-      volume: voice.volume,
-      pitch: voice.pitch,
+      title: `试听-${voice.shortRef ?? voice.id.slice(-6)}`,
     })
     if (!accept.taskId) throw new HiflySubmissionUncertain('飞影未返回试听任务凭证')
     await db.run('UPDATE `persona_voice_preview` SET `vendor_task_id` = ?, `error` = NULL WHERE `id` = ?', [

@@ -99,9 +99,6 @@ export async function runSubmitStage(jobId: string): Promise<void> {
       submitText: job.textSnapshot?.submitText ?? '',
       vendorTitle: snap.submitParams.vendorTitle,
       genMode: 'tts',
-      speechRate: snap.voice?.speechRate,
-      volume: snap.voice?.volume,
-      pitch: snap.voice?.pitch,
       jobId,
     })
     // 拿到 task_id 立即 CAS 落库（Z2：WHERE phase='submitting'）

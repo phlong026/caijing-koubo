@@ -1,8 +1,10 @@
 /**
  * 飞影协议契约测试（R5 平移众墅之家 test_hifly_protocol，AC-H1/H2/H4）。
- * 用本地 node:http 桩服务器驱动真实 HttpHiflyClient，覆盖：
- *  - 请求体字段（title/video_url/aigc_flag、普通话不传 languages、TTS 上限）；
- *  - 信封解析（code 数字/数字字符串/布尔、上传凭证无 code、video_Url 拼写、avatar/avatar_id）；
+ * 用本地 node:http 桩服务器驱动真实 HttpHiflyClient，响应样例逐字对照官方文档
+ * （https://api.hifly.cc/hifly.html）与众墅之家生产实现，覆盖：
+ *  - 创建类 POST 请求体字段（title/video_url/aigc_flag/avatar/voice、普通话不传 languages、TTS 上限）；
+ *  - 查询类 GET + query 参数（task/list/credit）；
+ *  - 信封解析（code 数字/数字字符串/布尔、上传凭证无 code、video_Url 拼写、avatar/voice 标识、left 余额）；
  *  - 状态码 1/2/3/4 → WAITING/PROCESSING/DONE/FAILED；
  *  - 错误分类（业务码 → HiflyVendorError；创建类网络异常 → HiflySubmissionUncertain；查询类 → HiflyQueryError）；
  *  - mock 客户端确定性与故障注入。
@@ -60,11 +62,15 @@ function check(name: string, fn: () => void | Promise<void>): Promise<void> {
     })
 }
 
-/** 可控桩服务器：按路径路由返回预置响应 */
+/** 可控桩服务器：按路径路由返回预置响应（记录 method / query / body 供断言） */
 function startServer(
   handler: (req: http.IncomingMessage, res: http.ServerResponse, body: any) => void,
-): Promise<{ baseUrl: string; close: () => Promise<void>; received: Array<{ path: string; body: any }> }> {
-  const received: Array<{ path: string; body: any }> = []
+): Promise<{
+  baseUrl: string
+  close: () => Promise<void>
+  received: Array<{ path: string; method: string; query: Record<string, string>; body: any }>
+}> {
+  const received: Array<{ path: string; method: string; query: Record<string, string>; body: any }> = []
   const server = http.createServer((req, res) => {
     const chunks: Buffer[] = []
     req.on('data', (c) => chunks.push(c))
@@ -76,7 +82,9 @@ function startServer(
       } catch {
         body = { __raw: raw }
       }
-      received.push({ path: req.url ?? '', body })
+      const u = new URL(req.url ?? '/', 'http://stub')
+      const query = Object.fromEntries(u.searchParams.entries())
+      received.push({ path: u.pathname, method: req.method ?? '', query, body })
       handler(req, res, body)
     })
   })
@@ -101,7 +109,7 @@ function json(res: http.ServerResponse, status: number, body: unknown): void {
 async function main(): Promise<void> {
   console.log('\n=== 飞影协议契约测试 ===\n')
 
-  /* ── 1. 请求体字段 ───────────────────────────────────────────── */
+  /* ── 1. 请求字段（创建类 POST body / 查询类 GET query）───────── */
   const srv1 = await startServer((req, res) => {
     if (req.url === PATHS.avatarCreateByVideo) {
       return json(res, 200, { code: 0, message: 'ok', data: { task_id: 'task_av_1' } })
@@ -112,8 +120,12 @@ async function main(): Promise<void> {
     if (req.url === PATHS.videoCreateByTts) {
       return json(res, 200, { code: 0, message: 'ok', data: { task_id: 'task_v_1' } })
     }
-    if (req.url === PATHS.avatarTask) {
-      return json(res, 200, { code: '0', data: { task_id: 'task_av_1', status: 3, avatar_id: 'av_x1' } })
+    if (req.url === PATHS.voiceEdit) {
+      return json(res, 200, { code: 0, message: 'ok' })
+    }
+    if (req.url?.startsWith(PATHS.avatarTask)) {
+      // 官方响应样例：标识字段为 avatar（数字字符串 code 兼容）
+      return json(res, 200, { code: '0', data: { task_id: 'task_av_1', status: 3, avatar: 'av_x1' } })
     }
     json(res, 404, { code: 404, message: 'not found' })
   })
@@ -123,6 +135,7 @@ async function main(): Promise<void> {
     const r = await c1.createAvatarByVideo({ title: '测试分身', videoUrl: 'https://example.com/v.mp4', aigcFlag: 0 })
     assert.equal(r.taskId, 'task_av_1')
     const sent = srv1.received.find((x) => x.path === PATHS.avatarCreateByVideo)!
+    assert.equal(sent.method, 'POST')
     assert.equal(sent.body.title, '测试分身')
     assert.equal(sent.body.video_url, 'https://example.com/v.mp4')
     assert.equal(sent.body.aigc_flag, 0)
@@ -151,28 +164,48 @@ async function main(): Promise<void> {
     assert.equal(mandarin.body.voice_type, 8)
   })
 
-  await check('信封解析：code 为数字字符串仍算成功', async () => {
+  await check('avatar/task：GET + query 且解析 avatar 标识（数字字符串 code）', async () => {
     const r = await c1.avatarTask('task_av_1')
     assert.equal(r.state, 'DONE')
     assert.equal(r.avatarId, 'av_x1')
+    const sent = srv1.received.find((x) => x.path === PATHS.avatarTask)!
+    assert.equal(sent.method, 'GET', '官方查询接口必须为 GET')
+    assert.equal(sent.query.task_id, 'task_av_1', 'task_id 必须在 query string')
+    assert.equal(JSON.stringify(sent.body), '{}', 'GET 不应携带 body')
   })
 
   await check('TTS 文本 >10000 字客户端直接拒绝', async () => {
     await assert.rejects(
-      () => c1.createAudioByTts({ voiceId: 'v1', text: 'x'.repeat(MAX_TTS_CHARS + 1) }),
+      () => c1.createAudioByTts({ voiceId: 'v1', text: 'x'.repeat(MAX_TTS_CHARS + 1), title: 't' }),
       (e: unknown) => isApiError(e) && e.code === 'HIFLY_BAD_REQUEST',
     )
   })
 
   // ── 视频创作模块（P5：V14 st_show=0 与短引用标题断言）──
-  await check('create_by_tts：st_show=0 且标题保留短引用（V14）', async () => {
+  await check('create_by_tts：avatar/voice 字段、st_show=0 且标题保留短引用（V14）', async () => {
     const longTitle = '一二三四五六七八九十一二三四五六七八九十'
     await c1.createVideoByTts({ title: buildVendorTitle(longTitle, 'ABC234'), avatarId: 'av_1', voiceId: 'vc_1', text: '大家好', stShow: 0 })
     const sent = srv1.received.filter((x) => x.path === PATHS.videoCreateByTts).at(-1)!
+    assert.equal(sent.body.avatar, 'av_1', '官方参数名为 avatar')
+    assert.equal(sent.body.voice, 'vc_1', '官方参数名为 voice')
+    assert.equal(sent.body.avatar_id, undefined)
+    assert.equal(sent.body.voice_id, undefined)
+    assert.equal(sent.body.speech_rate, undefined, '官方 create_by_tts 无语速参数（由 voice/edit 生效）')
     assert.equal(sent.body.st_show, 0)
     assert.equal(sent.body.aigc_flag, config.hifly.aigcFlag)
     assert.ok(sent.body.title.length <= 20, `标题应 ≤20 字，实际 ${sent.body.title}`)
     assert.ok(sent.body.title.endsWith('-ABC234'), '短引用必须保留在标题尾部（uncertain 核对依据）')
+  })
+
+  await check('voice/edit：参数为 voice / rate（字符串格式）', async () => {
+    await c1.editVoice({ voiceId: 'vc_x', speechRate: 1.2, volume: 0.8, pitch: 1.5 })
+    const sent = srv1.received.find((x) => x.path === PATHS.voiceEdit)!
+    assert.equal(sent.body.voice, 'vc_x')
+    assert.equal(sent.body.rate, '1.2', '官方 rate 参数为字符串')
+    assert.equal(sent.body.volume, '0.8')
+    assert.equal(sent.body.pitch, '1.5')
+    assert.equal(sent.body.voice_id, undefined)
+    assert.equal(sent.body.speech_rate, undefined)
   })
 
   await check('字幕参数白名单：stShow 非 0 直接拒绝', async () => {
@@ -184,16 +217,22 @@ async function main(): Promise<void> {
 
   /* ── 2. 状态映射 / 拼写兼容 / 无 code 信封 ───────────────────── */
   const srv2 = await startServer((req, res) => {
-    if (req.url === PATHS.avatarTask) {
-      const status = Number(new URL(req.url!, 'http://x').searchParams.get('s') ?? '1')
-      void status
+    if (req.url?.startsWith(PATHS.avatarTask)) {
       return json(res, 200, { code: 0, data: { task_id: 't', status: 1 } })
     }
-    if (req.url === PATHS.videoTask) {
+    if (req.url?.startsWith(PATHS.videoTask)) {
       return json(res, 200, { code: 0, data: { task_id: 't', status: 3, video_Url: 'https://example.com/out.mp4' } })
     }
-    if (req.url === PATHS.voiceTask) {
-      return json(res, 200, { code: true, data: { task_id: 't', status: 'DONE', voiceId: 'vc_1', demo_url: 'https://example.com/demo.mp3' } })
+    if (req.url?.startsWith(PATHS.voiceTask)) {
+      // 官方响应样例：标识字段为 voice + demo_url（布尔 code 兼容）
+      return json(res, 200, { code: true, data: { task_id: 't', status: 'DONE', voice: 'vc_1', demo_url: 'https://example.com/demo.mp3' } })
+    }
+    if (req.url?.startsWith(PATHS.avatarList)) {
+      // 官方 list 响应：行数组在 data.data，分页参数 page/size
+      return json(res, 200, {
+        code: 0,
+        data: { data: [{ avatar: 'av_a', title: '分身A-ABC234', status: '3' }, { avatar: 'av_b', title: '分身B', status: '3' }] },
+      })
     }
     if (req.url === PATHS.toolCreateUploadUrl) {
       // 上传凭证接口无 code：字段在信封顶层（与众墅之家生产实现一致）
@@ -203,8 +242,9 @@ async function main(): Promise<void> {
         file_id: 'file_x1',
       })
     }
-    if (req.url === PATHS.accountCredit) {
-      return json(res, 200, { code: 0, data: { credit: 1234 } })
+    if (req.url?.startsWith(PATHS.accountCredit)) {
+      // 官方余额字段为 left
+      return json(res, 200, { code: 0, data: { left: 1234 } })
     }
     json(res, 404, { code: 404 })
   })
@@ -225,11 +265,25 @@ async function main(): Promise<void> {
     assert.equal(r.videoUrl, 'https://example.com/out.mp4')
   })
 
-  await check('voiceId / demo_url 解析与布尔 code', async () => {
+  await check('voice/task：voice / demo_url 解析与布尔 code', async () => {
     const r = await c2.voiceTask('t')
     assert.equal(r.state, 'DONE')
     assert.equal(r.voiceId, 'vc_1')
     assert.equal(r.demoUrl, 'https://example.com/demo.mp3')
+    assert.equal(srv2.received.find((x) => x.path === PATHS.voiceTask)!.method, 'GET')
+  })
+
+  await check('avatar/list：GET + page/size 且行数组从 data.data 解析', async () => {
+    const items = await c2.avatarList({ page: 2, pageSize: 50, kind: 2 })
+    assert.equal(items.length, 2)
+    assert.equal(items[0].id, 'av_a', '官方列表标识字段为 avatar')
+    assert.equal(items[0].title, '分身A-ABC234')
+    const sent = srv2.received.find((x) => x.path === PATHS.avatarList)!
+    assert.equal(sent.method, 'GET')
+    assert.equal(sent.query.page, '2')
+    assert.equal(sent.query.size, '50', '官方分页参数名为 size')
+    assert.equal(sent.query.kind, '2')
+    assert.equal(sent.query.page_size, undefined)
   })
 
   await check('上传凭证接口无 code：顶层字段即成功', async () => {
@@ -239,8 +293,9 @@ async function main(): Promise<void> {
     assert.equal(t.contentType, 'video/mp4')
   })
 
-  await check('account/credit 解析', async () => {
+  await check('account/credit：GET 且解析 left 字段', async () => {
     assert.equal(await c2.credit(), 1234)
+    assert.equal(srv2.received.find((x) => x.path === PATHS.accountCredit)!.method, 'GET')
   })
 
   /* ── 3. 错误分类 ─────────────────────────────────────────────── */
@@ -256,7 +311,7 @@ async function main(): Promise<void> {
     if (req.url === PATHS.voiceCreate) {
       return json(res, 200, { code: '1009', message: '声音数量达上限' })
     }
-    if (req.url === PATHS.avatarTask) {
+    if (req.url?.startsWith(PATHS.avatarTask)) {
       return json(res, 200, { code: 1011, message: '素材未过合规校验' })
     }
     // 轮询类其余路径：直接掐断连接（模拟网络异常）
@@ -311,7 +366,7 @@ async function main(): Promise<void> {
     const a = await mock.createAvatarByVideo({ title: '同标题', videoUrl: 'https://e.com/same.mp4' })
     const b = await mock.createAvatarByVideo({ title: '同标题', videoUrl: 'https://e.com/same.mp4' })
     assert.equal(a.taskId, b.taskId)
-    assert.equal(a.raw.avatar_id, b.raw.avatar_id)
+    assert.equal(a.raw.avatar, b.raw.avatar)
   })
 
   await check('mock：可注入 uncertain', async () => {

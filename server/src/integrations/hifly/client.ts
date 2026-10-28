@@ -7,15 +7,19 @@ import { logApiCall } from '../../modules/metrics/call-log.js'
 import { newId } from '../../lib/util.js'
 
 /**
- * 飞影 HiFly 开放平台 V2 客户端（R1~R4 平移众墅之家 hifly.py，已在生产跑通）。
+ * 飞影 HiFly 开放平台 V2 客户端（平移众墅之家 hifly.py 生产实现，协议逐项对照官方文档
+ * https://api.hifly.cc/hifly.html，源实现见众墅之家仓库 server/app/hifly.py）。
  *  - 全部端点：avatar / voice / video / audio / tool / account；
  *  - Bearer 鉴权；信封解析（code 可为数字或数字字符串；上传凭证接口无 code）；
- *  - 状态码 1/2/3/4 → WAITING/PROCESSING/DONE/FAILED；video_Url 拼写兼容；
+ *  - 创建类接口 POST + JSON body；查询类接口（task / list / credit）GET + query 参数；
+ *  - 任务标识字段为 avatar / voice（兼容 avatar_id / voice_id 兜底）；状态码 1/2/3/4 → WAITING/PROCESSING/DONE/FAILED；
+ *    video_Url 拼写兼容；余额字段 left；list 分页参数 page/size，行数组在 data；
+ *  - voice/edit 参数 voice / rate / volume / pitch 且为字符串格式；
  *  - 标题 ≤20 字、TTS 文本 ≤10000 字；JSON 60s / 二进制 300s 双超时；
  *  - 创建类请求只要没拿到飞影业务码即判「提交结果未知」（HiflySubmissionUncertain，L9）。
  *
- * 端点路径集中在 PATHS：PL4a 真实账号探活时逐项核对（§10 风险「飞影接口变化」），
- * 契约测试（scripts/test-hifly-protocol.ts）固定请求体与响应样例，接口变化先改测试。
+ * 端点路径集中在 PATHS：真实账号探活时逐项核对（§10 风险「飞影接口变化」），
+ * 契约测试（scripts/test-hifly-protocol.ts）固定请求与响应样例，接口变化先改测试。
  */
 
 /* ── 端点路径（与众墅之家生产实现逐字对齐：/api/v2/hifly 前缀）───────── */
@@ -249,9 +253,6 @@ export interface HiflyClient {
     avatarId: string
     voiceId: string
     text: string
-    speechRate?: number
-    volume?: number
-    pitch?: number
     aigcFlag?: number
     /** 字幕参数白名单（V14）：视频创作模块只允许 st_show=0（字幕在剪辑模块添加） */
     stShow?: 0
@@ -266,13 +267,7 @@ export interface HiflyClient {
     aigcFlag?: number
   }): Promise<HiflyAccept>
   videoTask(taskId: string, callRef?: { refType?: string; refId?: string }): Promise<HiflyTaskResult>
-  createAudioByTts(input: {
-    voiceId: string
-    text: string
-    speechRate?: number
-    volume?: number
-    pitch?: number
-  }): Promise<HiflyAccept>
+  createAudioByTts(input: { voiceId: string; text: string; title: string }): Promise<HiflyAccept>
   createUploadUrl(input: { fileExtension: string }): Promise<HiflyUploadTicket>
   /** PUT 原始字节到厂商上传地址（自上传路径，二进制超时） */
   uploadFile(ticket: HiflyUploadTicket, localPath: string): Promise<void>
@@ -304,71 +299,135 @@ class HttpHiflyClient implements HiflyClient {
 
   /* ── 内部：JSON 请求 + 调用记录 ─────────────────────────────── */
 
+  private callRefOf(opts: { refType?: string; refId?: string }): { refType: string | null; refId: string | null } {
+    return { refType: opts.refType ?? null, refId: opts.refId ?? null }
+  }
+
+  /** 信封判定 + 调用留痕共用段：ok → 返回 data；业务失败 → HiflyVendorError */
+  private async resolveJson(
+    pathName: string,
+    resData: unknown,
+    opts: { refType?: string; refId?: string },
+    meta: { started: number; requestId: string; httpStatus: number | null },
+  ): Promise<Record<string, unknown>> {
+    const ref = this.callRefOf(opts)
+    const env = parseEnvelope(resData)
+    const ok = env.hasCode ? env.code === 0 : Object.keys(env.data).length > 0
+    if (!ok) {
+      const vendorCode = env.code ?? 0
+      const message = env.message || VENDOR_CODE_MESSAGES[vendorCode] || `飞影服务错误（code=${vendorCode}）`
+      await logApiCall({
+        provider: 'hifly',
+        endpoint: pathName,
+        ...ref,
+        ok: false,
+        httpStatus: meta.httpStatus,
+        durationMs: Date.now() - meta.started,
+        error: `code=${vendorCode} ${message}`,
+        requestId: meta.requestId,
+      })
+      throw new HiflyVendorError(vendorCode, message, { body: resData as Record<string, unknown> })
+    }
+    await logApiCall({
+      provider: 'hifly',
+      endpoint: pathName,
+      ...ref,
+      ok: true,
+      httpStatus: meta.httpStatus,
+      durationMs: Date.now() - meta.started,
+      requestId: meta.requestId,
+    })
+    return env.data
+  }
+
+  private async logJsonFailure(
+    pathName: string,
+    opts: { refType?: string; refId?: string },
+    meta: { started: number; requestId: string; httpStatus: number | null },
+    e: unknown,
+  ): Promise<void> {
+    await logApiCall({
+      provider: 'hifly',
+      endpoint: pathName,
+      ...this.callRefOf(opts),
+      ok: false,
+      httpStatus: meta.httpStatus,
+      durationMs: Date.now() - meta.started,
+      error: (e as Error).message,
+      requestId: meta.requestId,
+    })
+  }
+
   private async postJson(
     pathName: string,
     body: Record<string, unknown>,
     opts: { kind: 'create' | 'query'; refType?: string; refId?: string; binary?: boolean; ticket?: boolean },
   ): Promise<Record<string, unknown>> {
-    const started = Date.now()
-    const requestId = newId('hifly')
-    let httpStatus: number | null = null
+    const meta = { started: Date.now(), requestId: newId('hifly'), httpStatus: null as number | null }
     try {
       const res = await this.http.post(pathName, body, {
         timeout: opts.binary ? config.hifly.binaryTimeoutMs : config.hifly.timeoutMs,
       })
-      httpStatus = res.status
-      const env = parseEnvelope(res.data)
+      meta.httpStatus = res.status
+      const ref = this.callRefOf(opts)
       // 上传凭证接口（ticket）：字段在信封顶层（无 code、无 data 包裹），
       // 与众墅之家生产实现一致：有 upload_url 即成功（R1）
-      const ok = opts.ticket
-        ? !!pickUrl(res.data as Record<string, unknown>, 'upload_url', 'url', 'put_url', 'uploadUrl')
-        : env.hasCode
-          ? env.code === 0
-          : Object.keys(env.data).length > 0
-      if (!ok) {
-        const vendorCode = env.code ?? 0
-        const message = env.message || VENDOR_CODE_MESSAGES[vendorCode] || `飞影服务错误（code=${vendorCode}）`
+      if (opts.ticket) {
+        const top = res.data as Record<string, unknown>
+        const ok = !!pickUrl(top, 'upload_url', 'url', 'put_url', 'uploadUrl')
+        if (!ok) {
+          const env = parseEnvelope(top)
+          const vendorCode = env.code ?? 0
+          const message = env.message || `飞影服务错误（code=${vendorCode}）`
+          await logApiCall({
+            provider: 'hifly',
+            endpoint: pathName,
+            ...ref,
+            ok: false,
+            httpStatus: meta.httpStatus,
+            durationMs: Date.now() - meta.started,
+            error: `code=${vendorCode} ${message}`,
+            requestId: meta.requestId,
+          })
+          throw new HiflyVendorError(vendorCode, message, { body: top })
+        }
         await logApiCall({
           provider: 'hifly',
           endpoint: pathName,
-          refType: opts.refType ?? null,
-          refId: opts.refId ?? null,
-          ok: false,
-          httpStatus,
-          durationMs: Date.now() - started,
-          error: `code=${vendorCode} ${message}`,
-          requestId,
+          ...ref,
+          ok: true,
+          httpStatus: meta.httpStatus,
+          durationMs: Date.now() - meta.started,
+          requestId: meta.requestId,
         })
-        throw new HiflyVendorError(vendorCode, message, { body: res.data as Record<string, unknown> })
+        return top
       }
-      await logApiCall({
-        provider: 'hifly',
-        endpoint: pathName,
-        refType: opts.refType ?? null,
-        refId: opts.refId ?? null,
-        ok: true,
-        httpStatus,
-        durationMs: Date.now() - started,
-        requestId,
-      })
-      return opts.ticket ? (res.data as Record<string, unknown>) : env.data
+      return await this.resolveJson(pathName, res.data, opts, meta)
     } catch (e) {
       if (e instanceof HiflyVendorError) throw e
-      await logApiCall({
-        provider: 'hifly',
-        endpoint: pathName,
-        refType: opts.refType ?? null,
-        refId: opts.refId ?? null,
-        ok: false,
-        httpStatus,
-        durationMs: Date.now() - started,
-        error: (e as Error).message,
-        requestId,
-      })
+      await this.logJsonFailure(pathName, opts, meta, e)
       // R2：创建类请求没拿到业务码 → 提交结果未知；查询类 → 查询异常（继续等待）
       if (opts.kind === 'create') {
         throw new HiflySubmissionUncertain(`飞影创建请求未获得明确结果：${(e as Error).message}`, e)
       }
+      throw new HiflyQueryError(`飞影查询失败：${(e as Error).message}`, e)
+    }
+  }
+
+  /** 查询类：GET + query 参数（官方 V2：task / list / credit 均为 GET，参数在 query string） */
+  private async getJson(
+    pathName: string,
+    query: Record<string, string | number>,
+    opts: { refType?: string; refId?: string },
+  ): Promise<Record<string, unknown>> {
+    const meta = { started: Date.now(), requestId: newId('hifly'), httpStatus: null as number | null }
+    try {
+      const res = await this.http.get(pathName, { params: query, timeout: config.hifly.timeoutMs })
+      meta.httpStatus = res.status
+      return await this.resolveJson(pathName, res.data, opts, meta)
+    } catch (e) {
+      if (e instanceof HiflyVendorError) throw e
+      await this.logJsonFailure(pathName, opts, meta, e)
       throw new HiflyQueryError(`飞影查询失败：${(e as Error).message}`, e)
     }
   }
@@ -412,17 +471,18 @@ class HttpHiflyClient implements HiflyClient {
   }
 
   async avatarTask(taskId: string): Promise<HiflyTaskResult> {
-    const data = await this.postJson(PATHS.avatarTask, { task_id: taskId }, { kind: 'query', refType: 'persona_avatar' })
+    const data = await this.getJson(PATHS.avatarTask, { task_id: taskId }, { refType: 'persona_avatar' })
     return this.mapTask(data, taskId)
   }
 
   async avatarList(opts: { page?: number; pageSize?: number; kind?: number } = {}): Promise<HiflyListItem[]> {
-    const data = await this.postJson(
+    const data = await this.getJson(
       PATHS.avatarList,
-      { page: opts.page ?? 1, page_size: opts.pageSize ?? 20, kind: opts.kind ?? 2 },
-      { kind: 'query' },
+      // 官方分页参数是 page / size；kind=2 = 公共数字人（克隆任务在公共列表核对）
+      { page: opts.page ?? 1, size: opts.pageSize ?? 20, kind: opts.kind ?? 2 },
+      { refType: 'persona_avatar' },
     )
-    return this.mapList(data, ['avatar_id', 'avatarId', 'id'])
+    return this.mapList(data, ['avatar', 'avatar_id', 'avatarId', 'id'])
   }
 
   /* ── voice ──────────────────────────────────────────────────── */
@@ -446,30 +506,31 @@ class HttpHiflyClient implements HiflyClient {
   }
 
   async editVoice(input: { voiceId: string; speechRate?: number; volume?: number; pitch?: number }): Promise<void> {
+    // 官方参数名为 voice / rate / volume / pitch，且均为字符串格式（"1.2"）
     await this.postJson(
       PATHS.voiceEdit,
       {
-        voice_id: input.voiceId,
-        ...(input.speechRate !== undefined ? { speech_rate: input.speechRate } : {}),
-        ...(input.volume !== undefined ? { volume: input.volume } : {}),
-        ...(input.pitch !== undefined ? { pitch: input.pitch } : {}),
+        voice: input.voiceId,
+        ...(input.speechRate !== undefined ? { rate: String(input.speechRate) } : {}),
+        ...(input.volume !== undefined ? { volume: String(input.volume) } : {}),
+        ...(input.pitch !== undefined ? { pitch: String(input.pitch) } : {}),
       },
       { kind: 'create', refType: 'persona_voice' },
     )
   }
 
   async voiceTask(taskId: string): Promise<HiflyTaskResult> {
-    const data = await this.postJson(PATHS.voiceTask, { task_id: taskId }, { kind: 'query', refType: 'persona_voice' })
+    const data = await this.getJson(PATHS.voiceTask, { task_id: taskId }, { refType: 'persona_voice' })
     return this.mapTask(data, taskId)
   }
 
   async voiceList(opts: { page?: number; pageSize?: number } = {}): Promise<HiflyListItem[]> {
-    const data = await this.postJson(
+    const data = await this.getJson(
       PATHS.voiceList,
-      { page: opts.page ?? 1, page_size: opts.pageSize ?? 20 },
-      { kind: 'query' },
+      { page: opts.page ?? 1, size: opts.pageSize ?? 20 },
+      { refType: 'persona_voice' },
     )
-    return this.mapList(data, ['voice_id', 'voiceId', 'id'])
+    return this.mapList(data, ['voice', 'voice_id', 'voiceId', 'id'])
   }
 
   /* ── video（M3 消费）────────────────────────────────────────── */
@@ -479,9 +540,6 @@ class HttpHiflyClient implements HiflyClient {
     avatarId: string
     voiceId: string
     text: string
-    speechRate?: number
-    volume?: number
-    pitch?: number
     aigcFlag?: number
     stShow?: 0
     callRef?: { refType?: string; refId?: string }
@@ -493,16 +551,14 @@ class HttpHiflyClient implements HiflyClient {
     if (input.stShow !== undefined && input.stShow !== 0) {
       throw err.hiflyBadRequest('字幕参数仅支持 st_show=0（字幕在剪辑模块添加）', { stShow: input.stShow })
     }
+    // 官方参数名为 avatar / voice；语速 / 音量 / 音调由 voice/edit 在声音侧生效（R17 三段式），本接口无这些参数
     const data = await this.postJson(
       PATHS.videoCreateByTts,
       {
         title: clipTitle(input.title),
-        avatar_id: input.avatarId,
-        voice_id: input.voiceId,
+        avatar: input.avatarId,
+        voice: input.voiceId,
         text: input.text,
-        speech_rate: input.speechRate ?? 1.0,
-        volume: input.volume ?? 1.0,
-        pitch: input.pitch ?? 1.0,
         aigc_flag: input.aigcFlag ?? config.hifly.aigcFlag,
         st_show: input.stShow ?? 0,
       },
@@ -532,34 +588,27 @@ class HttpHiflyClient implements HiflyClient {
   }
 
   async videoTask(taskId: string, callRef?: { refType?: string; refId?: string }): Promise<HiflyTaskResult> {
-    const data = await this.postJson(
+    const data = await this.getJson(
       PATHS.videoTask,
       { task_id: taskId },
-      { kind: 'query', refType: callRef?.refType ?? 'persona_avatar', refId: callRef?.refId },
+      { refType: callRef?.refType ?? 'persona_avatar', refId: callRef?.refId },
     )
     return this.mapTask(data, taskId)
   }
 
   /* ── audio（任意文本试听）────────────────────────────────────── */
 
-  async createAudioByTts(input: {
-    voiceId: string
-    text: string
-    speechRate?: number
-    volume?: number
-    pitch?: number
-  }): Promise<HiflyAccept> {
+  async createAudioByTts(input: { voiceId: string; text: string; title: string }): Promise<HiflyAccept> {
     if (input.text.length > MAX_TTS_CHARS) {
       throw err.hiflyBadRequest(`试听文本超过 ${MAX_TTS_CHARS} 字上限`, { length: input.text.length })
     }
+    // 官方参数为 voice / text / title；语速等参数由 voice/edit 在声音侧生效
     const data = await this.postJson(
       PATHS.audioCreateByTts,
       {
-        voice_id: input.voiceId,
+        voice: input.voiceId,
         text: input.text,
-        speech_rate: input.speechRate ?? 1.0,
-        volume: input.volume ?? 1.0,
-        pitch: input.pitch ?? 1.0,
+        title: clipTitle(input.title),
       },
       { kind: 'create', refType: 'persona_voice' },
     )
@@ -618,8 +667,9 @@ class HttpHiflyClient implements HiflyClient {
   }
 
   async credit(): Promise<number> {
-    const data = await this.postJson(PATHS.accountCredit, {}, { kind: 'query' })
-    const v = toNum(data.credit ?? data.credits ?? data.balance ?? data.remain)
+    const data = await this.getJson(PATHS.accountCredit, {}, {})
+    // 官方余额字段为 left（众墅之家生产实现同款兜底链）
+    const v = toNum(data.left ?? data.credit ?? data.credits ?? data.balance ?? data.remain)
     return v ?? 0
   }
 
@@ -631,8 +681,9 @@ class HttpHiflyClient implements HiflyClient {
     return {
       state,
       taskId: String(data.task_id ?? taskId),
-      avatarId: (data.avatar_id as string) ?? (data.avatarId as string) ?? null,
-      voiceId: (data.voice_id as string) ?? (data.voiceId as string) ?? null,
+      // 官方任务标识字段为 avatar / voice（众墅之家：data.get("avatar") or data.get("avatar_id")）
+      avatarId: (data.avatar as string) ?? (data.avatar_id as string) ?? (data.avatarId as string) ?? null,
+      voiceId: (data.voice as string) ?? (data.voice_id as string) ?? (data.voiceId as string) ?? null,
       demoUrl: pickUrl(data, 'demo_url', 'demoUrl', 'audio_url', 'audioUrl', 'audio_Url'),
       videoUrl: pickUrl(data, 'video_url', 'videoUrl', 'video_Url'),
       audioUrl: pickUrl(data, 'audio_url', 'audioUrl', 'audio_Url'),
@@ -644,7 +695,17 @@ class HttpHiflyClient implements HiflyClient {
   }
 
   private mapList(data: Record<string, unknown>, idKeys: string[]): HiflyListItem[] {
-    const list = Array.isArray(data.list) ? data.list : Array.isArray(data.items) ? data.items : []
+    // 官方 list 响应行数组在 data.data（信封 data 内再包一层）；兼容 data 直接是数组 / list / items
+    const container = data as unknown
+    const list = Array.isArray(container)
+      ? container
+      : Array.isArray((data as Record<string, unknown>).data)
+        ? ((data as Record<string, unknown>).data as unknown[])
+        : Array.isArray(data.list)
+          ? data.list
+          : Array.isArray(data.items)
+            ? data.items
+            : []
     return list.map((item) => {
       const o = (item ?? {}) as Record<string, unknown>
       const id = idKeys.map((k) => o[k]).find((v) => typeof v === 'string' && v) ?? null

@@ -237,7 +237,7 @@ class MockHiflyClient implements HiflyClient {
   }): Promise<HiflyAccept> {
     const avatarId = detId('mock_avatar', input.videoUrl ?? input.fileId, input.title)
     const taskId = applyCreateInjection('avatar.create', () => registerTask('avatar', clipTitle(input.title), { avatarId }))
-    return { taskId, raw: { mock: true, avatar_id: avatarId } }
+    return { taskId, raw: { mock: true, avatar: avatarId } }
   }
 
   async createAvatarByImage(input: {
@@ -248,7 +248,7 @@ class MockHiflyClient implements HiflyClient {
   }): Promise<HiflyAccept> {
     const avatarId = detId('mock_avatar', input.imageUrl ?? input.fileId, input.title)
     const taskId = applyCreateInjection('avatar.create', () => registerTask('avatar', clipTitle(input.title), { avatarId }))
-    return { taskId, raw: { mock: true, avatar_id: avatarId } }
+    return { taskId, raw: { mock: true, avatar: avatarId } }
   }
 
   async avatarTask(taskId: string): Promise<HiflyTaskResult> {
@@ -275,7 +275,7 @@ class MockHiflyClient implements HiflyClient {
     const voiceId = detId('mock_voice', input.audioUrl ?? input.fileId, input.title)
     const demoUrl = `mock://demo/${voiceId}.wav`
     const taskId = applyCreateInjection('voice.create', () => registerTask('voice', clipTitle(input.title), { voiceId, demoUrl }))
-    return { taskId, raw: { mock: true, voice_id: voiceId } }
+    return { taskId, raw: { mock: true, voice: voiceId } }
   }
 
   async editVoice(input: { voiceId: string; speechRate?: number; volume?: number; pitch?: number }): Promise<void> {
@@ -302,9 +302,6 @@ class MockHiflyClient implements HiflyClient {
     avatarId: string
     voiceId: string
     text: string
-    speechRate?: number
-    volume?: number
-    pitch?: number
     aigcFlag?: number
     stShow?: 0
     callRef?: { refType?: string; refId?: string }
@@ -333,16 +330,11 @@ class MockHiflyClient implements HiflyClient {
     return queryTask(taskId)
   }
 
-  async createAudioByTts(input: {
-    voiceId: string
-    text: string
-    speechRate?: number
-    volume?: number
-    pitch?: number
-  }): Promise<HiflyAccept> {
+  async createAudioByTts(input: { voiceId: string; text: string; title: string }): Promise<HiflyAccept> {
     applyInjection('audio.create')
-    const audioUrl = `mock://audio/${detId('mock_audio', input.voiceId, input.text, input.speechRate ?? 1, input.volume ?? 1, input.pitch ?? 1)}.wav`
-    const taskId = registerTask('audio', clipTitle(input.text.slice(0, 20)), { audioUrl })
+    // 语速 / 音量 / 音调由 voice/edit 在声音侧生效，TTS 请求只由声音 + 文本决定
+    const audioUrl = `mock://audio/${detId('mock_audio', input.voiceId, input.text)}.wav`
+    const taskId = registerTask('audio', clipTitle(input.title), { audioUrl })
     return { taskId, raw: { mock: true } }
   }
 

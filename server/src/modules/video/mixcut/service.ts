@@ -103,9 +103,7 @@ export async function runTtsStage(jobId: string): Promise<void> {
     const acc = await client.createAudioByTts({
       voiceId: voice.vendorVoiceId,
       text: job.textSnapshot.submitText,
-      speechRate: voice.speechRate,
-      volume: voice.volume,
-      pitch: voice.pitch,
+      title: `配音-${jobId.slice(-6)}`,
     })
     // 轮询到 DONE（音频合成通常分钟级；本地阶段占用 worker 不占飞影视频并发）
     const deadline = Date.now() + config.hifly.pollMaxAgeMs

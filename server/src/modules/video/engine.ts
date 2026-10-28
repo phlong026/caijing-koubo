@@ -19,9 +19,6 @@ export interface EngineSubmitInput {
   submitText: string
   vendorTitle: string
   genMode: GenMode
-  speechRate?: number
-  volume?: number
-  pitch?: number
   /** 调用归属（FR-P8）：video_job id，写进 api_call_log.ref_id */
   jobId?: string
 }
@@ -72,9 +69,6 @@ export function createVideoEngine(): AvatarVideoEngine {
         avatarId: input.vendorAvatarId,
         voiceId: input.vendorVoiceId,
         text: input.submitText,
-        speechRate: input.speechRate,
-        volume: input.volume,
-        pitch: input.pitch,
         aigcFlag: config.hifly.aigcFlag,
         stShow: 0,
         callRef: { refType: 'video_job', refId: input.jobId },
