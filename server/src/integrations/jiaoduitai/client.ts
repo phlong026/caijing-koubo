@@ -4,9 +4,10 @@ import { logger } from '../../log.js'
 import { logApiCall } from '../../modules/metrics/call-log.js'
 
 /**
- * 校对台内容审核平台客户端（docs/jiaoduitai-review-api-v1.1.md）。
+ * 校对台内容审核平台客户端（docs/jiaoduitai-review-api-v1.3.md）。
  * 本期平台无鉴权，提交人凭 submitter 自证；错误统一为 {"error": "中文描述"}。
  * 机审异步：送审拿到 review_no 即受理成功，进度靠 by-no 查询。
+ * 平台只出审核意见不改稿：驳回 / 机审拦截由我方改稿后 resubmit 重审（单号不变、版本 +1）。
  */
 
 export interface SubmitResponse {
@@ -102,7 +103,7 @@ export async function submitText(input: { submitter: string; contentText: string
   const body = await call<Record<string, unknown>>(
     'POST',
     '/api/reviews/submit',
-    { submitter: input.submitter, content_text: input.contentText },
+    { submitter: input.submitter, content_text: input.contentText, source: config.jiaoduitai.source },
     ref,
   )
   // 正文已在 toSubmitText 中压掉篇界；仍被拆成多篇说明清洗有漏洞，不能当成单篇处理
@@ -118,4 +119,25 @@ export async function getReviewByNo(reviewNo: string, ref: Ref): Promise<ReviewB
   const body = await call<Record<string, unknown>>('GET', `/api/reviews/by-no/${encodeURIComponent(reviewNo)}`, undefined, ref)
   if (typeof body.status !== 'string') throw new JiaoduitaiError('校对台查询响应缺少 status', null)
   return body as ReviewByNo
+}
+
+/**
+ * POST /api/reviews/by-no/{reviewNo}/resubmit 改稿重审（第 8 节）：
+ * 仅平台最新版本为 rejected / pending_revise 时可调；单号锚定不变，版本 +1 重走机审与人工。
+ */
+export async function resubmitReview(
+  reviewNo: string,
+  input: { submitter: string; contentText: string },
+  ref: Ref,
+): Promise<SubmitResponse> {
+  const body = await call<Record<string, unknown>>(
+    'POST',
+    `/api/reviews/by-no/${encodeURIComponent(reviewNo)}/resubmit`,
+    { submitter: input.submitter, content_text: input.contentText },
+    ref,
+  )
+  if (typeof body.review_no !== 'string' || !body.review_no) {
+    throw new JiaoduitaiError('校对台重审响应缺少 review_no', null)
+  }
+  return body as unknown as SubmitResponse
 }

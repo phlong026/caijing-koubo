@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  extractReviewedText,
-  extractRiskText,
-  mapExternalStatus,
-  parseReviewedText,
-  toSubmitText,
-} from '../../src/modules/copy/jiaoduitai.js'
+import { extractRiskText, formatFindings, mapExternalStatus, toSubmitText } from '../../src/modules/copy/jiaoduitai.js'
 
 describe('toSubmitText（校对台文本送审正文）', () => {
   it('标题作首行，段落之间只空一行', () => {
@@ -38,8 +32,8 @@ describe('mapExternalStatus（校对台状态 → 本地审核单状态）', () 
     expect(mapExternalStatus('machine_reviewing')).toBe('gate1')
   })
 
-  it('机审高危拦截对应第 2 关', () => {
-    expect(mapExternalStatus('pending_revise')).toBe('gate2')
+  it('机审高危拦截不在映射表：与驳回同样走「审核意见」本地退回，由 syncSubmission 单独处理', () => {
+    expect(mapExternalStatus('pending_revise')).toBeNull()
   })
 
   it('人工初审 / 终审对应待人工复核', () => {
@@ -56,15 +50,30 @@ describe('mapExternalStatus（校对台状态 → 本地审核单状态）', () 
   })
 })
 
-describe('extractReviewedText（取审核后的文案）', () => {
-  it('取 content_text', () => {
-    expect(extractReviewedText({ status: 'approved', content_text: '标题\n\n正文' })).toBe('标题\n\n正文')
+describe('formatFindings（机审风险项 → 可读审核意见）', () => {
+  const body = {
+    findings: [
+      {
+        severity_label: '高风险',
+        rule_name: '[RULE-147] 禁止稳赚不赔等违规表述',
+        excerpt: '稳赚不赔',
+        description: '使用了稳赚不赔等违规表述',
+        suggestion: '删除该表述',
+      },
+      { severity_label: '高风险', rule_name: '[RULE-324] 禁止绝对化用语', excerpt: '名列前茅', description: '隐含绝对化用语' },
+    ],
+  }
+
+  it('逐条编号，含等级/规则/摘录/说明/建议', () => {
+    const text = formatFindings(body)!
+    expect(text).toContain('1. 高风险｜[RULE-147] 禁止稳赚不赔等违规表述，原文「稳赚不赔」，使用了稳赚不赔等违规表述，建议：删除该表述')
+    expect(text).toContain('2. 高风险｜[RULE-324] 禁止绝对化用语，原文「名列前茅」，隐含绝对化用语')
   })
 
-  it('缺失或为空返回 null', () => {
-    expect(extractReviewedText({ status: 'approved' })).toBeNull()
-    expect(extractReviewedText({ content_text: '   ' })).toBeNull()
-    expect(extractReviewedText(null)).toBeNull()
+  it('findings 为空 / 缺失 / 非对象时返回 null', () => {
+    expect(formatFindings({ findings: [] })).toBeNull()
+    expect(formatFindings({ status: 'pending_revise' })).toBeNull()
+    expect(formatFindings(null)).toBeNull()
   })
 })
 
@@ -82,32 +91,3 @@ describe('extractRiskText（校对台返回的风险话术，决策 D4 预留）
   })
 })
 
-describe('parseReviewedText（审核后文案 → 标题 + 段落）', () => {
-  const original = {
-    title: '四季度债市展望',
-    sections: [
-      { label: '开头', text: '旧开头。' },
-      { label: '结尾', text: '旧结尾。' },
-    ],
-  }
-
-  it('首行为标题，空行切段，按原段落顺序沿用段名', () => {
-    const r = parseReviewedText('四季度债市展望（修订）\r\n\r\n新开头。\n\n新结尾。', original)
-    expect(r.title).toBe('四季度债市展望（修订）')
-    expect(r.sections).toEqual([
-      { label: '开头', text: '新开头。' },
-      { label: '结尾', text: '新结尾。' },
-    ])
-  })
-
-  it('段数变多时，多出的段落按序号命名', () => {
-    const r = parseReviewedText('标题\n\n一\n\n二\n\n三', original)
-    expect(r.sections.map((s) => s.label)).toEqual(['开头', '结尾', '第3段'])
-  })
-
-  it('原稿无标题时整段都是正文', () => {
-    const r = parseReviewedText('第一段。\n\n第二段。', { title: '', sections: original.sections })
-    expect(r.title).toBe('')
-    expect(r.sections.map((s) => s.text)).toEqual(['第一段。', '第二段。'])
-  })
-})

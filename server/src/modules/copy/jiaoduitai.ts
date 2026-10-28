@@ -3,7 +3,7 @@ import { toPlainText } from './text.js'
 
 /**
  * 校对台（外部内容审核平台）接入的纯函数部分：送审正文、状态映射、审核后文案解析。
- * 接口约定见 docs/jiaoduitai-review-api-v1.1.md。
+ * 接口约定见 docs/jiaoduitai-review-api-v1.3.md。
  */
 
 /** 本地审核单在校对台审核过程中可能处于的状态 */
@@ -12,8 +12,7 @@ export type MappedStatus = 'gate1' | 'gate2' | 'pending_manual' | 'approved' | '
 const STATUS_MAP: Record<string, MappedStatus> = {
   pending_machine: 'gate1',
   machine_reviewing: 'gate1',
-  // 机审高危拦截：提交人在校对台处理（改稿重送或确认继续）
-  pending_revise: 'gate2',
+  // pending_revise（机审高危拦截）不在此映射：与 rejected 同样视为「审核意见」，本地退回改稿后 resubmit 重审
   pending_first: 'pending_manual',
   first_reviewing: 'pending_manual',
   pending_final: 'pending_manual',
@@ -54,32 +53,24 @@ export function extractRiskText(body: unknown, field: string): string | null {
   return typeof v === 'string' && v.trim() ? v.trim() : null
 }
 
-/** 校对台审核通过后返回的文案（查询接口 content_text 字段） */
-export function extractReviewedText(body: unknown): string | null {
-  if (!body || typeof body !== 'object') return null
-  const text = (body as Record<string, unknown>).content_text
-  return typeof text === 'string' && text.trim() ? text : null
-}
-
 /**
- * 审核后文案 → 标题 + 段落。原稿有标题时首行即标题；正文按空行切段，
- * 段名按顺序沿用原稿（视频创作按段落名定位），多出的段落按序号命名。
+ * 机审风险项（findings）→ 可读审核意见，供本地退回时写入 reject_reason 透传给改稿人。
+ * 平台只出意见不改稿（2026-10-28 方案）：改稿由我方完成，改完 resubmit 重审。
  */
-export function parseReviewedText(
-  text: string,
-  original: { title: string | null | undefined; sections: Section[] },
-): { title: string; sections: Section[] } {
-  let body = text.replace(/\r\n?/g, '\n').trim()
-  let title = ''
-  if ((original.title ?? '').trim()) {
-    const nl = body.indexOf('\n')
-    title = (nl === -1 ? body : body.slice(0, nl)).trim()
-    body = nl === -1 ? '' : body.slice(nl + 1)
+export function formatFindings(body: unknown): string | null {
+  if (!body || typeof body !== 'object') return null
+  const list = (body as Record<string, unknown>).findings
+  if (!Array.isArray(list) || !list.length) return null
+  const lines: string[] = []
+  for (const f of list) {
+    if (!f || typeof f !== 'object') continue
+    const o = f as Record<string, unknown>
+    const rule = typeof o.rule_name === 'string' ? o.rule_name : ''
+    const excerpt = typeof o.excerpt === 'string' ? o.excerpt.trim() : ''
+    const desc = typeof o.description === 'string' ? o.description.trim() : ''
+    const tip = typeof o.suggestion === 'string' ? o.suggestion.trim() : ''
+    const head = [typeof o.severity_label === 'string' ? o.severity_label : '', rule].filter(Boolean).join('｜')
+    lines.push([head, excerpt ? `原文「${excerpt}」` : '', desc, tip ? `建议：${tip}` : ''].filter(Boolean).join('，'))
   }
-  const paragraphs = body
-    .split(/\n[ \t]*\n/)
-    .map((p) => p.trim())
-    .filter(Boolean)
-  const sections = paragraphs.map((p, i) => ({ label: original.sections[i]?.label ?? `第${i + 1}段`, text: p }))
-  return { title, sections }
+  return lines.length ? lines.map((l, i) => `${i + 1}. ${l}`).join('\n') : null
 }

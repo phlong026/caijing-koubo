@@ -96,6 +96,15 @@ export async function submitForReview(
   const template = await resolveTemplateForCopy(copy, db)
   // 接入校对台后新单由校对台审核，审核桩只推进存量桩单
   const useStub = config.copy.reviewStubEnabled && !hasJiaoduitai()
+  // 校对台驳回 / 机审拦截后的改稿重提：复用同一审核单（平台单号锚定不变，resubmit 版本 +1，审核历史留痕）
+  const reusable =
+    hasJiaoduitai() && !useStub
+      ? await db.get<{ id: string }>(
+          "SELECT `id` FROM `review_submission` WHERE `copy_id` = ? AND `is_stub` = 0 AND `external_review_no` IS NOT NULL" +
+            " AND `external_status` IN ('rejected', 'pending_revise') ORDER BY `updated_at` DESC LIMIT 1",
+          [copyId],
+        )
+      : null
 
   // 2) 事务：锁定版本 + 审核单 + 状态
   const now = toDb(utcNow())
@@ -147,16 +156,27 @@ export async function submitForReview(
       ],
     )
 
-    await t.run(
-      `INSERT INTO \`review_submission\`
-        (\`id\`, \`copy_id\`, \`copy_version_id\`, \`status\`, \`gate_results\`, \`appended_risk_text\`, \`is_stub\`, \`created_at\`, \`updated_at\`)
-       VALUES (?, ?, ?, 'submitted', '[]', NULL, ?, ?, ?)`,
-      [submissionId, copyId, versionId, useStub ? 1 : 0, now, now],
-    )
+    if (reusable) {
+      // 改稿重审：审核单转身复用（清裁决字段，历史关卡记录保留），指向新锁定版本，待 resubmit
+      const w2 = await t.run(
+        "UPDATE `review_submission` SET `copy_version_id` = ?, `status` = 'submitted', `external_status` = 'resubmit_pending'," +
+          " `rejected_gate` = NULL, `reason` = NULL, `decided_by` = NULL, `updated_at` = ?" +
+          " WHERE `id` = ? AND `status` = 'rejected' AND `external_review_no` IS NOT NULL",
+        [versionId, now, reusable.id],
+      )
+      if (!w2.affectedRows) throw err.invalidState('审核单状态已变化，请刷新后再试')
+    } else {
+      await t.run(
+        `INSERT INTO \`review_submission\`
+          (\`id\`, \`copy_id\`, \`copy_version_id\`, \`status\`, \`gate_results\`, \`appended_risk_text\`, \`is_stub\`, \`created_at\`, \`updated_at\`)
+         VALUES (?, ?, ?, 'submitted', '[]', NULL, ?, ?, ?)`,
+        [submissionId, copyId, versionId, useStub ? 1 : 0, now, now],
+      )
+    }
 
     await t.run(
       `UPDATE \`copy\` SET \`submitted_version_id\` = ?, \`review_submission_id\` = ? WHERE \`id\` = ?`,
-      [versionId, submissionId, copyId],
+      [versionId, reusable?.id ?? submissionId, copyId],
     )
 
     await t.run('UPDATE `copy_draft` SET `has_submitted` = 1, `latest_version_no` = ? WHERE `id` = ?', [
@@ -170,21 +190,22 @@ export async function submitForReview(
     action: 'copy.submit',
     targetType: 'copy',
     targetId: copyId,
-    detail: { versionId, versionNo, submissionId, draftId, riskHint: template?.riskHint ?? null },
+    detail: { versionId, versionNo, submissionId: reusable?.id ?? submissionId, reusedSubmission: !!reusable, draftId, riskHint: template?.riskHint ?? null },
   })
 
   // 3) 校对台已接入：立即送审（失败由后台轮询补送）；否则审核桩开启时异步模拟三关（不阻塞响应）
   if (hasJiaoduitai()) {
+    const activeSubmissionId = reusable?.id ?? submissionId
     void import('./jiaoduitai-sync.js')
-      .then((m) => m.sendSubmission(submissionId))
-      .catch((e) => logger.error({ err: (e as Error).message, submissionId }, 'jiaoduitai.send_failed'))
+      .then((m) => m.sendSubmission(activeSubmissionId))
+      .catch((e) => logger.error({ err: (e as Error).message, submissionId: activeSubmissionId }, 'jiaoduitai.send_failed'))
   } else if (useStub) {
     void advanceStub(submissionId, template?.riskHint ?? DEFAULT_RISK_HINT, opts.stubRejectAt).catch((e) => {
       logger.error({ err: (e as Error).message, submissionId }, 'review.stub.advance_failed')
     })
   }
 
-  return { versionId, versionNo, submissionId, reused: false }
+  return { versionId, versionNo, submissionId: reusable?.id ?? submissionId, reused: false }
 }
 
 async function resolveTemplateForCopy(copy: CopyRow, db: Db) {

@@ -2,24 +2,29 @@ import { config, hasJiaoduitai } from '../../config.js'
 import { getDb } from '../../db/index.js'
 import { logger } from '../../log.js'
 import { toDb, utcNow } from '../../lib/time.js'
-import { getReviewByNo, JiaoduitaiError, submitText, type ReviewByNo } from '../../integrations/jiaoduitai/client.js'
-import { getSubmission, getVersion, insertVersion, type GateResult, type SubmissionRow } from './repo.js'
-import { contentHash, countSectionsWords, toPlainText } from './text.js'
-import { extractReviewedText, extractRiskText, mapExternalStatus, parseReviewedText, toSubmitText } from './jiaoduitai.js'
+import { getReviewByNo, JiaoduitaiError, resubmitReview, submitText, type ReviewByNo } from '../../integrations/jiaoduitai/client.js'
+import { getSubmission, getVersion, type GateResult, type SubmissionRow } from './repo.js'
+import { extractRiskText, formatFindings, mapExternalStatus, toSubmitText } from './jiaoduitai.js'
 import { onReviewResult } from './review.js'
 
 /**
- * 校对台审核同步：送审 → 轮询 → 通过后取审核后文案作为审核通过版本（视频创作直接取用）。
- *  - 审核单状态对应：机审 → gate1；机审高危拦截（提交人在校对台处理）→ gate2；人工初审/终审 → pending_manual；
- *  - 通过：校对台返回的文案落为新的锁定版本（origin=review），copy.approved_version_id 指向它；
- *  - 驳回：文案退回可编辑，改稿后重新提交即重新送审；
- *  - 送审失败（网络 / 5xx）下一轮重试；平台拒收（4xx）退回并写明原因。
+ * 校对台审核同步：送审 → 轮询审核意见 → 驳回/拦截退回我方改稿 → resubmit 重审直至通过。
+ * 平台只出审核意见不改稿（2026-10-28 方案，v1.3 文档）：
+ *  - 审核单状态对应：机审 → gate1；人工初审/终审 → pending_manual；
+ *  - 机审高危拦截（pending_revise）与人工驳回（rejected）都视为审核意见：文案退回可编辑，
+ *    findings / 驳回意见写入 reject_reason；改稿重新提交时复用同一审核单走 resubmit（单号不变、版本 +1）；
+ *  - 通过：直接锁定我方送审版本（平台不改稿，无返回文案），copy.approved_version_id 指向它；
+ *  - 送审 / 重审失败（网络 / 5xx）下一轮重试；平台拒收（4xx）退回并写明原因。
  */
 
 const OPERATOR = 'jiaoduitai'
 /** 送审请求已发出但结果未知（超时 / 5xx）：平台上可能已经建了单 */
 const SENDING = 'sending'
-const TERMINAL_EXTERNAL = ['approved', 'rejected']
+/** 改稿重审待发：平台单在 rejected / pending_revise，本地新版本待 resubmit */
+const RESUBMIT_PENDING = 'resubmit_pending'
+/** 平台拒收改稿重审（单号状态不符 / 并发重送）：该平台单已不可再用，改稿重提时改走新单 */
+const RESUBMIT_REFUSED = 'resubmit_refused'
+const TERMINAL_EXTERNAL = ['approved', 'rejected', RESUBMIT_REFUSED]
 const ref = (sub: SubmissionRow) => ({ type: 'review_submission', id: sub.id })
 
 function gateResult(gate: string, result: 'pass' | 'fail', reason: string): GateResult {
@@ -85,10 +90,47 @@ async function canAdopt(sub: SubmissionRow, title: string | null, reviewNo: stri
 
 export async function sendSubmission(submissionId: string): Promise<void> {
   const sub = await getSubmission(submissionId)
-  if (!sub || sub.isStub || sub.externalReviewNo || sub.status !== 'submitted') return
+  if (!sub || sub.isStub || sub.status !== 'submitted') return
   const version = await getVersion(sub.copyVersionId)
   if (!version) {
     logger.error({ submissionId, versionId: sub.copyVersionId }, 'jiaoduitai.send_version_missing')
+    return
+  }
+
+  // 改稿重审：平台单在 rejected / pending_revise，沿用单号 resubmit（版本 +1 重走机审与人工）
+  if (sub.externalReviewNo) {
+    if (sub.externalStatus !== RESUBMIT_PENDING) return
+    let r
+    try {
+      r = await resubmitReview(
+        sub.externalReviewNo,
+        { submitter: version.createdBy || config.defaultOperator, contentText: toSubmitText(version.title, version.sections) },
+        ref(sub),
+      )
+    } catch (e) {
+      if (e instanceof JiaoduitaiError && e.permanent) {
+        logger.warn({ submissionId, reviewNo: sub.externalReviewNo, err: e.message }, 'jiaoduitai.resubmit_refused')
+        // 平台单已不可重审：置终态标记，避免改稿重提时误复用这张单号（会撞 409）
+        await rejectLocally(sub, `校对台拒收改稿重审：${e.message}`, RESUBMIT_REFUSED)
+        return
+      }
+      logger.warn({ submissionId, reviewNo: sub.externalReviewNo, err: (e as Error).message }, 'jiaoduitai.resubmit_retry_later')
+      return
+    }
+    const db = getDb()
+    const now = toDb(utcNow())
+    const results = [...sub.gateResults, gateResult('gate1', 'pass', `已重新送校对台（审核单 ${sub.externalReviewNo} 第 ${r.version} 版）：${r.status_label || r.status}`)]
+    const w = await db.run(
+      "UPDATE `review_submission` SET `status` = 'gate1', `external_status` = ?, `gate_results` = ?, `updated_at` = ? WHERE `id` = ? AND `status` = 'submitted' AND `external_status` = ?",
+      [r.status, JSON.stringify(results), now, sub.id, RESUBMIT_PENDING],
+    )
+    if (!w.affectedRows) return
+    await db.run("UPDATE `copy` SET `review_gate` = 'gate1', `updated_at` = ? WHERE `id` = ? AND `review_submission_id` = ?", [
+      now,
+      sub.copyId,
+      sub.id,
+    ])
+    logger.info({ submissionId, reviewNo: sub.externalReviewNo, version: r.version }, 'jiaoduitai.resubmitted')
     return
   }
 
@@ -165,8 +207,21 @@ export async function syncSubmission(submissionId: string): Promise<void> {
   const label = `校对台：${r.status_label || r.status}`
   const mapped = mapExternalStatus(r.status)
   if (mapped === 'approved') return applyApproved(sub, r)
+  // 机审高危拦截与人工驳回同为「审核意见」：退回我方改稿，意见写入 reject_reason，改稿重提后 resubmit
+  if (r.status === 'pending_revise') {
+    const findings = formatFindings(r)
+    const reason = findings
+      ? `校对台机审拦截（审核单 ${sub.externalReviewNo}）共 ${r.machine_risk_count ?? '若干'} 项风险，修改后重新提交将重送审核：\n${findings}`
+      : `校对台机审拦截（审核单 ${sub.externalReviewNo}），请按审核意见修改后重新提交`
+    return rejectLocally(sub, reason, r.status)
+  }
   if (mapped === 'rejected') {
-    return rejectLocally(sub, `校对台驳回（审核单 ${sub.externalReviewNo}），驳回意见请在校对台查看`, r.status)
+    const opinion = typeof r.reject_detail === 'string' && r.reject_detail.trim() ? r.reject_detail.trim() : null
+    const firstOpinion = typeof r.first_opinion === 'string' && r.first_opinion.trim() ? r.first_opinion.trim() : null
+    const finalOpinion = typeof r.final_opinion === 'string' && r.final_opinion.trim() ? r.final_opinion.trim() : null
+    const detail = opinion ?? [firstOpinion, finalOpinion].filter(Boolean).join('；') ?? null
+    const reason = `校对台驳回（审核单 ${sub.externalReviewNo}），修改后重新提交将重送审核${detail ? `：\n${detail}` : '，驳回意见请在校对台查看'}`
+    return rejectLocally(sub, reason, r.status)
   }
   if (!mapped) {
     logger.warn({ submissionId, reviewNo: sub.externalReviewNo, status: r.status }, 'jiaoduitai.unknown_status')
@@ -183,56 +238,18 @@ export async function syncSubmission(submissionId: string): Promise<void> {
 }
 
 async function applyApproved(sub: SubmissionRow, r: ReviewByNo): Promise<void> {
-  const text = extractReviewedText(r)
-  if (!text) {
-    // 不能把未经确认的原稿当成审核后文案放行：转人工复核，由审核员在工作台裁决
-    logger.error({ submissionId: sub.id, reviewNo: sub.externalReviewNo }, 'jiaoduitai.approved_without_text')
-    const ready = await ensurePendingManual(sub, '校对台已通过，但未返回审核后文案，请人工复核')
-    if (ready) await markExternal(sub.id, 'approved')
-    return
-  }
-
-  const submitted = await getVersion(sub.copyVersionId)
-  if (!submitted) {
-    logger.error({ submissionId: sub.id, versionId: sub.copyVersionId }, 'jiaoduitai.approve_version_missing')
-    return
-  }
-  const parsed = parseReviewedText(text, submitted)
-  const hash = contentHash(parsed.title, parsed.sections)
-  // 上一轮已建过同内容的审定版本（随后本地裁决失败）时复用，避免重试时重复建版本
-  const existing = await getDb().get<{ id: string }>(
-    "SELECT `id` FROM `copy_version` WHERE `copy_id` = ? AND `origin` = 'review' AND `content_hash` = ? LIMIT 1",
-    [sub.copyId, hash],
-  )
-  let approvedVersionId = existing?.id ?? submitted.id
-  if (!existing && hash !== submitted.contentHash) {
-    const v = await insertVersion({
-      copyId: sub.copyId,
-      draftId: submitted.draftId,
-      title: parsed.title || submitted.title,
-      sections: parsed.sections,
-      plainText: toPlainText(parsed.title, parsed.sections),
-      wordCount: countSectionsWords(parsed.title, parsed.sections),
-      contentHash: hash,
-      origin: 'review',
-      locked: true,
-      createdBy: OPERATOR,
-    })
-    approvedVersionId = v.id
-  }
-
-  const ready = await ensurePendingManual(sub, '校对台审核结束')
+  // 平台只出意见不改稿：通过即认可我方送审版本，直接锁定（不再依赖返回文案）
+  const ready = await ensurePendingManual(sub, '校对台审核通过')
   if (!ready) return
   await onReviewResult({
     submissionId: sub.id,
     result: 'approved',
-    approvedVersionId,
     // D4：校对台返回了风险话术就以它为准（存为审核单的追加话术，取稿优先使用）
     appendedRiskText: extractRiskText(r, config.jiaoduitai.riskField),
     operator: OPERATOR,
   })
   await markExternal(sub.id, 'approved')
-  logger.info({ submissionId: sub.id, reviewNo: sub.externalReviewNo, approvedVersionId }, 'jiaoduitai.approved')
+  logger.info({ submissionId: sub.id, reviewNo: sub.externalReviewNo, approvedVersionId: sub.copyVersionId }, 'jiaoduitai.approved')
 }
 
 /* ── 后台轮询 ─────────────────────────────────────────────────────── */
@@ -241,7 +258,7 @@ async function applyApproved(sub: SubmissionRow, r: ReviewByNo): Promise<void> {
 export async function runJiaoduitaiSync(): Promise<void> {
   const db = getDb()
   const unsent = await db.all<{ id: string }>(
-    "SELECT `id` FROM `review_submission` WHERE `status` = 'submitted' AND `is_stub` = 0 AND `external_review_no` IS NULL ORDER BY `created_at` LIMIT 50",
+    "SELECT `id` FROM `review_submission` WHERE `status` = 'submitted' AND `is_stub` = 0 AND (`external_review_no` IS NULL OR `external_status` = 'resubmit_pending') ORDER BY `created_at` LIMIT 50",
   )
   for (const { id } of unsent) {
     await sendSubmission(id).catch((e) => logger.error({ submissionId: id, err: (e as Error).message }, 'jiaoduitai.send_failed'))

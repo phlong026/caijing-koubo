@@ -228,12 +228,15 @@ export const config = {
 
   /**
    * 校对台（外部内容审核平台，机审 + 人工初审/终审）。配置 BASE_URL 即启用：
-   * 文案提交后送校对台，后台轮询进度，通过后以校对台返回的文案作为审核通过版本；启用后审核桩不再推进新单。
+   * 文案提交后送校对台，后台轮询审核意见；平台只出意见不改稿，驳回 / 机审拦截由我方改稿后
+   * resubmit 重审直至通过，通过时锁定我方送审版本。启用后审核桩不再推进新单。
    */
   jiaoduitai: {
     baseUrl: str('JIAODUITAI_BASE_URL', ''),
     timeoutMs: num('JIAODUITAI_TIMEOUT_MS', 15000),
     pollMs: num('JIAODUITAI_POLL_MS', 15000),
+    /** 送审来源标识（v1.3 文档 source 字段），平台侧区分渠道、台账展示与对账 */
+    source: str('JIAODUITAI_SOURCE', 'koubo'),
     /**
      * 决策 D4（2026-10-27）：风险提示话术以校对台返回的为准。校对台 v1.1 文档尚无独立的话术字段，
      * 这里预留字段名：填写后从审核结果里取该字段作为追加话术（视频创作取稿优先使用），
